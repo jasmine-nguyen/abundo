@@ -8,7 +8,8 @@ The milestone suites (test_milestones*, test_milestone_rows*) share these in ONE
     recorders, not a copied rule;
   * ``goal_checkpoint_repo`` / ``checkpoints_marked`` do the same for the goal-checkpoint
     markers (test_goal_checkpoints*);
-  * FakeDeviceRepo, FakeLoanFactsRepo and FakeMilestoneRepo are read-only canned stubs.
+  * FakeLoanFactsRepo and FakeMilestoneRepo are read-only canned stubs; FakeDeviceRepo (the fake
+    phone every suite shares) serves canned tokens and records register/remove calls.
 
 The per-suite `_notify` / `_run` harness helpers stay local to each file — they call the real
 notify_milestone_crossing with different contracts and are scaffolding, not drift-prone fakes.
@@ -52,13 +53,22 @@ SAMPLE_PLAN = [
 
 class FakeDeviceRepo:
     """Stand-in for DeviceRepository. `tokens` defaults to one push token; pass an explicit
-    tuple to exercise the multi-device / no-device fan-out."""
+    tuple to exercise the multi-device / no-device fan-out. `registered` / `removed` record the
+    tokens passed to register / remove."""
 
     def __init__(self, tokens=("tok",)):
         self._tokens = tokens
+        self.registered = []
+        self.removed = []
 
     def list_tokens(self):
         return list(self._tokens)
+
+    def register(self, token):
+        self.registered.append(token)
+
+    def remove(self, token):
+        self.removed.append(token)
 
 
 class FakeGoalsRepo:

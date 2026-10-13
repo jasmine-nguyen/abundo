@@ -17,7 +17,7 @@ import pytest
 
 from _balance_fakes import balance_repo, homeloan_row, upserted
 from _http_fakes import FakeResponse, http_error
-from _milestone_fakes import FakeGoalsRepo
+from _milestone_fakes import FakeDeviceRepo, FakeGoalsRepo
 
 
 # --- helpers -----------------------------------------------------------------
@@ -247,11 +247,6 @@ class _FakeNotifyRepo:
         self.marked.append(marker)
 
 
-class _FakeDeviceRepo:
-    def list_tokens(self):
-        return ["ExponentPushToken[x]"]
-
-
 @pytest.mark.parametrize(
     ("prior", "account_id", "expected_old"),
     [
@@ -322,7 +317,7 @@ def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler
     notify_repo = _FakeNotifyRepo()
     monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo({"g1": goal}))
     monkeypatch.setattr(handler, "NotifyRepository", lambda: notify_repo)
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo())
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo(["ExponentPushToken[x]"]))
     sent = []
     monkeypatch.setattr(goal_checkpoints, "send_push",
                         lambda title, body, tokens, data=None: sent.append((title, data)))

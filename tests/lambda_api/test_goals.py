@@ -17,7 +17,7 @@ import pytest
 
 from _api_event import api_event
 from _dynamo_fakes import FakeTable
-from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
+from _milestone_fakes import FakeDeviceRepo, checkpoints_marked, goal_checkpoint_repo
 
 
 # --- handler-level fake ------------------------------------------------------
@@ -643,14 +643,6 @@ def test_manual_save_omitting_checkpoints_celebrates_against_saved_ladder(handle
 
 # --- WHIT-483 legacy caveat: an old goal saved NEGATIVE before the fix, on a later valid save
 
-class _FakeDeviceRepo:
-    def __init__(self, tokens=("ExpoTok",)):
-        self._tokens = list(tokens)
-
-    def list_tokens(self):
-        return self._tokens
-
-
 def _run_manual_crossing(handler, monkeypatch, *, old_goal, new_body):
     """Drive upsert_goal through the REAL notify_goal_checkpoint_crossing with the real notify repo
     over a FakeTable and a fake device repo, capturing any push. Proves the legacy old-balance flows through the real crossing math."""
@@ -664,7 +656,7 @@ def _run_manual_crossing(handler, monkeypatch, *, old_goal, new_body):
     notify = goal_checkpoint_repo()
     resp = handler.upsert_goal(
         _put_event(body=new_body), repo, FakeBalanceRepo(),
-        notify_repo=notify, device_repo=_FakeDeviceRepo())
+        notify_repo=notify, device_repo=FakeDeviceRepo(["ExpoTok"]))
     return resp, notify, sent
 
 

@@ -11,19 +11,12 @@ from decimal import Decimal
 import pytest
 
 from _balance_fakes import feed_watch_repo
+from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _EndlessTransactionRepo, _PagedStoreTransactionRepo
 
 DAY = 24 * 60 * 60
 NOW = 1_790_000_000
 WESTPAC = "westpac-altitude-qantas-black"
-
-
-class _FakeDeviceRepo:
-    def __init__(self, tokens=("ExponentPushToken[x]",)):
-        self.tokens = list(tokens)
-
-    def list_tokens(self):
-        return list(self.tokens)
 
 
 def _row(transaction_id, date="2026-09-22", account_name="Altitude Qantas Black Card"):
@@ -54,7 +47,7 @@ def wired(handler, monkeypatch):
         watch_repo = feed_watch_repo(handler, watches)
         monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
         monkeypatch.setattr(handler, "FeedWatchRepository", lambda: watch_repo)
-        monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo(tokens))
+        monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo(tokens))
         return transaction_repo, watch_repo
 
     return handler, wire, pushes

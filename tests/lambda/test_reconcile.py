@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 
 from _feed_fakes import FakeCategoryRepo
+from _milestone_fakes import FakeDeviceRepo
 from _rule_ingest_fakes import KKV_RULE, FakeRuleStore
 
 # A real BankSync account id (resolves via ACCOUNT_ID_MAP to an internal id).
@@ -1620,11 +1621,6 @@ def test_whit545_settlement_unfiled_twin_does_not_clobber_the_rule_fill(lam, rep
 # ============================================================================
 
 
-class _QANoTokensDevice:
-    def list_tokens(self):
-        return []
-
-
 # [A7] End-to-end through process_transaction: the handler must thread the taxonomy check
 # returned by rule_ingest.apply into insert_or_reconcile. A pending twin holds the raw enum; the
 # incoming posted is rule-filled by the user's KKV rule. FAIL-ON-REVERT: change handler.py's
@@ -1635,7 +1631,7 @@ def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
                         lambda: FakeRuleStore([KKV_RULE]))
     monkeypatch.setattr(h, "CategoryRepository", lambda: FakeCategoryRepo(["groceries"]))
     # Neutralise the budget-alert side path (no device tokens -> capture returns None early).
-    monkeypatch.setattr(h, "DeviceRepository", lambda: _QANoTokensDevice())
+    monkeypatch.setattr(h, "DeviceRepository", lambda: FakeDeviceRepo([]))
     monkeypatch.setattr(h, "BudgetRepository", lambda: None)
     monkeypatch.setattr(h, "PayCycleRepository", lambda: None)
     monkeypatch.setattr(h, "NotifyRepository", lambda: None)

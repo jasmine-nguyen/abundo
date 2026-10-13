@@ -10,6 +10,7 @@ from functools import partial
 import pytest
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountTransactionRepo
 
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -22,11 +23,6 @@ def alerts(lam, monkeypatch):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 14))  # window 07-01..07-14
     return lam
-
-
-class _Devices:
-    def list_tokens(self):
-        return ["ExpoPushToken[a]"]
 
 
 class _Budgets:
@@ -64,7 +60,7 @@ def _fire(alerts, monkeypatch, repo, before, batch):
     monkeypatch.setattr(ba, "send_push",
                         lambda title, body, toks, data=None: sent.append(title) or {"sent": 1, "ok": 1, "pruned": []})
     notify = notify_repo()
-    ctx = ba.capture_pre_write(batch, device_repo=_Devices(), budget_repo=_Budgets(),
+    ctx = ba.capture_pre_write(batch, device_repo=FakeDeviceRepo(["ExpoPushToken[a]"]), budget_repo=_Budgets(),
                                paycycle_repo=_Paycycle(),
                                    webhook_repo=_AccountTransactionRepo(before, pending_repo=repo))
     repo.insert_or_reconcile(batch)

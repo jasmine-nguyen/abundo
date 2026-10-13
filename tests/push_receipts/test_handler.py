@@ -12,6 +12,8 @@ import logging
 
 import pytest
 
+from _milestone_fakes import FakeDeviceRepo
+
 _ZERO = {"pending": 0, "ok": 0, "pruned": 0, "failed": 0}
 
 
@@ -29,20 +31,10 @@ class _FakeReceiptRepo:
         self.deleted.append(receipt_id)
 
 
-class _FakeDeviceRepo:
-    """Records which dead tokens the sweep pruned."""
-
-    def __init__(self):
-        self.removed = []
-
-    def remove(self, token):
-        self.removed.append(token)
-
-
 def _wire(handler, monkeypatch, *, pending, receipts, token="token"):
     """Install fake stores + a canned get_receipts, and return (receipt_repo, device_repo)."""
     receipt_repo = _FakeReceiptRepo(pending)
-    device_repo = _FakeDeviceRepo()
+    device_repo = FakeDeviceRepo()
     monkeypatch.setattr(handler, "PushReceiptRepository", lambda: receipt_repo)
     monkeypatch.setattr(handler, "DeviceRepository", lambda: device_repo)
     monkeypatch.setattr(handler, "get_access_token", lambda: token)
@@ -93,7 +85,7 @@ def test_one_receipt_failure_does_not_abort_the_rest(handler, monkeypatch):
 
     receipt_repo = _PartlyBoomRepo([("r1", "t1"), ("r2", "t2")])
     monkeypatch.setattr(handler, "PushReceiptRepository", lambda: receipt_repo)
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo())
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo())
     monkeypatch.setattr(handler, "get_access_token", lambda: "token")
     monkeypatch.setattr(handler, "get_receipts", lambda ids, access_token=None: {
         "r1": {"status": "ok"}, "r2": {"status": "ok"}})

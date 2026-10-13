@@ -14,16 +14,7 @@ import urllib.error
 import pytest
 
 from _http_fakes import FakeResponse
-
-
-class _RecordingRepo:
-    """Records which tokens send_push asked to prune."""
-
-    def __init__(self):
-        self.removed = []
-
-    def remove(self, token):
-        self.removed.append(token)
+from _milestone_fakes import FakeDeviceRepo
 
 
 class _RecordingReceiptRepo:
@@ -50,7 +41,7 @@ def _stub_ssm_token(push, monkeypatch, read):
 def stores(shared, monkeypatch):
     """Token "k" from SSM, and recording fakes behind push's device + receipt stores."""
     push = shared.push
-    devices = _RecordingRepo()
+    devices = FakeDeviceRepo()
     receipts = _RecordingReceiptRepo()
     _stub_ssm_token(push, monkeypatch, lambda path: "k")
     monkeypatch.setattr(push, "DeviceRepository", lambda: devices)
