@@ -583,7 +583,7 @@ async def run_agent(
         resume=resume,
         # The repo's own CLAUDE.md and settings, but not the user's global plugins,
         # MCP servers, hooks and preferences, which bloat every turn and hand
-        # read-only agents write tools (e.g. a Notion MCP).
+        # read-only agents write tools (e.g. a Linear MCP).
         setting_sources=["project"],
         strict_mcp_config=True,
     )
@@ -2458,15 +2458,15 @@ builder.add_conditional_edges("ship", after_ship)
 # --- cli ---
 #
 # Usage:
-#   python3 build_graph.py --card WHIT-123 --type Feature --details-file card.md   → build a card
+#   python3 build_graph.py --card ABU-123 --type Feature --details-file card.md   → build a card
 #   python3 build_graph.py "add a chat button for spending"                       → ad-hoc request
-#   python3 build_graph.py --thread WHIT-123 --resume "go"                         → answer a pause
-#   python3 build_graph.py --thread WHIT-123 --status                              → where is it?
-#   python3 build_graph.py --thread WHIT-123 --retry                               → re-run a step that errored
-#   python3 build_graph.py --thread WHIT-123 --recheck                             → after fixing a failed build by hand
-#   python3 build_graph.py --thread WHIT-123 --replan "<what to change>"           → stop it, even mid-run, and replan
-#   python3 build_graph.py --thread WHIT-123 --cancel                              → stop it, even mid-run, and end it
-#   python3 build_graph.py --thread WHIT-123 --clean-backups                       → delete the backup branches replans left, once the ticket is done
+#   python3 build_graph.py --thread ABU-123 --resume "go"                         → answer a pause
+#   python3 build_graph.py --thread ABU-123 --status                              → where is it?
+#   python3 build_graph.py --thread ABU-123 --retry                               → re-run a step that errored
+#   python3 build_graph.py --thread ABU-123 --recheck                             → after fixing a failed build by hand
+#   python3 build_graph.py --thread ABU-123 --replan "<what to change>"           → stop it, even mid-run, and replan
+#   python3 build_graph.py --thread ABU-123 --cancel                              → stop it, even mid-run, and end it
+#   python3 build_graph.py --thread ABU-123 --clean-backups                       → delete the backup branches replans left, once the ticket is done
 #   add --restart to a new build to discard saved progress for that card
 #   add --branch <name> to build on a given branch; a cloud session must pass its own
 #   add --review-plan to pause for sign-off even when the card is routine
@@ -2480,7 +2480,7 @@ builder.add_conditional_edges("ship", after_ship)
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build one card: plan → tests → code → checks → review → PR.")
     parser.add_argument("request", nargs="?", help="ad-hoc request text, instead of --card")
-    parser.add_argument("--card", help="card number, e.g. WHIT-123; also names the build thread")
+    parser.add_argument("--card", help="card number, e.g. ABU-123; also names the build thread")
     parser.add_argument("--type", default="Feature", help="card type: sets the branch prefix and the bug path")
     details = parser.add_mutually_exclusive_group()
     details.add_argument("--details", help="card title and description")
