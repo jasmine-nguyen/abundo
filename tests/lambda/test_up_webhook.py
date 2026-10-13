@@ -7,9 +7,6 @@ both 401 paths, other-event / PING acknowledge, qualify vs skip, dedupe, no-toke
 mark-on-landing, the error-to-500 paths and token recovery.
 """
 
-import base64
-import hashlib
-import hmac
 import json
 import logging
 
@@ -17,40 +14,10 @@ import pytest
 
 from _dynamo_fakes import FakeTable
 from _http_fakes import UP_API_URL, FakeResponse, http_error
-
-MOCK_SECRET = "mock-secret"
-HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
-SIGNATURE_KEY = "x-up-authenticity-signature"
-
-
-def _sign(raw: bytes) -> str:
-    return hmac.new(MOCK_SECRET.encode("utf-8"), raw, hashlib.sha256).hexdigest()
-
-
-def _webhook_payload(event_type="TRANSACTION_CREATED", transaction_id="txn-1") -> dict:
-    """The thin webhook envelope Up POSTs — carries the event type + transaction id."""
-    return {
-        "data": {
-            "attributes": {"eventType": event_type},
-            "relationships": {"transaction": {"data": {"id": transaction_id}}},
-        }
-    }
-
-
-def _up_transaction(account_id=HOMELOAN_UUID, cents=357300, transaction_id="txn-1") -> dict:
-    """The full transaction fetch_transaction returns (Up's `data` object)."""
-    return {
-        "id": transaction_id,
-        "attributes": {"amount": {"valueInBaseUnits": cents}},
-        "relationships": {"account": {"data": {"id": account_id}}},
-    }
-
-
-def _event(payload: dict, *, header=True, is_base64=False) -> dict:
-    raw = json.dumps(payload).encode("utf-8")
-    body = base64.b64encode(raw).decode("utf-8") if is_base64 else raw.decode("utf-8")
-    headers = {SIGNATURE_KEY: _sign(raw)} if header else {}
-    return {"body": body, "isBase64Encoded": is_base64, "headers": headers}
+from _milestone_fakes import FakeDeviceRepo
+from _up_webhook_fakes import (
+    HOMELOAN_ID, MOCK_SECRET, SIGNATURE_KEY, sign, signed_event, up_transaction, webhook_payload,
+)
 
 
 def _notify(up, fired=()):
@@ -89,14 +56,6 @@ def _pushes(notify):
     return pushes
 
 
-class _FakeDevice:
-    def __init__(self, tokens):
-        self._tokens = tokens
-
-    def list_tokens(self):
-        return list(self._tokens)
-
-
 @pytest.fixture
 def wired(lam, monkeypatch):
     """up_webhook with the signing secret + repositories + send_push patched.
@@ -107,7 +66,7 @@ def wired(lam, monkeypatch):
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
 
     notify = _notify(up)
-    device = _FakeDevice(["ExponentPushToken[abc]"])
+    device = FakeDeviceRepo(["ExponentPushToken[abc]"])
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
     monkeypatch.setattr(up, "DeviceRepository", lambda: device)
 
@@ -118,8 +77,8 @@ def wired(lam, monkeypatch):
         return {"sent": len(tokens), "ok": 1, "pruned": []}
 
     monkeypatch.setattr(up, "send_push", fake_send_push)
-    monkeypatch.setattr(up, "fetch_transaction", lambda _id: _up_transaction())
-    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
+    monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction())
+    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_ID)
 
     return type("Wired", (), {"up": up, "notify": notify, "device": device, "sent": sent})
 
@@ -157,7 +116,7 @@ def test_up_401_logs_token_rejected_marker_and_returns_500(fetch_wired, monkeypa
     up = fetch_wired.up
     monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(http_error(code, url=UP_API_URL)))
     caplog.set_level(logging.INFO)
-    assert up.lambda_handler(_event(_webhook_payload()), None) == up.ERROR_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload()), None) == up.ERROR_RESPONSE
     assert _marker_records(caplog, "UP_WEBHOOK_TOKEN_REJECTED", logging.ERROR)
     assert "old-pat-value" not in caplog.text  # the token itself is never logged
     assert "up webhook: processing failed" in caplog.text
@@ -170,20 +129,20 @@ def test_up_401_logs_token_rejected_marker_and_returns_500(fetch_wired, monkeypa
 def test_other_event_returns_200_without_fetch(wired, monkeypatch, caplog):
     monkeypatch.setattr(wired.up, "fetch_transaction", _boom("fetch should not run"))
     caplog.set_level(logging.INFO)
-    event = _event(_webhook_payload(event_type="TRANSACTION_SETTLED"))
+    event = signed_event(webhook_payload(event_type="TRANSACTION_SETTLED"))
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert wired.sent == []
     assert _skip_reasons(caplog) == ["not_transaction_created"]
 
 
 def test_missing_signature_header_returns_401(wired):
-    event = _event(_webhook_payload(), header=False)
+    event = signed_event(webhook_payload(), header=False)
     assert wired.up.lambda_handler(event, None) == wired.up.UNAUTHORISED_RESPONSE
     assert wired.sent == []
 
 
 def test_bad_signature_returns_401(wired):
-    event = _event(_webhook_payload())
+    event = signed_event(webhook_payload())
     event["headers"][SIGNATURE_KEY] = "wrong-signature"
     assert wired.up.lambda_handler(event, None) == wired.up.UNAUTHORISED_RESPONSE
     assert wired.sent == []
@@ -196,7 +155,7 @@ def _skip_reasons(caplog):
 
 
 def test_qualifying_repayment_sends_one_push_and_marks(wired):
-    result = wired.up.lambda_handler(_event(_webhook_payload()), None)
+    result = wired.up.lambda_handler(signed_event(webhook_payload()), None)
     assert result == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
     assert "$3,573 toward the mortgage" in wired.sent[0]["body"]
@@ -208,15 +167,15 @@ def test_qualifying_repayment_sends_one_push_and_marks(wired):
 
 
 @pytest.mark.parametrize("transaction, pushes, skip_reasons", [
-    (_up_transaction(account_id="anz-card"), 0, ["not_homeloan_account"]),
-    (_up_transaction(cents=500), 0, ["below_floor"]),
-    (_up_transaction(cents=-234828), 0, ["below_floor"]),   # an interest debit
-    (_up_transaction(cents=1000), 1, []),                    # the floor itself is inclusive
+    (up_transaction(account_id="anz-card"), 0, ["not_homeloan_account"]),
+    (up_transaction(cents=500), 0, ["below_floor"]),
+    (up_transaction(cents=-234828), 0, ["below_floor"]),   # an interest debit
+    (up_transaction(cents=1000), 1, []),                    # the floor itself is inclusive
 ], ids=["wrong-account", "sub-floor", "negative-interest", "boundary"])
 def test_repayment_qualifies_or_skips(wired, monkeypatch, caplog, transaction, pushes, skip_reasons):
     monkeypatch.setattr(wired.up, "fetch_transaction", lambda _id: transaction)
     caplog.set_level(logging.INFO)
-    assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
+    assert wired.up.lambda_handler(signed_event(webhook_payload()), None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == pushes
     assert len(_marked(wired.notify)) == pushes
     assert _skip_reasons(caplog) == skip_reasons
@@ -227,23 +186,23 @@ def test_already_fired_id_skips(lam, monkeypatch, caplog):
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
     notify = _notify(up, fired={"txn-1"})
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
-    monkeypatch.setattr(up, "DeviceRepository", lambda: _FakeDevice(["ExponentPushToken[abc]"]))
+    monkeypatch.setattr(up, "DeviceRepository", lambda: FakeDeviceRepo(["ExponentPushToken[abc]"]))
     sent = []
     monkeypatch.setattr(up, "send_push", lambda *a: sent.append(a) or {"ok": 1})
-    monkeypatch.setattr(up, "fetch_transaction", lambda _id: _up_transaction())
-    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
+    monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction())
+    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_ID)
     caplog.set_level(logging.INFO)
 
-    assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload()), None) == up.OK_RESPONSE
     assert sent == []
     assert _marked(notify) == []
     assert _skip_reasons(caplog) == ["already_notified"]
 
 
 def test_no_device_tokens_short_circuits(wired, monkeypatch, caplog):
-    monkeypatch.setattr(wired.up, "DeviceRepository", lambda: _FakeDevice([]))
+    monkeypatch.setattr(wired.up, "DeviceRepository", lambda: FakeDeviceRepo([]))
     caplog.set_level(logging.INFO)
-    assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
+    assert wired.up.lambda_handler(signed_event(webhook_payload()), None) == wired.up.OK_RESPONSE
     assert wired.sent == []
     assert _marked(wired.notify) == []
     assert _pushes(wired.notify) == []
@@ -253,7 +212,7 @@ def test_no_device_tokens_short_circuits(wired, monkeypatch, caplog):
 
 def test_send_push_not_accepted_returns_500_and_not_marked(wired, monkeypatch):
     monkeypatch.setattr(wired.up, "send_push", lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
-    result = wired.up.lambda_handler(_event(_webhook_payload()), None)
+    result = wired.up.lambda_handler(signed_event(webhook_payload()), None)
     assert result == wired.up.ERROR_RESPONSE
     assert _marked(wired.notify) == []
     assert _pushes(wired.notify) == []
@@ -261,7 +220,7 @@ def test_send_push_not_accepted_returns_500_and_not_marked(wired, monkeypatch):
 
 def test_fetch_raises_returns_500(wired, monkeypatch):
     monkeypatch.setattr(wired.up, "fetch_transaction", _boom("Up API down"))
-    assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.ERROR_RESPONSE
+    assert wired.up.lambda_handler(signed_event(webhook_payload()), None) == wired.up.ERROR_RESPONSE
     assert wired.sent == []
 
 
@@ -272,7 +231,7 @@ def test_malformed_signed_body_returns_500(lam, monkeypatch):
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
     raw = b"this is not json"
     event = {"body": raw.decode("utf-8"), "isBase64Encoded": False,
-             "headers": {SIGNATURE_KEY: _sign(raw)}}
+             "headers": {SIGNATURE_KEY: sign(raw)}}
     assert up.lambda_handler(event, None) == up.ERROR_RESPONSE
 
 
@@ -290,27 +249,22 @@ def test_malformed_signed_body_returns_500(lam, monkeypatch):
 # the DECODED bytes end-to-end. If the base64 branch regressed, verify_signature would run
 # over the still-encoded string and 401 instead of pushing.
 def test_base64_encoded_body_pushes_end_to_end(wired):
-    raw = json.dumps(_webhook_payload()).encode("utf-8")
-    event = {
-        "body": base64.b64encode(raw).decode("utf-8"),
-        "isBase64Encoded": True,
-        "headers": {SIGNATURE_KEY: _sign(raw)},  # signed over the DECODED bytes
-    }
+    event = signed_event(webhook_payload(), is_base64=True)  # signed over the DECODED bytes
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
     assert _marked(wired.notify) == ["txn-1"]
 
 
 # [E2] the header exactly as Up sends it (mixed case).
-# The _event helper always sets the lower-cased key, so the handler's `{k.lower(): v}`
+# The signed_event helper always sets the lower-cased key, so the handler's `{k.lower(): v}`
 # normalisation is never actually exercised. Up sends "X-Up-Authenticity-Signature";
 # drop the .lower() and this 401s.
 def test_real_up_header_casing_is_accepted(wired):
-    raw = json.dumps(_webhook_payload()).encode("utf-8")
+    raw = json.dumps(webhook_payload()).encode("utf-8")
     event = {
         "body": raw.decode("utf-8"),
         "isBase64Encoded": False,
-        "headers": {"X-Up-Authenticity-Signature": _sign(raw)},
+        "headers": {"X-Up-Authenticity-Signature": sign(raw)},
     }
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
@@ -329,7 +283,7 @@ def test_signature_verified_over_exact_raw_bytes(wired):
     # sanity: still valid JSON with the same meaning, just odd whitespace.
     assert json.loads(raw)["data"]["attributes"]["eventType"] == "TRANSACTION_CREATED"
     event = {"body": raw.decode("utf-8"), "isBase64Encoded": False,
-             "headers": {SIGNATURE_KEY: _sign(raw)}}
+             "headers": {SIGNATURE_KEY: sign(raw)}}
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
 
@@ -348,7 +302,7 @@ def test_real_ping_without_transaction_relationship_is_acked(wired, monkeypatch)
                         "relationships": {"webhook": {"data": {"id": "wh-1"}}}}}
     raw = json.dumps(payload).encode("utf-8")
     event = {"body": raw.decode("utf-8"), "isBase64Encoded": False,
-             "headers": {SIGNATURE_KEY: _sign(raw)}}
+             "headers": {SIGNATURE_KEY: sign(raw)}}
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert wired.sent == []
     assert _marked(wired.notify) == []
@@ -376,12 +330,12 @@ def test_replaced_token_is_used_on_next_delivery(fetch_wired, lam, monkeypatch):
         seen.append(auth)
         if auth == "Bearer old-pat-value":
             raise http_error(401, url=UP_API_URL)
-        return FakeResponse({"data": _up_transaction()})
+        return FakeResponse({"data": up_transaction()})
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
-    assert up.lambda_handler(_event(_webhook_payload()), None) == up.ERROR_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload()), None) == up.ERROR_RESPONSE
     ssm["value"] = "new-pat-value"
-    assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload()), None) == up.OK_RESPONSE
     assert seen == ["Bearer old-pat-value", "Bearer new-pat-value"]
     assert len(fetch_wired.sent) == 1
 
@@ -395,11 +349,11 @@ def test_homeloan_lookup_failure_still_pushes_on_fixed_id(fetch_wired, monkeypat
 
     def fake_urlopen(request, timeout=None):
         if "/transactions/" in request.full_url:
-            return FakeResponse({"data": _up_transaction()})
+            return FakeResponse({"data": up_transaction()})
         raise http_error(500, url=UP_API_URL)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     caplog.set_level(logging.INFO)
-    assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload()), None) == up.OK_RESPONSE
     assert len(fetch_wired.sent) == 1
     assert _marker_records(caplog, "UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK", logging.WARNING)

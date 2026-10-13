@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from _milestone_fakes import FakeGoalsRepo, checkpoints_marked, goal_checkpoint_repo
+from _milestone_fakes import FakeDeviceRepo, FakeGoalsRepo, checkpoints_marked, goal_checkpoint_repo
 
 
 @pytest.fixture
@@ -90,14 +90,6 @@ def test_marker_rearms_when_the_amount_is_re_pointed_but_not_on_rename(gc):
 # --- notify_goal_checkpoint_crossing (with fakes) --------------------------------------------
 
 
-class _FakeDevice:
-    def __init__(self, tokens=("ExpoTok",)):
-        self._tokens = list(tokens)
-
-    def list_tokens(self):
-        return self._tokens
-
-
 def _spy_send(gc, monkeypatch):
     sent = []
     monkeypatch.setattr(
@@ -111,7 +103,7 @@ def _notify(gc, monkeypatch, goal, old, new, *, synced=True, fired=None, tokens=
     sent = _spy_send(gc, monkeypatch)
     notify = goal_checkpoint_repo(fired or ())
     n = gc.notify_goal_checkpoint_crossing(old, new, goal=goal, goal_id="g1", synced=synced,
-                                           device_repo=_FakeDevice(tokens), notify_repo=notify)
+                                           device_repo=FakeDeviceRepo(tokens), notify_repo=notify)
     return n, sent, notify
 
 
@@ -172,7 +164,7 @@ def test_notify_recross_of_same_rung_fires_once_ever(gc, monkeypatch):
     # The balance falls below a fired rung then rises through it again -> NO second push.
     sent = _spy_send(gc, monkeypatch)
     notify = goal_checkpoint_repo()
-    device = _FakeDevice()
+    device = FakeDeviceRepo()
     goal = _goal("grow", [_cp("cp1", "Halfway", 4000)])
 
     def cross(old, new):
