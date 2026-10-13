@@ -19,7 +19,7 @@ are any. This applies to every agent, including when using the `pr` skill.
 
 # How to communicate with Jas
 
-When explaining, presenting ideas, or writing to Notion:
+When explaining, presenting ideas, or writing to Linear:
 
 - Short sentences. To the point.
 - Bullet points, not paragraphs. Avoid walls of text.
@@ -31,7 +31,7 @@ When explaining, presenting ideas, or writing to Notion:
   either name the actual thing on screen (e.g. "the big 'days left' number") or add
   a plain gloss in parentheses. Use the glossary below for the recurring ones; any
   term not listed still gets a gloss.
-- Applies to chat AND Notion writes.
+- Applies to chat AND Linear writes.
 
 ## Jargon → say instead
 
@@ -82,20 +82,19 @@ applies:
 
 # Filing cards
 
-Every card title follows `<TICKET> <icon> <title>` — e.g.
-`WHIT-82 🏗️ Paginate get_pending_transactions_for_account`. The ticket number in
-the title keeps it searchable; a card you can't find by number gets re-filed as a
-duplicate. When you file a card the board assigns a number to, put that number in
-the title. Icons: 🧪 test · 🚀 feature · 🐞 bug · 🏗️ tech debt · 🔬 spike ·
-🗑️ no-longer-needed.
+Cards are Linear issues in the `abundo` team. Every card title follows
+`<icon> <title>` — e.g. `🏗️ Paginate get_pending_transactions_for_account`.
+Linear assigns the ticket number (`ABU-82`). Search Linear before filing so you
+don't file a duplicate. Give each card the label that matches its icon:
+🧪 Test · 🚀 Feature · 🐞 Bug · 🏗️ Tech debt · 🔬 Spike · 🗑️ No longer needed.
 
 # Project context
 
 ## Board
 
-Notion data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
-Card prefix: `WHIT`
-Default card type: `Task`
+Linear team: `abundo`
+Card prefix: `ABU`
+Default card label: `Improvement`
 
 ## Stack
 
