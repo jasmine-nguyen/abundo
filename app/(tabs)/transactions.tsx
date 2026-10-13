@@ -155,10 +155,15 @@ export default function Transactions() {
     <HeaderTextButton label="Select" onPress={() => { setSelectionMode(true); setSearch(''); }} />
   );
 
+  const freshnessLine = !searchingServer && !showSpinner && !showError
+    ? <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated bankSynced={bankSynced} />
+    : null;
+
   return (
     <View style={{ flex: 1 }}>
     <ScrollChromeHeader
       title="Transactions"
+      subtitle={freshnessLine}
       right={headerRight}
       contentContainerStyle={selectionMode ? styles.contentWithBar : undefined}
       keyboardShouldPersistTaps="handled"
@@ -189,10 +194,6 @@ export default function Transactions() {
             accessibilityLabel="Search transactions"
             maxLength={SEARCH_QUERY_MAX_LEN}
           />
-        )}
-
-        {!searchingServer && !showSpinner && !showError && (
-          <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated bankSynced={bankSynced} />
         )}
 
         {showMatchSummary && (

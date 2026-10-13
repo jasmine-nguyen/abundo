@@ -176,6 +176,7 @@ export default function Budgets() {
   return (
     <ScrollChromeHeader
       title="Budgets"
+      subtitle={showSpinner || showError ? null : <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />}
       right={<HeaderIconButton icon="plus" accessibilityLabel="Add budget" onPress={() => router.push('/budget/pick')} />}
       refreshing={pulling && !showSpinner}
       onRefresh={onRefresh}
@@ -215,8 +216,6 @@ export default function Budgets() {
             </View>
           )}
         </BudgetsHero>
-
-        <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
 
         {SECTIONS.map(({ section, heading }) => {
           const sectionRows = rows.filter((b) => b.section === section);

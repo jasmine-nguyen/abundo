@@ -5,7 +5,7 @@
 // line must name the ORIGINAL load time (not the pull's time).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent, waitFor, within } from '@testing-library/react-native';
 import { pullAndSettle } from './support/pull';
 import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
@@ -43,7 +43,7 @@ it('Accounts: a pull that loses the connection keeps the cards and says "You loo
   server.once('GET', FEED, 'dropped');
   await pullAndSettle();
 
-  await waitFor(() => expect(screen.getByTestId('accounts-stale')).toHaveTextContent('You look offline · showing 9:40am'));
+  await waitFor(() => expect(within(screen.getByTestId('screen-header')).getByTestId('accounts-stale')).toHaveTextContent('You look offline · showing 9:40am'));
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.queryByTestId('accounts-error')).toBeNull();
 
@@ -81,18 +81,20 @@ it('Transactions: always shows "Updated <time>" after a good load, swapped for t
   server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('-$42.00')).toBeTruthy();
-  expect(screen.getByTestId('transactions-updated')).toHaveTextContent('Updated 9:40am');
+  // WHIT-863: the line lives in the screen header, under the title.
+  const header = () => within(screen.getByTestId('screen-header'));
+  expect(header().getByTestId('transactions-updated')).toHaveTextContent('Updated 9:40am');
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 
   jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00'));
   server.once('GET', FEED, { status: 503 });
   await pullAndSettle();
-  await waitFor(() => expect(screen.getByTestId('transactions-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+  await waitFor(() => expect(header().getByTestId('transactions-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
   expect(screen.queryByTestId('transactions-updated')).toBeNull();
 
   jest.setSystemTime(new Date('2026-09-18T10:15:00+10:00'));
   await pullAndSettle();
-  await waitFor(() => expect(screen.getByTestId('transactions-updated')).toHaveTextContent('Updated 10:15am'));
+  await waitFor(() => expect(header().getByTestId('transactions-updated')).toHaveTextContent('Updated 10:15am'));
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 });
 

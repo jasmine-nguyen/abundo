@@ -4,7 +4,7 @@
 // Real ../api over the fake server; ../auth + expo-router mocked; the screen renders under a
 // real QueryClientProvider so the actual query behaviour runs.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
+import { screen, fireEvent, act, waitFor, renderHook, within } from '@testing-library/react-native';
 import { makeClient, wrapper, pause } from './support/queryClient';
 import { BUDGETS, seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
@@ -136,7 +136,7 @@ it('WHIT-713: a failed focus refresh over showing budgets shows the quiet stale 
   renderBudgets(client);
 
   await waitFor(() => expect(budgetReads()).toHaveLength(2));
-  await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+  await waitFor(() => expect(within(screen.getByTestId('screen-header')).getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
   jest.useRealTimers();
 });
