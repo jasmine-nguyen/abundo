@@ -7,7 +7,6 @@ both 401 paths, other-event / PING acknowledge, qualify vs skip, dedupe, no-toke
 mark-on-landing, the error-to-500 paths and token recovery.
 """
 
-import base64
 import json
 import logging
 
@@ -250,12 +249,7 @@ def test_malformed_signed_body_returns_500(lam, monkeypatch):
 # the DECODED bytes end-to-end. If the base64 branch regressed, verify_signature would run
 # over the still-encoded string and 401 instead of pushing.
 def test_base64_encoded_body_pushes_end_to_end(wired):
-    raw = json.dumps(webhook_payload()).encode("utf-8")
-    event = {
-        "body": base64.b64encode(raw).decode("utf-8"),
-        "isBase64Encoded": True,
-        "headers": {SIGNATURE_KEY: sign(raw)},  # signed over the DECODED bytes
-    }
+    event = signed_event(webhook_payload(), is_base64=True)  # signed over the DECODED bytes
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
     assert _marked(wired.notify) == ["txn-1"]
