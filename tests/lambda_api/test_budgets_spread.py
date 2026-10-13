@@ -8,7 +8,7 @@ create and remove the plan. A category has rollover OR a spread, never both.
 
 `handler.current_cycle_window` is monkeypatched to a fixed (cycle_start, today), as the
 rollover suite does, so the cycle math is deterministic. The pure slice math is pinned in
-tests/shared/test_spend_spread.py; here we pin the endpoint behaviour on top of it.
+tests/shared/test_spend.py; here we pin the endpoint behaviour on top of it.
 """
 
 import json

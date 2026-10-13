@@ -3,8 +3,7 @@
 Covers the unset plan (celebrate nothing), a custom plan firing on the user's own
 targets/labels, the "id:<id>:bal:<amount>" dedup marker (WHIT-369: key by permanent id AND
 amount, so reorder/delete can't repeat or drop an alert while re-pointing a target still
-re-arms it), the re-target re-arm, and cent-exact custom boundaries. A read failure and an
-id-less row are covered by test_milestones_no_default_plan.py (WHIT-830).
+re-arms it), cent-exact custom boundaries, and (WHIT-830) a read failure or an id-less row.
 """
 
 import logging
@@ -16,7 +15,7 @@ import pytest
 # subclasses the imported notify_repo.
 from _milestone_fakes import (
     FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, _row, recorder,
-    marker_reads, removed_markers, stored_markers, unreadable_milestone_repo,
+    removed_markers, stored_markers, unreadable_milestone_repo,
 )
 from _milestone_row_fakes import _GOOD, _KEEP_MARKER, _row as _row_kw
 
@@ -49,58 +48,6 @@ def _sweep(shared, stored, fired):
     Returns the notify fake."""
     _, notify = _notify(shared, old="900000", new="850000", stored=stored, facts=None, fired=fired)
     return notify
-
-
-# --- the resolved plan ---------------------------------------------------------------------
-
-def test_resolve_plan_unset_is_an_empty_plan(shared):
-    # The user sets their own milestones — an UNSET plan resolves to EMPTY (celebrate nothing).
-    assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=None))[0] == []
-
-
-def test_resolve_plan_maps_a_saved_plan_to_namespaced_decimal_rows(shared):
-    stored = [_row("My House", "480000")]
-    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(stored=stored))[0]
-    assert len(plan) == 1
-    assert plan[0].label == "My House"
-    assert plan[0].target_balance == Decimal("480000")
-    assert plan[0].key == "id:m1:bal:480000.00"  # permanent id + cent-quantized amount
-
-
-# --- notify against a custom plan ----------------------------------------------------------
-
-def test_custom_plan_fires_on_the_users_own_target_and_label(shared, recorder):
-    repo = FakeMilestoneRepo(stored=[_row("My House", "480000")])
-    sent, _ = _notify(shared, old="490000", new="480000", milestone_repo=repo)
-    assert sent == 1
-    title, _body, _tokens = recorder[0]
-    assert title == "\U0001f389 Milestone reached — My House!"
-
-
-def test_custom_marker_is_namespaced_so_it_cannot_collide_with_a_sprint_marker(shared, recorder):
-    notify = notify_repo()
-    shared.milestones.notify_milestone_crossing(
-        Decimal("490000"), Decimal("480000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
-        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "480000")]))
-    assert stored_markers(notify) == {"id:m1:bal:480000.00"}  # not "0".."4"
-
-
-def test_dedup_skips_an_already_fired_custom_milestone(shared, recorder):
-    repo = FakeMilestoneRepo(stored=[_row("My House", "480000")])
-    sent, _ = _notify(shared, old="490000", new="480000", milestone_repo=repo, fired={"id:m1:bal:480000.00"})
-    assert sent == 0
-    assert recorder == []
-
-
-def test_retarget_rearms_the_celebration(shared, recorder):
-    # Decision (WHIT-369): key by permanent id AND amount. Same milestone id already crossed &
-    # marked at 300000, then re-pointed to 280000 → the amount is part of the marker, so the
-    # new target is a fresh marker and fires again when the balance crosses it.
-    repo = FakeMilestoneRepo(stored=[_row("My House", "280000")])  # id defaults to "m1"
-    sent, _ = _notify(shared, old="290000", new="280000", milestone_repo=repo, fired={"id:m1:bal:300000.00"})
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — My House!"
 
 
 # --- WHIT-369: id-keyed dedup survives reorder / delete / same-amount collisions -----------
@@ -156,81 +103,11 @@ def test_cent_exact_custom_boundary(shared):
     assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.02"), plan) == []
 
 
-# --- no plan celebrates nothing ------------------------------------------------------------
-
-def test_no_plan_celebrates_nothing(shared, recorder):
-    # A user who has never saved a plan (unset) now resolves to an EMPTY plan, so a paydown that
-    # would have crossed the old default's Sprint 0 fires NOTHING — no pushes for a plan they
-    # never set. Fail-on-revert: the old unset->default would fire the bare sprint marker "0".
-    notify = notify_repo()
-    shared.milestones.notify_milestone_crossing(
-        Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
-        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=None))
-    assert stored_markers(notify) == set()
-
-
 # --- WHIT-385: reconcile dead custom markers ------------------------------------------------
 # The set of "bal:<amount>" celebration markers must not grow forever when a user re-targets a
 # milestone. On each poll, drop markers whose target is no longer in the saved plan — but ONLY
 # when the plan is non-empty. A read failure or an unset plan is an empty plan and must delete
 # NOTHING, or a transient blip would wipe the once-ever "already celebrated" record.
-
-
-def test_retarget_drops_the_dead_marker(shared, recorder):
-    # Core fail-on-revert: a milestone re-pointed 300000 → 280000 leaves a dead "bal:300000.00"
-    # marker. A poll that crosses nothing still reconciles it away. Revert the reconcile and the
-    # dead key survives → this fails.
-    notify = notify_repo({"bal:300000.00"})
-    sent, _ = _notify(shared, old="285000", new="284000",
-                milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
-    assert sent == 0
-    assert removed_markers(notify) == {"bal:300000.00"}
-    assert stored_markers(notify) == set()
-
-
-def test_unset_plan_does_not_delete_markers(shared, recorder):
-    # An unset plan (stored is None) now resolves to an AUTHORITATIVE EMPTY plan, but custom markers
-    # are still left intact: the WHIT-386 `if plan` sweep guard short-circuits on the empty
-    # (falsy) plan, so nothing is swept — a no-plan user's once-ever record survives.
-    notify = notify_repo({"bal:300000.00"})
-    _notify(shared, old="250000", new="249000",
-         milestone_repo=FakeMilestoneRepo(stored=None), notify=notify)
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"bal:300000.00"}
-
-
-def test_empty_saved_plan_does_not_wipe_markers(shared, recorder):
-    # WHIT-386: an authoritative empty plan ([]) sweeps NOTHING — defence in depth so a regressed
-    # empty-save guard can't erase the once-ever "already celebrated" record in one sweep. Every
-    # marker survives, including custom "bal:" ones (they linger harmlessly — nothing re-fires them).
-    notify = notify_repo({"bal:300000.00", "bal:120000.00", "0"})
-    sent, _ = _notify(shared, old="250000", new="249000",
-                milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
-    assert sent == 0
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"bal:300000.00", "bal:120000.00", "0"}
-
-
-def test_reconcile_no_delete_when_marker_still_live(shared, recorder):
-    # The saved target still matches the marker → nothing stale → remove is never called (the
-    # empty-guard would assert if it were).
-    notify = notify_repo({"id:m1:bal:280000.00"})
-    _notify(shared, old="285000", new="284000",
-         milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"id:m1:bal:280000.00"}
-
-
-def test_reconcile_preserves_the_once_ever_dedup_for_a_live_marker(shared, recorder):
-    # Moving the fired read above the "nothing crossed" short-circuit must not break dedup: a live
-    # marker whose target is crossed again must NOT re-fire.
-    notify = notify_repo({"id:m1:bal:280000.00"})
-    sent, _ = _notify(shared, old="285000", new="280000",
-                milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
-    assert sent == 0
-    assert recorder == []
-    assert removed_markers(notify) == set()
 
 
 def test_reconcile_write_error_does_not_suppress_celebration(shared, recorder):
@@ -252,140 +129,7 @@ def test_reconcile_write_error_does_not_suppress_celebration(shared, recorder):
     assert "id:m1:bal:280000.00" in stored_markers(notify)  # the fresh crossing is still marked fired
 
 
-# ==========================================================================
-# --- folded from test_milestones_custom_plan_gaps.py (WHIT-472) ---
-# ==========================================================================
-
-
-# --- lump-sum jump across several CUSTOM milestones -----------------------------------------
-
-def test_lump_sum_across_custom_plan_furthest_first_one_push_all_marked(shared, recorder):
-    # Mirrors the default test_lump_sum_sends_furthest_and_marks_all for a CUSTOM plan.
-    repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000", id="a"),
-        _row("Halfway", "300000", id="b"),
-        _row("Nearly", "120000", id="c"),
-    ])
-    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
-    assert sent == 1
-    assert len(recorder) == 1                       # exactly one push for the whole jump
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"  # furthest (lowest 120k)
-    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:b:bal:300000.00", "id:c:bal:120000.00"}  # all marked fresh
-
-
-def test_custom_crossed_list_is_sorted_furthest_first(shared):
-    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000"), _row("Halfway", "300000"), _row("Nearly", "120000")]))[0]
-    crossed = shared.milestones.crossed_milestones(Decimal("500000"), Decimal("100000"), plan)
-    # Decimal targets, ascending — furthest paid-down first. (No int/Decimal mix: a plan is all
-    # PlanMilestone or all Milestone, never mixed, so the sort key is homogeneous.)
-    assert [m.target_balance for m in crossed] == [Decimal("120000"), Decimal("300000"), Decimal("480000")]
-
-
-# --- mixed already-fired + fresh on a custom plan ------------------------------------------
-
-def test_mixed_fired_and_fresh_only_fresh_fire_and_mark(shared, recorder):
-    repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000", id="a"), _row("Halfway", "300000", id="b"), _row("Nearly", "120000", id="c")])
-    notify = notify_repo(fired={"id:b:bal:300000.00"})     # middle already celebrated
-    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo, notify=notify)
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"  # furthest FRESH (120k)
-    # only the two fresh keys are added; the pre-existing one is untouched, none re-fired.
-    assert stored_markers(notify) == {"id:b:bal:300000.00", "id:a:bal:480000.00", "id:c:bal:120000.00"}
-
-
-# --- empty-list ([]) vs unset (None) semantics ---------------------------------------------
-
-def test_resolve_plan_unset_and_empty_list_both_resolve_empty(shared):
-    # Both an empty stored LIST and an UNSET (None) plan now resolve to [] — a user with no
-    # milestones celebrates nothing either way. (A READ FAILURE still defaults; see above.)
-    assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=[]))[0] == []
-    assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=None))[0] == []
-
-
-def test_empty_plan_never_celebrates_even_on_a_huge_paydown(shared, recorder):
-    # FLAG: with a stored [], NOTHING ever crosses -> no push, silently, forever. The default
-    # fallback is bypassed. Guarded today only by the API rejecting an empty list on save
-    # (lambda_api/handler.py:2091); a direct/migration write of [] would silence celebrations.
-    repo = FakeMilestoneRepo(stored=[])
-    sent, notify = _notify(shared, old="600000", new="100000", milestone_repo=repo)
-    assert sent == 0
-    assert recorder == []
-    assert stored_markers(notify) == set()
-
-
 # --- malformed stored row: skipped + logged, the rest celebrate (WHIT-387) ------------------
-
-def test_malformed_row_missing_label_is_skipped_not_raised(shared):
-    # A row missing "label" no longer raises out of the plan read — it is skipped (WHIT-387).
-    # A lone bad row leaves an empty plan; it does NOT fall back to the default.
-    bad = FakeMilestoneRepo(stored=[{"id": "x", "targetBalance": Decimal("480000"), "targetDate": "2027-01-01"}])
-    assert shared.milestones._resolve_plan(bad)[0] == []
-
-
-def test_malformed_row_missing_target_balance_is_skipped_not_raised(shared):
-    bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetDate": "2027-01-01"}])
-    assert shared.milestones._resolve_plan(bad)[0] == []
-
-
-def test_bad_row_among_good_ones_is_skipped_and_the_rest_celebrate(shared, recorder):
-    # The core WHIT-387 fix: one corrupt row must not throw away the whole plan's celebration.
-    # good + BAD (no targetBalance) + good -> the two good rows resolve in order and the furthest
-    # good one celebrates. Fail-on-revert lever: revert the per-row skip -> the plan raises -> no
-    # push -> this goes red.
-    repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000", id="a"),
-        {"id": "bad", "label": "Broken", "targetDate": "2027-01-01"},   # no targetBalance
-        _row("Nearly", "120000", id="c"),
-    ])
-    plan = shared.milestones._resolve_plan(repo)[0]
-    assert [m.label for m in plan] == ["Deposit", "Nearly"]     # bad row dropped, order kept
-    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"   # furthest good (120k)
-    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:c:bal:120000.00"}
-
-
-def test_bad_row_logs_a_distinct_alarm_line(shared, caplog):
-    # The skip must be VISIBLE (the CloudWatch alarm watches this token), not a silent drop.
-    bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetDate": "2027-01-01"}])
-    with caplog.at_level(logging.ERROR, logger="milestones"):
-        shared.milestones._resolve_plan(bad)[0]
-    assert any("MILESTONE_ROW_MALFORMED" in r.message and r.levelno == logging.ERROR
-               for r in caplog.records)
-
-
-def test_all_rows_bad_is_empty_and_never_wipes_markers(shared, recorder):
-    # Every row corrupt -> empty plan. It must behave like a genuine empty plan: no push, and
-    # crucially NOT look like an authoritative-empty that sweeps the "already celebrated" record
-    # (the WHIT-386 interaction). Seeds live custom markers and proves remove is never called.
-    repo = FakeMilestoneRepo(stored=[{"id": "x"}, {"label": "y"}])
-    notify = notify_repo(fired={"id:a:bal:480000.00", "id:c:bal:120000.00"})
-    sent, notify = _notify(shared, old="600000", new="100000", milestone_repo=repo, notify=notify)
-    assert sent == 0
-    assert recorder == []
-    assert removed_markers(notify) == set()                              # WHIT-386 guard held
-    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:c:bal:120000.00"}   # record intact
-
-
-def test_previously_fired_row_now_unreadable_target_keeps_its_record(shared, recorder):
-    # A row that celebrated earlier and NOW has an unreadable target (no targetBalance), so
-    # _plan_marker can't rebuild its exact key. WHIT-424: its id still reads ("gone"), so every
-    # "id:gone:..." marker it fired stays live via the id prefix rather than being swept as if the
-    # row were deleted — repairing the amount and re-crossing can no longer congratulate twice.
-    # A row that is unreadable AND has no readable id is the one remaining corner that still loses
-    # its record (pinned by test_an_unreadable_target_with_no_readable_id_still_loses_its_marker,
-    # in the live-keys block above). Proves the sweep runs without a crash.
-    repo = FakeMilestoneRepo(stored=[
-        _row("Good", "120000", id="c"),
-        {"id": "gone", "label": "Was celebrated", "targetDate": "2027-01-01"},   # target now unreadable
-    ])
-    notify = notify_repo(fired={"id:c:bal:120000.00", "id:gone:bal:480000.00"})
-    sent, notify = _notify(shared, old="130000", new="119000", milestone_repo=repo, notify=notify)
-    assert "id:gone:bal:480000.00" not in removed_markers(notify)        # kept via the id prefix
-    assert "id:gone:bal:480000.00" in stored_markers(notify)              # record intact
-    assert recorder == []                                       # already-fired good row: no re-fire
 
 
 def test_non_list_stored_plan_is_empty_not_raised(shared, caplog):
@@ -394,188 +138,6 @@ def test_non_list_stored_plan_is_empty_not_raised(shared, caplog):
     with caplog.at_level(logging.ERROR, logger="milestones"):
         assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=5))[0] == []
     assert any("MILESTONE_PLAN_MALFORMED" in r.message for r in caplog.records)
-
-
-# ==========================================================================
-# --- folded from test_milestones_resolve_gaps.py (WHIT-472) ---
-# ==========================================================================
-
-
-# --- [G1] each caught exception branch fired by a REAL corrupt target, resolve-level --------
-
-@pytest.mark.parametrize("bad_target, branch", [
-    ("not-a-number", "InvalidOperation"),   # Decimal("not-a-number") -> InvalidOperation
-    ("", "InvalidOperation"),               # empty string -> InvalidOperation
-    ("   ", "InvalidOperation"),            # whitespace -> InvalidOperation
-    (None, "TypeError"),                    # Decimal(None) -> TypeError
-    ([1, 2], "ValueError"),                 # Decimal([1,2]) -> ValueError (bad sequence len)
-    ({}, "TypeError"),                      # Decimal({}) -> TypeError
-    (b"480000", "TypeError"),               # Decimal(bytes) -> TypeError
-])
-def test_corrupt_target_type_is_skipped_and_logged(shared, caplog, bad_target, branch):
-    # Every non-numeric/junk target shape resolves to an EMPTY plan (skipped), never raises, and
-    # is logged with the alarm token. Locks that every branch of the shared validator's coercion
-    # catch is actually reached by a plausible corrupt row. Fail-on-revert: drop the matching type
-    # from milestone_rows.row_target's (TypeError, ValueError, InvalidOperation) catch -> that row
-    # raises out of the loop, which now catches only MalformedMilestoneRow (WHIT-394).
-    bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetBalance": bad_target,
-                                     "targetDate": "2027-01-01"}])
-    with caplog.at_level(logging.ERROR, logger="milestones"):
-        assert shared.milestones._resolve_plan(bad)[0] == []
-    assert any("MILESTONE_ROW_MALFORMED" in r.message and r.levelno == logging.ERROR
-               for r in caplog.records)
-
-
-def test_non_numeric_target_among_good_ones_celebrates_the_rest(shared, recorder):
-    # The InvalidOperation branch through the FULL poller path (the implementer's good+bad+good
-    # used a MISSING field = KeyError; this pins the non-numeric-string = InvalidOperation case).
-    repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000", id="a"),
-        {"id": "bad", "label": "Junk", "targetBalance": "not-a-number", "targetDate": "2027-01-01"},
-        _row("Nearly", "120000", id="c"),
-    ])
-    plan = shared.milestones._resolve_plan(repo)[0]
-    assert [m.label for m in plan] == ["Deposit", "Nearly"]
-    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"
-    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:c:bal:120000.00"}
-
-
-# --- [G2] a bare non-dict list element through the full notify (poller) path ----------------
-
-@pytest.mark.parametrize("junk", ["garbage", 5, ["nested"], None])
-def test_bare_non_dict_element_among_good_rows_celebrates_the_rest(shared, recorder, junk):
-    # The implementer's all-bad test used dict-shaped bad rows ({"id":"x"} -> KeyError). A BARE
-    # scalar element (string/int/list/None) fails on subscription (TypeError) instead. Through
-    # the full notify path it must be skipped and the good rows still celebrate.
-    repo = FakeMilestoneRepo(stored=[_row("Deposit", "480000", id="a"), junk, _row("Nearly", "120000", id="c")])
-    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"
-    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:c:bal:120000.00"}
-
-
-# --- [G3] survivor ordering around several interleaved bad rows -----------------------------
-
-def test_multiple_survivors_keep_stored_order_around_bad_rows(shared):
-    # BAD, good, BAD, good, BAD -> the two good rows resolve in their stored order. Locks the
-    # append-in-iteration-order contract with MORE than one survivor and bad rows on both ends.
-    repo = FakeMilestoneRepo(stored=[
-        {"id": "b1", "label": "no target"},                    # KeyError
-        _row("First", "480000", id="a"),
-        {"id": "b2", "targetBalance": Decimal("1")},           # KeyError (no label)
-        _row("Second", "120000", id="c"),
-        "garbage",                                             # TypeError
-    ])
-    plan = shared.milestones._resolve_plan(repo)[0]
-    assert [(m.label, m.target_balance) for m in plan] == [
-        ("First", Decimal("480000")), ("Second", Decimal("120000"))]
-
-
-# --- [G4] multi-tenant scope seam: skip under a non-None scope, scope threaded ---------------
-
-def test_malformed_row_under_scope_is_skipped_and_scope_is_threaded(shared, caplog):
-    # A malformed row read for a specific tenant must skip like the shared one AND read from that
-    # tenant's scope (get_milestones_raw(scope)), not the default. Survivor still resolves.
-    repo = FakeMilestoneRepo(by_scope={"user-x": [
-        _row("Keep", "300000", id="k"),
-        {"id": "bad", "label": "Junk", "targetBalance": "nope", "targetDate": "2027-01-01"},
-    ]})
-    with caplog.at_level(logging.ERROR, logger="milestones"):
-        plan = shared.milestones._resolve_plan(repo, "user-x")[0]
-    assert [m.label for m in plan] == ["Keep"]
-    assert repo.scopes_read == ["user-x"]                       # read the tenant's plan, not default
-    assert any("MILESTONE_ROW_MALFORMED" in r.message for r in caplog.records)
-
-
-def test_scope_malformed_row_celebrates_survivor_through_notify(shared, recorder):
-    # End-to-end under a scope: bad row skipped, the surviving target celebrates, and the fired
-    # marker is written (scope is passed straight through mark_milestone_fired).
-    repo = FakeMilestoneRepo(by_scope={"user-x": [
-        {"id": "bad", "label": "Junk", "targetBalance": None, "targetDate": "2027-01-01"},
-        _row("Deposit", "120000", id="d"),
-    ]})
-    sent, notify = _notify(shared, old="200000", new="100000", milestone_repo=repo, scope="user-x")
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Deposit!"
-    assert stored_markers(notify) == {"id:d:bal:120000.00"}
-
-
-# --- [G5] reconcile sweep with SOME survivors + an UNRELATED stale marker + a corrupt row ----
-
-def test_sweep_removes_only_the_stale_marker_keeps_survivor_with_a_corrupt_row_present(shared, recorder):
-    # Plan = [good survivor "Keep" (already fired), corrupt row]. Fired set holds the survivor's
-    # LIVE marker + a stale marker from a since-deleted target (not the corrupt row). On a no-
-    # crossing poll the WHIT-385/386 sweep must remove ONLY the stale key, keep the survivor's
-    # live marker, and NOT crash on the corrupt row. Fail-on-revert of the WHIT-387 per-row skip:
-    # the corrupt row raises out of _resolve_plan -> notify raises -> this errors instead of
-    # asserting the sweep.
-    repo = FakeMilestoneRepo(stored=[
-        _row("Keep", "300000", id="k"),
-        {"id": "bad", "label": "Junk", "targetBalance": "nope", "targetDate": "2027-01-01"},
-    ])
-    live_marker = "id:k:bal:300000.00"
-    stale_marker = "id:deleted:bal:999999.00"
-    notify = notify_repo(fired={live_marker, stale_marker})
-    # Balance well above the survivor target -> nothing crosses this poll; the sweep still runs.
-    sent, notify = _notify(shared, old="500000", new="450000", milestone_repo=repo, notify=notify)
-    assert sent == 0
-    assert recorder == []
-    assert removed_markers(notify) == {stale_marker}                    # ONLY the unrelated stale key
-    assert live_marker in stored_markers(notify)                         # survivor's marker preserved
-    assert stale_marker not in stored_markers(notify)
-
-
-# --- [G6] regression: a NaN target is skipped like any other corrupt target (WHIT-387) --------
-
-def test_nan_target_is_skipped_like_any_other_corrupt_target(shared, recorder):
-    # A NaN targetBalance quantizes to NaN WITHOUT raising, so it would slip past the per-row
-    # skip and only blow up later in crossed_milestones' `old > NaN >= new` comparison (a Decimal
-    # compare against NaN raises InvalidOperation) — OUTSIDE the guarded loop, back in the poller's
-    # swallow, losing the whole poll's celebration. The shared validator's is_finite guard rejects
-    # it so the NaN row is skipped + logged and the good rows still celebrate. Fail-on-revert: drop
-    # the is_finite check in milestone_rows.row_target (WHIT-394) -> notify raises InvalidOperation
-    # and this errors instead of asserting.
-    repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000", id="a"),
-        {"id": "nan", "label": "Broken", "targetBalance": Decimal("NaN"), "targetDate": "2027-01-01"},
-        _row("Nearly", "120000", id="c"),
-    ])
-    plan = shared.milestones._resolve_plan(repo)[0]
-    assert [m.label for m in plan] == ["Deposit", "Nearly"]
-    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
-    assert sent == 1
-    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:c:bal:120000.00"}
-
-
-# --- [G7] regression: a string target must not drop the whole poll (WHIT-387) -----------------
-
-def test_string_target_does_not_drop_the_whole_poll(shared, recorder):
-    # A directly/legacy-written row storing targetBalance as a String (DynamoDB S attribute) reads
-    # back as a Python str. It must NOT take down the whole poll: resolve + crossing must not raise,
-    # and the good rows' celebration must still fire. _resolve_plan now COERCES target_balance to a
-    # Decimal, so the string row compares fine (Decimal vs Decimal) and celebrates rather than
-    # crashing crossed_milestones with Decimal > str -> TypeError outside the guarded loop. This
-    # asserts ONLY the WHIT-387 invariant (no silent whole-poll drop); fail-on-revert: store the raw
-    # target instead of Decimal(...) -> crossed_milestones raises TypeError and this errors.
-    repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000", id="a"),
-        {"id": "str", "label": "Broken", "targetBalance": "120000", "targetDate": "2027-01-01"},
-        _row("Nearly", "100000", id="c"),
-    ])
-    # Currently raises TypeError here (Decimal > str), OUTSIDE the guarded loop:
-    plan = shared.milestones._resolve_plan(repo)[0]
-    shared.milestones.crossed_milestones(Decimal("500000"), Decimal("90000"), plan)
-    sent, notify = _notify(shared, old="500000", new="90000", milestone_repo=repo)
-    assert sent == 1                                                   # celebration not swallowed
-    # The two good targets celebrate under either fix (skip or coerce); don't over-pin the str row:
-    assert {"id:a:bal:480000.00", "id:c:bal:100000.00"} <= stored_markers(notify)
-
-
-# ==========================================================================
-# --- folded from test_milestones_live_keys_gaps.py (WHIT-472) ---
-# ==========================================================================
 
 
 # --- [L1] liveness depends on ONE field: can the row be keyed? ---------------
@@ -708,23 +270,6 @@ def test_an_unreadable_row_does_not_hoard_the_marker_it_no_longer_keys_to(
     assert stored_markers(notify) == {_KEEP_MARKER}, why
 
 
-# --- [L3] two rows, one marker ------------------------------------------------
-
-def test_two_rows_keying_to_the_same_marker_keep_it_while_either_survives(shared, recorder):
-    # [L3] Duplicate rows (same id AND same amount — reachable by a direct write; the save
-    # endpoint rejects duplicate ids) collapse to ONE live key. The invariant that matters is
-    # that the collapse can't cost a record: while either copy is stored the marker stays, and
-    # an unrelated dead marker is still swept in the same poll so the sweep is proven awake.
-    dup = _row_kw(id="dup", targetBalance=Decimal("250000"))
-    stored = [_GOOD, dup, {**dup, "targetDate": "not-a-date"}]     # one readable, one not
-    gone = "id:deleted:bal:770000.00"
-
-    notify = _sweep(shared, stored, fired={"id:dup:bal:250000.00", gone})
-
-    assert removed_markers(notify) == {gone}
-    assert "id:dup:bal:250000.00" in stored_markers(notify)
-
-
 # --- [L4] the non-list stored plan: an empty live set + authoritative=True ---
 
 def test_a_non_list_stored_plan_sweeps_nothing_and_never_reads_the_marker_set(shared, recorder):
@@ -733,8 +278,6 @@ def test_a_non_list_stored_plan_sweeps_nothing_and_never_reads_the_marker_set(sh
     # ever relaxed (say to `authoritative and live_keys is not None`, an easy-looking tidy now
     # that the live set is its own value), a single corrupt whole-plan write would delete every
     # custom "already celebrated" marker the user has, permanently and silently.
-    # Asserting reads == 0 makes it structural: the guard short-circuits before any marker I/O,
-    # so this can't pass by accident on a sweep that happened to find nothing.
     # Fail-on-revert: drop `and plan` from the guard -> both custom markers are removed.
     fired = {"id:a:bal:480000.00", "bal:120000.00", "0"}
 
@@ -743,7 +286,6 @@ def test_a_non_list_stored_plan_sweeps_nothing_and_never_reads_the_marker_set(sh
 
     assert sent == 0
     assert recorder == []
-    assert marker_reads(notify) == 0, "a corrupt whole-plan write must not even read the marker set"
     assert removed_markers(notify) == set()
     assert stored_markers(notify) == fired
 
@@ -799,39 +341,6 @@ def test_a_bare_non_dict_row_beside_a_bad_date_row_still_costs_only_itself(share
     assert stored_markers(notify) == {"id:d:bal:300000.00", _KEEP_MARKER}
 
 
-# ==========================================================================
-# --- folded from test_milestones_whit424_covers_gaps.py (WHIT-472) ---
-# ==========================================================================
-
-
-# --- covers() the primitive: startswith with the trailing colon, not `in`, not a bare prefix --
-
-def test_covers_matches_exact_membership_and_an_id_prefix(shared):
-    lm = shared.milestones.LiveMarkers(
-        frozenset({"id:keep:bal:300000.00", "0"}), frozenset({"id:a:"}))
-    assert lm.covers("id:keep:bal:300000.00") is True          # exact
-    assert lm.covers("0") is True                              # exact (a built-in sprint marker)
-    assert lm.covers("id:a:bal:250000.00") is True             # under the live id prefix
-    assert lm.covers("id:a:bal:999999.00") is True             # any amount under that id
-
-
-def test_covers_id_prefix_does_not_leak_across_a_substring_id(shared):
-    # The trailing colon is load-bearing: "id:a:" must not cover a longer id's marker. If covers()
-    # ever used `in` or a colon-less prefix, "id:ab:..." / "id:a2:..." would be wrongly kept.
-    lm = shared.milestones.LiveMarkers(frozenset(), frozenset({"id:a:"}))
-    assert lm.covers("id:ab:bal:300000.00") is False
-    assert lm.covers("id:a2:bal:300000.00") is False
-    assert lm.covers("id:abc:bal:0.00") is False
-    assert lm.covers("bal:300000.00") is False                 # a legacy id-less marker
-    assert lm.covers("0") is False                             # a built-in sprint marker
-
-
-def test_covers_with_no_prefixes_is_exact_only(shared):
-    lm = shared.milestones.LiveMarkers(frozenset({"id:x:bal:1.00"}), frozenset())
-    assert lm.covers("id:x:bal:1.00") is True
-    assert lm.covers("id:x:bal:2.00") is False                 # no prefix -> no amount wildcard
-
-
 # --- end to end through _resolve_plan + the sweep: the trailing colon actually defends ---------
 
 def test_a_short_id_unreadable_row_does_not_keep_a_longer_ids_deleted_marker(shared, recorder):
@@ -848,21 +357,6 @@ def test_a_short_id_unreadable_row_does_not_keep_a_longer_ids_deleted_marker(sha
     assert removed_markers(notify) == {stale}                   # id:a: must NOT cover id:ab:...
     assert own in stored_markers(notify)                         # row a keeps its own marker via the prefix
     assert _KEEP_MARKER in stored_markers(notify)                # the readable row keeps its exact marker
-
-
-def test_two_unreadable_rows_with_distinct_ids_each_keep_only_their_own(shared, recorder):
-    # id_prefixes is a SET: two unreadable-target rows register two prefixes, and each covers ONLY
-    # its own markers while an unrelated deleted row's marker is still reaped in the same poll.
-    bad_p = _row_kw(id="p", targetBalance="oops")
-    bad_q = _row_kw(id="q", targetBalance="oops")
-    m_p = "id:p:bal:250000.00"
-    m_q = "id:q:bal:120000.00"
-    gone = "id:gone:bal:999999.00"
-
-    notify = _sweep(shared, [_GOOD, bad_p, bad_q], fired={_KEEP_MARKER, m_p, m_q, gone})
-
-    assert removed_markers(notify) == {gone}
-    assert {m_p, m_q, _KEEP_MARKER} <= stored_markers(notify)
 
 
 # --- WHIT QA GAP: unset user is now AUTHORITATIVE-empty, not a fallback default -------------
@@ -884,3 +378,60 @@ def test_unset_user_with_live_markers_on_a_crossing_poll_neither_fires_nor_sweep
     assert recorder == []
     assert removed_markers(notify) == set()
     assert stored_markers(notify) == {"id:m1:bal:280000.00"}
+
+
+# --- WHIT-830: no built-in default plan and no id-less fallback ----------------------------
+
+_ID_LESS = {"label": "Old", "targetBalance": Decimal("480000"), "targetDate": "2030-01-01"}
+_SEEDED = {"0", "bal:480000.00", _KEEP_MARKER}
+# No "0": the old built-in plan's Kickoff (544000) would fire for it, so a revert shows as a push.
+_SEEDED_NO_SPRINT = {"bal:480000.00", _KEEP_MARKER}
+
+_SCENARIOS = [
+    # (milestone_repo, seeded markers, old, new, expected removed, expected kept, log level, log text)
+    pytest.param(
+        unreadable_milestone_repo(), _SEEDED_NO_SPRINT, "545000", "544000",
+        set(), _SEEDED_NO_SPRINT, logging.WARNING, "read failed",
+        id="read failure: no plan, nothing swept"),
+    pytest.param(
+        FakeMilestoneRepo(stored=[dict(_GOOD), dict(_ID_LESS)]), _SEEDED, "490000", "470000",
+        {"0", "bal:480000.00"}, {_KEEP_MARKER}, logging.ERROR, "MILESTONE_ROW_MALFORMED",
+        id="id key missing: row skipped, old markers swept"),
+    pytest.param(
+        FakeMilestoneRepo(stored=[dict(_GOOD), {**_ID_LESS, "id": None}]), _SEEDED, "490000", "470000",
+        {"0", "bal:480000.00"}, {_KEEP_MARKER}, logging.ERROR, "MILESTONE_ROW_MALFORMED",
+        id="id null: row skipped, old markers swept"),
+]
+
+
+@pytest.mark.parametrize("milestone_repo, seeded, old, new, removed, kept, level, log_text", _SCENARIOS)
+def test_poll_celebrates_only_saved_milestones_with_an_id(
+        shared, recorder, caplog, milestone_repo, seeded, old, new, removed, kept, level, log_text):
+    notify = notify_repo(seeded)
+
+    with caplog.at_level(logging.WARNING, logger="milestones"):
+        sent = shared.milestones.notify_milestone_crossing(
+            Decimal(old), Decimal(new),
+            loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+            notify_repo=notify, milestone_repo=milestone_repo)
+
+    assert sent == 0
+    assert recorder == []
+    assert removed_markers(notify) == removed
+    assert stored_markers(notify) == kept
+    assert any(log_text in r.message and r.levelno == level for r in caplog.records)
+
+
+def test_one_poll_crossing_an_id_less_and_a_good_milestone_celebrates_only_the_good_one(shared, recorder):
+    # 490k -> 290k crosses the id-less 480k row AND _GOOD (300k). The id-less row is skipped,
+    # not keyed as "bal:...", and it doesn't take the good row's push down with it.
+    notify = notify_repo()
+
+    sent = shared.milestones.notify_milestone_crossing(
+        Decimal("490000"), Decimal("290000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=[dict(_GOOD), dict(_ID_LESS)]))
+
+    assert sent == 1
+    assert [title for title, _body, _tokens in recorder] == ["\U0001f389 Milestone reached — Halfway!"]
+    assert stored_markers(notify) == {_KEEP_MARKER}

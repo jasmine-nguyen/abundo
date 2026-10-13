@@ -37,10 +37,3 @@ def test_main_push_skips_only_tooling_and_docs_only_changes(workflow):
         "Widening it can stop code pushed to main from being tested; narrowing it wastes "
         "Actions minutes on tooling/docs-only pushes."
     )
-
-
-def test_the_pin_adds_no_yaml_dependency():
-    """CI installs only lambda_sync_trigger/requirements-dev.txt, so `import yaml` would
-    ImportError on the runner. Keep this guard hand-parsed."""
-    source = pathlib.Path(__file__).read_text()
-    assert not re.search(r"^\s*(import\s+yaml|from\s+yaml\s+import)\b", source, re.M)

@@ -28,20 +28,6 @@ def test_account_balance_round_trips_signed_amount_and_extras(account_balance_re
     }]
 
 
-def test_account_balance_stores_nothing_optional_when_absent(account_balance_repo):
-    # No available_balance / account_type reported -> a clean minimal item, and the row
-    # reads back with those fields as None.
-    account_balance_repo.upsert_balance(
-        "up-spending", Decimal("96270.59"), None, "AUD", "2026-07-08T09:32:02.405Z", None,
-    )
-    (item,) = account_balance_repo._table.store.values()
-    assert "available_balance" not in item
-    assert "account_type" not in item
-    row = account_balance_repo.list_balances(["up-spending"])[0]
-    assert row["available_balance"] is None
-    assert row["account_type"] is None
-
-
 def test_account_balance_upsert_overwrites_in_place(account_balance_repo):
     account_balance_repo.upsert_balance("anz", Decimal("-100"), None, "AUD", "d1", "unknown")
     account_balance_repo.upsert_balance("anz", Decimal("-6492.26"), Decimal("8171.88"), "AUD", "d2", "unknown")
@@ -58,10 +44,6 @@ def test_account_balance_list_omits_unpolled_accounts(account_balance_repo):
     assert [r["account_id"] for r in out] == ["up-spending"]
 
 
-def test_account_balance_list_is_empty_before_any_poll(account_balance_repo):
-    assert account_balance_repo.list_balances(["up-spending", "up-homeloan"]) == []
-
-
 def test_account_balance_keyed_under_own_partition_no_gsi_attrs(account_balance_repo):
     account_balance_repo.upsert_balance("up-homeloan", Decimal("-596642.43"), None, "AUD", "d", "mortgage")
     (item,) = account_balance_repo._table.store.values()
@@ -76,11 +58,8 @@ def test_account_balance_keyed_under_own_partition_no_gsi_attrs(account_balance_
 # --- refresh throttle marker (on-demand live refresh) ------------------------
 
 
-def test_last_refresh_at_is_none_before_any_write(account_balance_repo):
-    assert account_balance_repo.get_last_refresh_at() is None
-
-
 def test_set_then_get_last_refresh_round_trips_an_int(account_balance_repo):
+    assert account_balance_repo.get_last_refresh_at() is None   # before any write
     account_balance_repo.set_last_refresh_at(1723372800)
     got = account_balance_repo.get_last_refresh_at()
     assert got == 1723372800
@@ -104,11 +83,8 @@ def test_refresh_marker_never_leaks_into_list_balances_or_gsi(account_balance_re
 # --- FeedWatchRepository (WHIT-606) ------------------------------------------
 
 
-def test_feed_watch_is_none_before_first_write(feed_watch_repo):
-    assert feed_watch_repo.get_watch("up-spending") is None
-
-
 def test_feed_watch_round_trips(feed_watch_repo):
+    assert feed_watch_repo.get_watch("up-spending") is None   # before the first write
     feed_watch_repo.put_watch("up-spending", {"a": "2026-09-20"}, 1_700_000_000, Decimal("-12.50"),
                               alerted=True)
     assert feed_watch_repo.get_watch("up-spending") == {

@@ -118,20 +118,6 @@ class _EndlessTransactionRepo:
         return [dict(row) for row in self._page], {"page": len(self.calls)}
 
 
-class _FailingTransactionRepo(_QueuedTransactionRepo):
-    """Serves queued (items, cursor) pages, then raises the given error."""
-
-    def __init__(self, error, pages=()):
-        super().__init__(pages=pages)
-        self._error = error
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        if not self._pages:
-            self.calls.append((account_id, start_date, end_date, limit, cursor))
-            raise self._error
-        return super().get_transactions_by_date_range(account_id, start_date, end_date, limit, cursor)
-
-
 class _PagedStoreTransactionRepo:
     """A re-readable store: copies of the account's rows from start, two at a time,
     with an integer offset cursor and None on the last page."""

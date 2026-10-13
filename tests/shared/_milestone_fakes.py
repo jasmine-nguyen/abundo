@@ -141,16 +141,6 @@ def removed_markers(repo):
     return removed
 
 
-def removal_calls(repo):
-    """How many DELETE writes reached the table."""
-    return len(_marker_writes(repo, "DELETE"))
-
-
-def marker_reads(repo):
-    """How many times the marker set was read."""
-    return len(scopes_read(repo))
-
-
 def scopes_read(repo):
     """The sort key (owner) of each marker-set read, in order. The shared tenant's is "FIRED"."""
     return [key["sk"] for key in repo._table.get_item_keys if key["pk"] == _MARKERS_PK]

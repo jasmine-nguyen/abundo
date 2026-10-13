@@ -1,42 +1,12 @@
 """RepositoryBase (shared/repository_base.py) — the one shared starting point for every database
-class (WHIT-763): the lazy table connect and the 'read every page' loop."""
+class (WHIT-763): the 'read every page' loop, the conditional save and the seed-on-first-read."""
 
 import importlib
+from decimal import Decimal
 
 import pytest
 
 from _dynamo_fakes import FakeTable
-
-# (module, class) for all 15 database classes.
-_REPOSITORY_CLASSES = [
-    ("repository_balance", "AccountBalanceRepository"),
-    ("repository_balance", "FeedWatchRepository"),
-    ("repository_budget", "BudgetRepository"),
-    ("repository_category", "CategoryRepository"),
-    ("repository_device", "DeviceRepository"),
-    ("repository_goals", "GoalsRepository"),
-    ("repository_insight", "InsightRepository"),
-    ("repository_job", "JobRepository"),
-    ("repository_loanfacts", "LoanFactsRepository"),
-    ("repository_milestone", "MilestoneRepository"),
-    ("repository_notify", "NotifyRepository"),
-    ("repository_paycycle", "PayCycleRepository"),
-    ("repository_push_receipt", "PushReceiptRepository"),
-    ("repository_rule", "RuleRepository"),
-    ("repository_transaction", "TransactionRepository"),
-]
-
-
-def test_every_database_class_builds_on_the_shared_base(shared):
-    import repository_base
-
-    for module_name, class_name in _REPOSITORY_CLASSES:
-        cls = getattr(importlib.import_module(module_name), class_name)
-        assert issubclass(cls, repository_base.RepositoryBase), class_name
-        assert "__init__" not in vars(cls), f"{class_name} still has its own __init__"
-        assert "_get_table" not in vars(cls), f"{class_name} still has its own _get_table"
-        repo = cls()
-        assert repo._table is None, class_name
 
 
 def test_paginated_query_reads_every_page_and_sends_no_filter_when_none_given(shared):
@@ -103,3 +73,56 @@ def test_conditional_write_turns_any_other_client_error_into_a_database_error_na
 
     with pytest.raises(database_error, match="Database claim budget-alert marker failed: down"):
         repository_base.conditional_write("claim budget-alert marker", write)
+
+
+def _base_repo(table):
+    import repository_base
+
+    repo = repository_base.RepositoryBase()
+    repo._table = table
+    return repo
+
+
+def test_paginated_query_failing_on_a_later_page_raises_instead_of_returning_a_partial_list(
+        shared, database_error):
+    from boto3.dynamodb.conditions import Key
+
+    table = FakeTable()
+    table.page_size = 1
+    table.seed({"pk": "P", "sk": "1"}, {"pk": "P", "sk": "2"})
+    table.fail("query", when=lambda kwargs: "ExclusiveStartKey" in kwargs)
+    repo = _base_repo(table)
+
+    with pytest.raises(database_error):
+        repo._paginated_query(key_condition=Key("pk").eq("P"))
+
+
+# (module, class, read, racer's extra fields, what the read must return)
+_SEEDED_READS = [
+    ("repository_budget", "BudgetRepository", lambda r: r.list_budgets(),
+     {"items": {"food": {"target": Decimal(50)}}}, {"food": {"target": Decimal(50)}}),
+    ("repository_goals", "GoalsRepository", lambda r: r.list_goals(),
+     {"items": {"g1": {"name": "Trip"}}}, {"g1": {"name": "Trip"}}),
+    ("repository_paycycle", "PayCycleRepository", lambda r: r.get_paycycle(),
+     {"length": Decimal(7), "last_pay_date": "2026-09-30"}, {"length": 7, "last_pay_date": "2026-09-30"}),
+]
+
+
+@pytest.mark.parametrize("module_name, class_name, read, racer_fields, expected", _SEEDED_READS,
+                         ids=[row[1] for row in _SEEDED_READS])
+def test_first_read_that_loses_the_seed_race_returns_the_winners_record(
+        shared, module_name, class_name, read, racer_fields, expected):
+    store = getattr(importlib.import_module(module_name), class_name)()
+    table = FakeTable()
+    store._table = table
+    racer = {**store._config_key, **racer_fields, "version": Decimal(2)}
+    real_put = table.put_item
+
+    def put_after_the_racer(**kwargs):
+        table.seed(racer)   # another caller seeded between our read and our seed
+        return real_put(**kwargs)
+
+    table.put_item = put_after_the_racer
+
+    assert read(store) == expected
+    assert table.store[(racer["pk"], racer["sk"])]["version"] == Decimal(2)

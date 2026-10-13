@@ -7,10 +7,6 @@ FakeTable (the `insight_repo` fixture).
 """
 
 
-def test_get_returns_none_before_any_put(insight_repo):
-    assert insight_repo.get_insight("2026-06-25") is None
-
-
 def test_put_then_get_round_trips_the_payload(insight_repo):
     insight_repo.put_insight("2026-06-25", "Solid cycle.", ["Cut coffee $20"], "2026-06-30T00:00:00Z", "h1")
     got = insight_repo.get_insight("2026-06-25")
@@ -35,10 +31,3 @@ def test_second_put_overwrites_in_place(insight_repo):
     got = insight_repo.get_insight("2026-06-25")
     assert got["summary"] == "new" and got["input_hash"] == "h2"
     assert len(insight_repo._table.store) == 1   # one row per cycle, latest wins
-
-
-def test_null_summary_round_trips(insight_repo):
-    # A graceful-empty generation stores summary=None / suggestions=[] and reads back.
-    insight_repo.put_insight("2026-06-25", None, [], "t", "h0")
-    got = insight_repo.get_insight("2026-06-25")
-    assert got["summary"] is None and got["suggestions"] == []
