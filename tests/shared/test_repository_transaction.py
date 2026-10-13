@@ -189,8 +189,10 @@ def test_conditional_write_leaves_a_row_the_user_filed_mid_run(repo):
     # FAIL-ON-REVERT: drop the condition (or compare against the wrong value) and the store below
     # reads "eatingout" — the user's tap silently overwritten, which is the whole bug.
     key = _seed(repo, "coffee")
-    assert repo.update_transaction_category_if_unchanged(*key, "eatingout", None) == ("changed", "coffee")
-    assert repo._table.store[key]["category"] == "coffee"
+    assert repo.update_transaction_category_if_unchanged(
+        *key, "eatingout", None, filed_by_rule="rule-9", budget_excluded=True) == ("changed", "coffee")
+    # The rule's stamp and exclusion ride the same refused write, so neither lands either.
+    assert repo._table.store[key] == {"pk": key[0], "sk": key[1], "category": "coffee"}
 
 
 def test_conditional_write_reports_a_deleted_row_as_gone(repo):

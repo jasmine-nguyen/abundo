@@ -1,4 +1,4 @@
-"""Reader for a workflow's `on.push.paths-ignore` list
+"""Readers for a workflow's `on.pull_request.paths` and `on.push.paths-ignore` lists
 (WHIT-435 / WHIT-436 / WHIT-634).
 
 Two guard files hand-rolled this parse and DIVERGED: one broke the list on any
@@ -11,8 +11,9 @@ Hand-parsed, not via PyYAML: CI installs only lambda_sync_trigger/requirements-d
 (pytest, pytest-cov, standardwebhooks), so `import yaml` ImportErrors on the runner. The
 one rule that matters — a `#` line is not an entry — is encoded directly.
 
-The reader is scoped to the `push:` block, NOT the first matching key in the file, so
-another event's list can't report an entry that `push:` had dropped.
+Each reader is scoped to its own event block, NOT the first matching key in the file:
+`push:` is declared above `pull_request:`, so reading the wrong block could report an
+entry present when that event had dropped it.
 
 Takes TEXT, not a path, so a guard can drive it against fabricated YAML and prove it
 still reads the shape it claims to.
@@ -22,6 +23,11 @@ import re
 
 # One list entry: a quoted or bare scalar, stopping before any inline `# comment`.
 _ENTRY = re.compile(r"-\s*(?:\"([^\"]*)\"|'([^']*)'|([^#\s]+))")
+
+
+def pull_request_paths(text: str) -> list:
+    """The live `on.pull_request.paths` entries declared in a workflow's YAML `text`."""
+    return _block_list(text, "pull_request", "paths")
 
 
 def push_paths_ignore(text: str) -> list:

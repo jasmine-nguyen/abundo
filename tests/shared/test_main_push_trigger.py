@@ -32,6 +32,11 @@ def test_main_push_skips_only_tooling_and_docs_only_changes(workflow):
         f"{workflow} must still run on every push to main (`branches: [main]` under push:)"
     )
 
+    # GitHub rejects a trigger with both `paths:` and `paths-ignore:`, and then nothing runs at all.
+    assert not re.search(r"^\s*paths:", push_block.group("body"), re.M), (
+        f"{workflow}'s push trigger mixes `paths:` with `paths-ignore:`, which GitHub refuses"
+    )
+
     assert set(push_paths_ignore(text)) == _TOOLING_AND_DOCS, (
         f"{workflow}'s on.push.paths-ignore must be exactly {sorted(_TOOLING_AND_DOCS)}. "
         "Widening it can stop code pushed to main from being tested; narrowing it wastes "

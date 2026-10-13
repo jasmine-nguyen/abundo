@@ -32,6 +32,7 @@ def _alarm_metrics(text):
 
 def test_alarms_fit_the_free_tier():
     names = alarm_names(MONITORING_TF.read_text())
+    assert names, "read no alarms from monitoring.tf: the reader broke, so every check below passes empty"
     assert len(names) <= FREE_TIER_ALARMS, f"{len(names)} alarms, free tier is {FREE_TIER_ALARMS}: {names}"
 
     for tf_file in TERRAFORM_DIR.glob("*.tf"):

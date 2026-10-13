@@ -174,19 +174,29 @@ def test_does_not_stash_receipts_for_dead_or_id_less_tickets(shared, stores, mon
 
 
 def test_receipt_store_failure_is_swallowed(shared, stores, monkeypatch):
-    # A failing receipt store must never break the send (best-effort, never raises).
+    # A failing receipt store must never break the send (best-effort, never raises), and one
+    # failed save must not drop the receipts after it (the sweep would never prune those devices).
     push = shared.push
+    tried = []
 
-    class _BoomReceiptRepo:
+    class _FlakyReceiptRepo:
         def put(self, receipt_id, token):
-            raise RuntimeError("dynamo down")
+            tried.append(receipt_id)
+            if receipt_id == "r2":
+                raise RuntimeError("dynamo blip")
 
-    monkeypatch.setattr(push, "PushReceiptRepository", _BoomReceiptRepo)
-    monkeypatch.setattr(
-        push.urllib.request, "urlopen",
-        lambda req, timeout=None: FakeResponse({"data": [{"status": "ok", "id": "r"}]}))
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
-    assert out == {"sent": 1, "ok": 1, "pruned": []}
+    tokens = ["ExpoPushToken[a]", "ExpoPushToken[b]", "ExpoPushToken[c]"]
+    monkeypatch.setattr(push, "PushReceiptRepository", _FlakyReceiptRepo)
+    monkeypatch.setattr(push.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(
+        {"data": [{"status": "ok", "id": f"r{i}"} for i in (1, 2, 3)]}))
+    assert push.send_push("T", "B", tokens) == {"sent": 3, "ok": 3, "pruned": []}
+    assert tried == ["r1", "r2", "r3"]
+
+    def _unopenable():
+        raise RuntimeError("no store")
+
+    monkeypatch.setattr(push, "PushReceiptRepository", _unopenable)
+    assert push.send_push("T", "B", tokens) == {"sent": 3, "ok": 3, "pruned": []}
 
 
 def test_transport_error_is_swallowed(shared, stores, monkeypatch):
@@ -425,7 +435,7 @@ def test_first_batch_failure_does_not_stop_later_batches(shared, stores, monkeyp
     assert out == {"sent": 150, "ok": 50, "pruned": []}  # only the 2nd batch's 50 landed
 
 
-# --- folded from test_push_receipt_capture_edge.py (WHIT-463) ---
+# --- folded from test_push_receipts_sweep_extra.py ---
 
 
 # WHIT-139 — [A20] a chunk with both `data` and a top-level `errors` array keeps the data

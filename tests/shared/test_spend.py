@@ -86,6 +86,8 @@ def test_the_last_payback_cycle_is_index_n_and_the_plan_is_over_at_n_plus_one(sh
     amount = Decimal("1390.91")
     assert shared.spend.spread_adjustment(amount, 4, 4) == Decimal("-347.72")
     assert shared.spend.spread_adjustment(amount, 4, 5) == Decimal(0)
+    assert shared.spend.spread_adjustment(amount, 4, 500) == Decimal(0)   # long finished
+    assert shared.spend.spread_adjustment(amount, 4, -1) == Decimal(0)    # corrupt future anchor
 
 
 # --- spread_index: an UNCAPPED elapsed-cycle count ------------------------------

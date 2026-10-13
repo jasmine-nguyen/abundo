@@ -211,18 +211,20 @@ def test_find_carry_twin_with_no_rows_or_missing_fields_finds_nothing(pending_ca
 # [A8] (P0) the carry with the taxonomy check: a raw bank category on the pending never
 # replaces the twin's category, and counts_to_budget follows whatever category landed
 # (home-loan account → never counts).
-def test_carry_keeps_the_twin_category_over_a_raw_pending_category(pending_carry):
+# The budget flag is recomputed from the twin's own account: a home-loan charge never counts.
+@pytest.mark.parametrize("account_id, counts", [(_ACCOUNT, True), ("up-homeloan", False)])
+def test_carry_keeps_the_twin_category_over_a_raw_pending_category(pending_carry, account_id, counts):
     is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     pending = _pending(category="TRANSFER_OUT", notes="gift")
     twin = _row("posted-1", "2026-06-11", status="posted", category="FOOD_AND_DRINK",
-                filed_by_rule="rule-9")
+                filed_by_rule="rule-9", account_id=account_id)
 
     carried = pending_carry.with_carried_category(twin, pending, is_unfiled=is_unfiled)
 
     assert carried["category"] == "FOOD_AND_DRINK"
     assert carried["filed_by_rule"] == "rule-9"
     assert carried["notes"] == "gift"
-    assert carried["counts_to_budget"] is True
+    assert carried["counts_to_budget"] is counts
 
 
 # [A3] (P1) WHIT-666 boundary: only a REAL note / tag / exclusion claims a settled charge. An

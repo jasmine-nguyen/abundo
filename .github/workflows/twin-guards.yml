@@ -10,7 +10,9 @@ name: Twin-file drift guards
 #
 # So this job fires ONLY on client (src/, app/) changes and runs the `crosslang` marker
 # (pytest.ini) unscoped — no hand-maintained filename list; tests/conftest.py fails an
-# unmarked test that reads a client file, so the selector can't rot.
+# unmarked test that reads a client file, so the selector can't rot. test_twin_guards_job.py
+# pins this trigger + command AND that python-tests.yml still runs the full suite, so the
+# "server side is covered elsewhere" assumption this narrowing rests on can't drift silently.
 #
 # Caveat (same as the other two workflows): if branch protection marks this a REQUIRED
 # check, a path-skipped run reads "pending" and can block a PR that touches none of the

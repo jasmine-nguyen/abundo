@@ -259,7 +259,8 @@ def test_an_unreadable_row_does_not_hoard_the_marker_it_no_longer_keys_to(
     # longer parses. If it didn't, every marker a WHIT-417-rejected row ever wrote would
     # accumulate forever and the WHIT-385 sweep would be off for exactly those rows.
     # The row is deliberately UNREADABLE (bad date) — a readable one is already covered by
-    # test_stale_swept_and_fresh_crossing_fires_same_poll; this is the path that changed.
+    # test_milestones.py::test_reconcile_and_dedup_coexist_live_fired_not_refired; this is the
+    # path that changed.
     # Fail-on-revert: add every stored row's OLD markers to live_keys (e.g. skip the sweep when
     # the row is unreadable) -> `removed` is empty.
     bad = _row_kw(targetDate="not-a-date", label="Moved", **replacement)

@@ -8,13 +8,27 @@ Different cycle keys map to different items, so a new cycle re-arms.
 import pytest
 from decimal import Decimal
 
-from _dynamo_fakes import FakeTable
+from _dynamo_fakes import FakeTable, error_code
 
 
 def _repo(shared, *_):
     r = shared.notify.NotifyRepository()
     r._table = FakeTable()
     return r
+
+
+# The fake must refuse what DynamoDB refuses, or a store that sends one passes every test here
+# and 500s in prod (WHIT-636 / WHIT-676).
+@pytest.mark.parametrize("expression, names, values", [
+    ("ADD #f :m", {"#f": "fired"}, {":m": set()}),
+    ("ADD #f :m", {"#f": "fired", "#x": "unused"}, {":m": {"a"}}),
+    ("ADD #f :m", {"#f": "fired"}, {":m": {1}}),
+], ids=["empty-set", "unused-alias", "number-set"])
+def test_the_fake_table_refuses_what_dynamodb_refuses(shared, expression, names, values):
+    with pytest.raises(Exception) as excinfo:
+        FakeTable().update_item(Key={"pk": "NOTIFY#X", "sk": "FIRED"}, UpdateExpression=expression,
+                                ExpressionAttributeNames=names, ExpressionAttributeValues=values)
+    assert error_code(excinfo) == "ValidationException"
 
 
 def _assert_no_ttl_written(table):
@@ -36,22 +50,28 @@ def test_different_cycle_is_a_separate_marker_set(shared):
     assert r.fired_markers("2026-07-15", 14) == set()
 
 
-def test_mark_writes_a_ttl(shared):
+@pytest.mark.parametrize("write, key", [
+    (lambda r: r.mark_fired("2026-07-01", 14, "groceries#80"), ("NOTIFY#2026-07-01#14", "FIRED")),
+    (lambda r: r.claim_fired("2026-07-01", 14, "groceries#80"), ("NOTIFY#2026-07-01#14", "FIRED")),
+    (lambda r: r.mark_repayment_fired("txn-1"), ("NOTIFY#REPAYMENT", "FIRED")),
+    (lambda r: r.mark_repayment_push(300000, "txn-1", fired_at=1000), ("NOTIFY#REPAYPUSH", "FIRED")),
+], ids=["alert-mark", "alert-claim", "repayment", "repayment-push"])
+def test_notify_markers_expire_the_ttl_after_now(shared, monkeypatch, write, key):
+    # Too soon and the "already sent" marker is gone before the cycle ends, so the alert re-sends;
+    # missing and the item never cleans itself up.
+    monkeypatch.setattr(shared.notify.time, "time", lambda: 1_000_000)
     r = _repo(shared)
-    r.mark_fired("2026-07-01", 14, "groceries#80")
-    item = r._table.store[("NOTIFY#2026-07-01#14", "FIRED")]
-    assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
+    write(r)
+    assert r._table.store[key]["expires_at"] == 1_000_000 + shared.notify.NOTIFY_TTL_SECONDS
 
 
 # --- WHIT-577: claim before send, release when the push didn't land -----------
 
 
-def test_claim_on_a_new_cycle_creates_the_marker_and_ttl(shared, client_error):
+def test_claim_on_a_new_cycle_creates_the_marker(shared, client_error):
     r = _repo(shared, client_error)
     assert r.claim_fired("2026-07-01", 14, "groceries#80") is True
-    item = r._table.store[("NOTIFY#2026-07-01#14", "FIRED")]
-    assert item["fired"] == {"groceries#80"}
-    assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
+    assert r._table.store[("NOTIFY#2026-07-01#14", "FIRED")]["fired"] == {"groceries#80"}
 
 
 def test_claim_beside_other_markers_adds_this_one(shared, client_error):

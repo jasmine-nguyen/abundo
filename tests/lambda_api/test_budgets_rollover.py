@@ -8,7 +8,7 @@ cycles are recomputed live. These tests pin that flow.
 
 `handler.current_cycle_window` is monkeypatched to a fixed (cycle_start, today) so the cycle
 math is deterministic (the real one reads the wall clock). The pure stepping helper
-`completed_cycle_windows` is exercised directly in tests/shared/test_spend_windows.py.
+`completed_cycle_windows` is exercised directly in tests/shared/test_spend.py.
 """
 
 import pathlib

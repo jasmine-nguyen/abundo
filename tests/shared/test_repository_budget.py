@@ -185,6 +185,19 @@ def test_clearing_an_already_clean_entry_writes_nothing(shared, budget_repo, con
     assert table.store[_KEY]["items"] == items
 
 
+@pytest.mark.parametrize("clear", ["delete_budget", "clear_rollover", "clear_spread"])
+def test_clearing_with_no_budgets_item_yet_writes_nothing(shared, budget_repo, config_item_table, clear):
+    # No target was ever set -> no BUDGETS item. Must not crash (a 500 after the category
+    # delete already landed) and must not seed an item nobody asked for.
+    table = config_item_table("BUDGETS", present=False)
+    _with_table(budget_repo, table)
+
+    getattr(budget_repo, clear)("coffee")
+
+    assert len(table.update_calls) == 0
+    assert _KEY not in table.store
+
+
 def test_rollover_fields_tuple_matches_what_the_writes_persist(shared, budget_repo, config_item_table):
     # GUARD (qa WHIT-474): _ROLLOVER_FIELDS is what clear_rollover strips. It MUST equal every
     # rollover key the writes can persist — set_budget(anchor) + settle_carryover — minus target.
