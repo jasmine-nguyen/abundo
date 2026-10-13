@@ -102,6 +102,19 @@ def test_get_by_date_range_filters_between_two_dates(repo):
     assert [it["date"] for it in items] == ["2026-01-05"]
 
 
+def test_bank_sync_markers_round_trip_per_account_outside_the_transaction_rows(repo):
+    # WHIT-858: none → {}; each account keeps its own latest time; the marker rows carry no
+    # account_id/date, so the date-index feed never reads them as transactions.
+    assert repo.get_bank_synced_at() == {}
+    repo.mark_bank_synced({"up-spending"}, 100)
+    repo.mark_bank_synced({"up-spending", "anz-rewards-black-visa"}, 200)
+    repo.mark_bank_synced({"westpac-altitude-qantas-black"}, 150)
+    assert repo.get_bank_synced_at() == {
+        "up-spending": 200, "anz-rewards-black-visa": 200, "westpac-altitude-qantas-black": 150,
+    }
+    assert all("account_id" not in row and "date" not in row for row in repo._table.store.values())
+
+
 def test_get_by_date_range_scopes_to_the_account(repo):
     _seed_dated(repo, "acct", ["2026-01-01"])
     _seed_dated(repo, "other", ["2026-01-02"])

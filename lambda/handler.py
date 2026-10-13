@@ -1,6 +1,7 @@
 """AWS Lambda entry point for syncing BankSync transactions into DynamoDB."""
 
 import logging
+import time
 
 from banksync import UnknownAccountError, normalise
 from models import Transaction
@@ -121,6 +122,9 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
 
     repo.save_failed_transactions(unmapped_transactions)
 
+    # Taken before the deleted/$0 drops: those rows still prove the bank delivered (WHIT-858).
+    synced_account_ids = {transaction["account_id"] for transaction in normalised_transactions}
+
     # A charge the user deleted must not come back through a BankSync re-send (WHIT-654): drop it
     # before rules, alerts or the write ever see it.
     normalised_transactions = _drop(
@@ -172,6 +176,13 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # with nothing written; it was also dead — handle_database_error converts every
     # ClientError to a DatabaseError before it could reach here (WHIT-83, WHIT-127).
     repo.insert_or_reconcile(normalised_transactions, is_unfiled=is_unfiled)
+
+    # When the bank last delivered for each account, for the app's "Bank synced" line (best-effort).
+    if synced_account_ids:
+        try:
+            repo.mark_bank_synced(synced_account_ids, int(time.time()))
+        except Exception:
+            logger.exception("bank sync marker write failed (ignored)")
 
     # After the write succeeds, fire any budget threshold reached this cycle (best-effort).
     if alert_ctx is not None:

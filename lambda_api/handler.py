@@ -656,8 +656,9 @@ def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
 
     Unlike GET /transactions (a fixed 7-day rolling window returning a bare array), this
     merges every account with NO date floor and returns a cursor so the app can walk back
-    to the start of history. Returns {"transactions": [...], "nextCursor": <opaque string|null>};
-    nextCursor is null once every account is exhausted. Bad input → 400.
+    to the start of history. Returns {"transactions": [...], "nextCursor": <opaque string|null>,
+    "bankSyncedAt": {account_id: epoch ms}}; nextCursor is null once every account is exhausted,
+    and bankSyncedAt holds each account's latest bank delivery (WHIT-858). Bad input → 400.
     """
     limit, resume_keys, error = _parse_feed_page_params(event)
     if error is not None:
@@ -669,6 +670,7 @@ def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
     return _json_response(200, {
         "transactions": page,
         "nextCursor": _encode_feed_cursor(next_resume_keys),
+        "bankSyncedAt": {account_id: synced * 1000 for account_id, synced in repo.get_bank_synced_at().items()},
     })
 
 

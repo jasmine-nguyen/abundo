@@ -75,6 +75,15 @@ def test_row_shape_strips_keys_and_defaults_category(handler):
     assert txn["transaction_id"] == "s1"
 
 
+def test_feed_returns_each_accounts_bank_sync_time_in_ms(handler):
+    # WHIT-858: each delivered account's time, seconds → ms ({} with none: the empty-history test).
+    _, repo, _ = real_repos({})
+    repo.mark_bank_synced({SPENDING}, 1_760_000_000)
+    repo.mark_bank_synced({WESTPAC}, 1_759_900_000)
+    body = json.loads(handler.get_transactions_feed(_feed_event({}), repo)["body"])
+    assert body["bankSyncedAt"] == {SPENDING: 1_760_000_000_000, WESTPAC: 1_759_900_000_000}
+
+
 # --- multi-page correctness: no dupes, no gaps, newest-first -----------------
 
 
@@ -120,7 +129,7 @@ def test_empty_history_returns_empty_page_and_null_cursor(handler):
     table, repo, _ = real_repos({})
     resp = handler.get_transactions_feed(_feed_event({}), repo)
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"transactions": [], "nextCursor": None}
+    assert json.loads(resp["body"]) == {"transactions": [], "nextCursor": None, "bankSyncedAt": {}}
 
 
 def test_last_page_returns_null_cursor_and_a_follow_up_is_empty(handler):

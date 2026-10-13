@@ -52,7 +52,7 @@ export default function Transactions() {
   }, [sheetMode, firstFilingSeen, markFirstFilingSeen]);
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
-  const { transactions, category, isLoading, isError, error, refreshError, updatedAt, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
+  const { transactions, category, isLoading, isError, error, refreshError, updatedAt, bankSynced, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -192,7 +192,7 @@ export default function Transactions() {
         )}
 
         {!searchingServer && !showSpinner && !showError && (
-          <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated />
+          <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated bankSynced={bankSynced} />
         )}
 
         {showMatchSummary && (

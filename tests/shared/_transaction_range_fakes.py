@@ -97,6 +97,9 @@ class _AccountPagesTransactionRepo(_PendingPool):
         self._pages = {account_id: list(pages) for account_id, pages in (pages_by_account or {}).items()}
         self.calls = []
 
+    def get_bank_synced_at(self):
+        return {}
+
     def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
         self.calls.append((account_id, start_date, end_date, limit, cursor))
         queue = self._pages.get(account_id)
