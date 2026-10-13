@@ -22,17 +22,16 @@ import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
 
 // Live auth store (superset). The static-'authed' siblings never touch the status, so it stays
-// 'authed' for them; the two sign-out siblings flip it via setAuthStatus to drive sign-out.
+// 'authed' for them; the two sign-out siblings call signOut().
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-import { setAuthStatus, resetAuth } from './support/authMock';
+import { resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 import { cafeTxn, colesTxn } from './factory';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
 const sentBodies = (path: string) => server.sent('PATCH', path).map((request) => request.body);
-
-function signOut() { act(() => { queryClient.clear(); setAuthStatus('anon'); }); }
 
 const CAT = GROCERIES;
 const txn = (over: Partial<Transaction> = {}) => colesTxn({ category: 'groceries', ...over });

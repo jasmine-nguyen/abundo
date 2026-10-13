@@ -6,10 +6,10 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { render, renderHook, act, waitFor } from '@testing-library/react-native';
 import * as api from '../api';
 import { useAiInsights } from '../hooks/useAiInsights';
-import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth, setAuthStatus, setAuthStatusQuietly } from './support/authMock';
+import { signOut } from './support/signOut';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, settle, useTestQueryClient } from './support/renderWithQueries';
 import { queriesAppWrapper as wrapper } from './support/renderWithApp';
@@ -78,8 +78,7 @@ it('sign-out clears the summary and spinner, and a generate answering after re-s
   await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
   await waitFor(() => expect(result.current.isLoading).toBe(true));
 
-  // Sign-out, as auth.ts does it: wipe the query cache, then move to 'anon'.
-  act(() => { queryClient.clear(); setAuthStatus('anon'); });
+  signOut();
   await waitFor(() => expect(result.current.insights).toBeNull());
   expect(result.current.isLoading).toBe(false);
   expect(result.current.isError).toBe(false);
@@ -103,7 +102,7 @@ it("a stale generate failing after re-sign-in neither stops the new session's sp
   act(() => { pendingA = result.current.generate(null); });
   await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
 
-  act(() => { queryClient.clear(); setAuthStatus('anon'); });
+  signOut();
   act(() => { setAuthStatus('authed'); });
   const heldB = server.hold('/insights/ai');
   act(() => { void result.current.generate(null); });

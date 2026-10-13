@@ -9,6 +9,8 @@
 //   ...
 //   act(() => setAuthStatus('locked'));
 //
+// For a full sign-out (cache wipe, then anon) use signOut() from ./support/signOut.
+//
 // The real query hooks read this same store, so draw the screen with support/renderWithQueries.
 // The jest.mock factory uses require() (not the import) so it survives hoisting; every path
 // resolves to this one module instance, so setAuthStatus() and the real useIsAuthed share state.
