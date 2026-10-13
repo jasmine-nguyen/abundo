@@ -11,9 +11,8 @@ Hand-parsed, not via PyYAML: CI installs only lambda_sync_trigger/requirements-d
 (pytest, pytest-cov, standardwebhooks), so `import yaml` ImportErrors on the runner. The
 one rule that matters — a `#` line is not an entry — is encoded directly.
 
-Each reader is scoped to its own event block, NOT the first matching key in the file:
-`push:` is declared above `pull_request:`, so reading the wrong block could report an
-entry present when that event had dropped it.
+The reader is scoped to the `push:` block, NOT the first matching key in the file, so
+another event's list can't report an entry that `push:` had dropped.
 
 Takes TEXT, not a path, so a guard can drive it against fabricated YAML and prove it
 still reads the shape it claims to.
