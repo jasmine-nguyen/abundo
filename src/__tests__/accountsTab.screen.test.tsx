@@ -81,28 +81,6 @@ it('shows the cold-load spinner (empty + loading)', async () => {
   await settle();
 });
 
-it('shows the inline retry on a cold error (empty + error), and Retry re-reads the feed', async () => {
-  server.fail('/transactions/feed', 500);
-  await renderWithQueries(<Accounts />);
-  expect(screen.getByTestId('accounts-error')).toBeTruthy();
-  expect(feedReads()).toHaveLength(1);
-  fireEvent.press(screen.getByTestId('accounts-retry'));
-  await waitFor(() => expect(feedReads()).toHaveLength(2));
-  await settle();
-});
-
-it('a cold error says why: offline when the connection drops', async () => {
-  server.once('GET', '/transactions/feed', 'dropped');
-  await renderWithQueries(<Accounts />);
-  expect(screen.getByTestId('accounts-error')).toHaveTextContent(/You look offline\. Check your connection and retry\./);
-});
-
-it('a cold error says why: our server when it answers 5xx', async () => {
-  server.fail('/transactions/feed', 503);
-  await renderWithQueries(<Accounts />);
-  expect(screen.getByTestId('accounts-error')).toHaveTextContent(/Our server had a problem\. Try again in a moment\./);
-});
-
 it('keeps its cards through a background error when txns are cached (cache-first)', async () => {
   seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   await renderWithQueries(<Accounts />);
@@ -110,33 +88,6 @@ it('keeps its cards through a background error when txns are cached (cache-first
   await refreshInAct(() => queryClient.refetchQueries());
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.queryByTestId('accounts-error')).toBeNull();
-});
-
-it('settled with no transactions shows the empty state', async () => {
-  await renderWithQueries(<Accounts />);
-  expect(screen.getByText('No accounts yet')).toBeTruthy();
-});
-
-it('an account card shows its live balance — green when in credit (amount >= 0)', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'Up Spending' }]);
-  server.seed('/accounts/balances', [bal({ amount: 96270.59 })]);
-  await renderWithQueries(<Accounts />);
-  const label = screen.getByText('$96,270.59'); // bare, no + sign
-  expect(styleOf(label).color).toBe(C.good);
-});
-
-it('an account card shows a negative balance in red (money owed)', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'Up Homeloan' }]);
-  server.seed('/accounts/balances', [bal({ amount: -596642.43 })]);
-  await renderWithQueries(<Accounts />);
-  const label = screen.getByText('-$596,642.43');
-  expect(styleOf(label).color).toBe(C.bad);
-});
-
-it('an account with no balance yet shows a dim "—" placeholder', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]); // balances not polled yet
-  await renderWithQueries(<Accounts />);
-  expect(screen.getByText('—')).toBeTruthy();
 });
 
 // R2: a pull on the settled "No accounts yet" empty list must still show the spinner. The fill

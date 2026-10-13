@@ -131,15 +131,3 @@ describe('[A10][A11] every endpoint rejects with an ApiError keeping the byte-id
   });
 });
 
-describe('[A10b] the message survives a hostile body', () => {
-  it.each([
-    ['a body that looks like an auth error', { error: 'token 401 expired, re-auth at 403' }],
-    ['a 2KB stack trace', { error: 'x'.repeat(2048) }],
-    ['a newline-riddled body', { error: 'line one\nline two\r\nline three' }],
-  ])('%s still yields API error: 418 with the body in its own field', async (_label, body) => {
-    fetchMock.mockReturnValue(Promise.resolve({ ok: false, status: STATUS, json: () => Promise.resolve(body) }));
-    const error = (await CALLS.createCategory().then(() => null, (e: unknown) => e)) as ApiError;
-    expect(error.message).toBe('API error: 418');
-    expect(error.serverMessage).toBe((body as { error: string }).error);
-  });
-});

@@ -33,8 +33,8 @@ _PAYLOADS_BY_AID = {
     "T6d8ppsYssBDFCwl1qEb0w": _payload("T6d8ppsYssBDFCwl1qEb0w", -596642.43, "mortgage"),
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0":
         _payload("9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0", -6492.26, "unknown"),
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A":
-        _payload("A3AC9195-9E8D-48B8-86D0-46D130D7F64A", -230, "unknown"),
+    "CC6EE20D-4931-4B10-86CA-EADD45A062DC":
+        _payload("CC6EE20D-4931-4B10-86CA-EADD45A062DC", -230, "unknown"),
 }
 
 

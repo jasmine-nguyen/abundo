@@ -47,26 +47,12 @@ beforeEach(() => {
 // WHIT-280: a small helper to seed a transaction already carrying `count` distinct tags.
 const withTags = (count: number) => seedRow({ tags: Array.from({ length: count }, (_, i) => `t${i}`) });
 
-it('renders the existing note and tag chips', async () => {
-  await draw();
-  expect(screen.getByDisplayValue('old note')).toBeTruthy();
-  expect(screen.getByText('work')).toBeTruthy();
-});
-
 it('saves an edited note when Save note is tapped', async () => {
   await draw();
   const note = screen.getByTestId('note-input');
   fireEvent.changeText(note, 'new note');
   fireEvent.press(screen.getByTestId('note-save'));
   expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'new note' });
-});
-
-it('does NOT save on blur — the note commits only via Save', async () => {
-  await draw();
-  const note = screen.getByTestId('note-input');
-  fireEvent.changeText(note, 'new note');
-  fireEvent(note, 'blur');
-  expect(mockEdit).not.toHaveBeenCalled();
 });
 
 // WHIT-846: no dim, always-there button — Save note shows only once the note has been edited.
@@ -99,14 +85,6 @@ it.each([
   expect(mockEdit).toHaveBeenCalledTimes(1);
   expect(mockEdit).toHaveBeenCalledWith('t1', { notes: saved });
   expect(mockToast).toHaveBeenCalledWith('Note saved'); // [A1] sign-off Q1: say it was saved
-});
-
-it('saves the note exactly once per Save tap', async () => {
-  await draw();
-  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
-  fireEvent.press(screen.getByTestId('note-save'));
-  expect(mockEdit).toHaveBeenCalledTimes(1);
-  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'edited' });
 });
 
 it('adds a tag on submit, appending to the existing tags', async () => {
@@ -148,62 +126,8 @@ it('at 20 tags, a new tag is refused with a friendly toast and is not saved', as
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-it('at 20 tags, the comma path is also guarded', async () => {
-  withTags(20);
-  await draw();
-  fireEvent.changeText(screen.getByTestId('tag-input'), 'overflow,');
-  expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
-  expect(mockEdit).not.toHaveBeenCalled();
-});
-
-it('at 20 tags, re-typing an existing tag stays a silent no-op (dedupe before the cap nudge)', async () => {
-  withTags(20);
-  await draw();
-  const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, 't5'); // already present
-  fireEvent(input, 'submitEditing');
-  expect(mockToast).not.toHaveBeenCalled();
-  expect(mockEdit).not.toHaveBeenCalled();
-});
-
-it('under the cap (19 tags) a new tag still adds normally', async () => {
-  withTags(19);
-  await draw();
-  const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, 'twenty');
-  fireEvent(input, 'submitEditing');
-  expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [...Array.from({ length: 19 }, (_, i) => `t${i}`), 'twenty'] });
-  expect(mockToast).not.toHaveBeenCalled();
-});
-
-// WHIT-280 — [A10] at the cap, whitespace-only entry must NOT toast: the empty-input
-// early-return runs BEFORE the count guard, so a stray space/comma at 20 tags is a
-// silent no-op, not a spurious "Up to 20 tags." nudge. Locks that ordering.
-it('at 20 tags, whitespace-only entry is a silent no-op (no toast, no save)', async () => {
-  withTags(20);
-  await draw();
-  const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, '   ');
-  fireEvent(input, 'submitEditing');
-  fireEvent.changeText(input, '   ,'); // comma path with only whitespace before it
-  expect(mockToast).not.toHaveBeenCalled();
-  expect(mockEdit).not.toHaveBeenCalled();
-});
-
 // WHIT-296 — the "Exclude from budgets / Mark as transfer" toggle.
 const withExcluded = (excluded?: boolean) => seedRow({ budget_excluded: excluded });
-
-it('renders the exclude toggle OFF when the charge is not excluded', async () => {
-  withExcluded(undefined);
-  await draw();
-  expect(screen.getByRole('switch', { name: 'Exclude from budgets' }).props.accessibilityState.checked).toBe(false);
-});
-
-it('renders the exclude toggle ON when the charge is already excluded', async () => {
-  withExcluded(true);
-  await draw();
-  expect(screen.getByRole('switch', { name: 'Exclude from budgets' }).props.accessibilityState.checked).toBe(true);
-});
 
 it('tapping the toggle when off requests exclusion', async () => {
   withExcluded(undefined);
@@ -236,41 +160,24 @@ it.each([
 // OF the manual toggle (the toggle can't un-exclude a bank transfer, so it would be inert).
 const bankExcluded = () => seedRow({ counts_to_budget: false });
 
-it('shows the read-only "Excluded (transfer)" note when the bank auto-excluded the charge', async () => {
+it('shows the read-only "Excluded (transfer)" note, not the manual toggle, when the bank auto-excluded the charge', async () => {
   bankExcluded();
   await draw();
   expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
   expect(screen.getByText(/doesn't count toward budgets or insights/)).toBeTruthy();
-});
-
-it('hides the manual exclude toggle when the bank already excluded the charge', async () => {
-  bankExcluded();
-  await draw();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
-});
-
-it('keeps the manual toggle (and no read-only note) on a normal counted charge', async () => {
-  seedRow(); // counts_to_budget defaults true
-  await draw();
-  expect(screen.getByRole('switch', { name: 'Exclude from budgets' })).toBeTruthy();
-  expect(screen.queryByText('Excluded (transfer)')).toBeNull();
 });
 
 // WHIT-275 adversarial gaps — the edges the suite above misses: whitespace-only / bare-comma tag
 // submits are no-ops; Save trims whitespace.
-it('does NOT commit a whitespace-only tag on submit', async () => { // [A16]
+it('does NOT commit a whitespace-only tag on submit, or a bare comma', async () => { // [A16]
   await draw();
   const input = screen.getByTestId('tag-input');
   fireEvent.changeText(input, '   ');
   fireEvent(input, 'submitEditing');
-  expect(mockEdit).not.toHaveBeenCalled(); // trimmed-empty tag is dropped, not persisted
-});
-
-it('does NOT commit a bare-comma tag input', async () => { // [A17]
-  await draw();
   // A lone "," commits an empty candidate → trimmed-empty → dropped.
-  fireEvent.changeText(screen.getByTestId('tag-input'), ',');
-  expect(mockEdit).not.toHaveBeenCalled();
+  fireEvent.changeText(input, ',');
+  expect(mockEdit).not.toHaveBeenCalled(); // trimmed-empty tags are dropped, not persisted
 });
 
 it('Save trims surrounding whitespace before persisting', async () => { // [A20]

@@ -8,11 +8,6 @@
 //
 // The shadowed-folder guard (themeLayout.logic.test.ts) is the fourth consumer: it drives walkSrc
 // (below) to catch a file and a same-named folder sitting side by side.
-//
-// The router-mock scan (support/routerMockScan.ts) uses stripComments and matchingBrace to read
-// each jest.mock(...) call whole.
-//
-// The shared-wait guard (sharedQueryWaits.screen) hands its line rule to findOffenders.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 
@@ -40,73 +35,18 @@ function shippedSourceFiles(): string[] {
   return out.sort();
 }
 
-// Every .ts/.tsx file under `dir`, relative to `root` and forward-slashed — the test-tree guards
-// scan this.
-export function testFiles(root: string, dir: string = root): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return testFiles(root, path);
-    if (!/\.tsx?$/.test(entry.name)) return [];
-    return [relative(root, path).split(sep).join('/')];
-  });
-}
-
-export const TESTS_DIR = join(__dirname, '..');
-
-// Every `file:line` under the test tree whose line matches, skipping allow-listed files
-// (keys are testFiles keys: root-relative, forward-slashed).
-export function findOffenders(
-  match: (line: string) => boolean,
-  allowed: Set<string>,
-  root: string = TESTS_DIR,
-): string[] {
-  return testFiles(root)
-    .filter((file) => !allowed.has(file))
-    .flatMap((file) =>
-      readFileSync(join(root, file), 'utf8')
-        .split('\n')
-        .flatMap((line, index) => (match(line) ? [`${file}:${index + 1}`] : [])),
-    );
-}
-
 // A comment describing a colour is documentation, not shipped colour — src/theme.ts spells several
 // out in the token comments on purpose. The `[^:]` guard keeps `https://` inside a string from
 // reading as the start of a line comment.
 // Known rough edge: a `//` inside a non-URL string literal is treated as a comment. Contrived
 // enough to accept; if that ever bites, fix it HERE and every guard picks it up.
-export function stripComments(src: string): string {
+function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 }
 
 // repo-relative path -> its code with comments stripped.
 export function shippedCode(): Map<string, string> {
   return new Map(shippedSourceFiles().map((abs) => [repoPath(abs), stripComments(readFileSync(abs, 'utf8'))]));
-}
-
-// Index of the closing character that matches the opening one at `open`, or -1. Works for any
-// open/close pair ('{' '}' by default, '(' ')' for a call). Skips string literals whole.
-export function matchingBrace(src: string, open: number, openChar = '{', closeChar = '}'): number {
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    const char = src[i];
-    if (char === "'" || char === '"' || char === '`') {
-      i = skipString(src, i);
-      continue;
-    }
-    if (char === openChar) depth++;
-    else if (char === closeChar && --depth === 0) return i;
-  }
-  return -1;
-}
-
-// Index of the closing quote of the string opened at `start`, honouring backslash escapes.
-function skipString(src: string, start: number): number {
-  const quote = src[start];
-  for (let i = start + 1; i < src.length; i++) {
-    if (src[i] === '\\') { i++; continue; }
-    if (src[i] === quote) return i;
-  }
-  return src.length - 1;
 }
 
 // WHIT-413 — the shadowed-folder walk, kept here (a root param, not a hard-coded SRC_DIR) so it

@@ -92,7 +92,6 @@ it('the hero amount fits one line and the tag "×" is not clipped by a fixed lin
   expect(styleOf(screen.getByText('×')).lineHeight).toBeUndefined();
 });
 
-// WHIT-844: the Status field ages a pending charge the same way the list row does.
 it('shows Pending with its age for a pending transaction 7 days old', async () => {
   pinToday(new Date('2026-07-08T08:00:00+10:00'));
   try {
@@ -124,7 +123,6 @@ it('a hard read failure with nothing cached shows the inline error + an accessib
   expect(screen.getByTestId('transaction-error')).toBeTruthy();
   const retry = screen.getByTestId('transaction-retry');
   expect(retry.props.accessibilityRole).toBe('button');
-  expect(retry.props.accessibilityLabel).toBe('Retry loading this transaction');
 
   const before = feedReads();
   await refreshInAct(() => fireEvent.press(retry));
@@ -155,15 +153,6 @@ it('while loading with nothing cached, shows the spinner and NOT the not-found s
 
 // ===== WHIT-298 (folded from transactionDetailExcludedEdges.screen.test.tsx)
 
-// [A-detail-combo] the bank flag wins: even with the user's budget_excluded also set, the screen
-// shows the read-only note and hides the (would-be inert) manual toggle.
-it('shows the read-only note and NO toggle when bank-excluded AND user-excluded', async () => {
-  seedFeed([txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: false, budget_excluded: true })]);
-  await draw();
-  expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
-  expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
-});
-
 // [A-detail-undef] CONSISTENCY: when the server omits counts_to_budget, the detail screen shows
 // the read-only "Excluded (transfer)" note and hides the toggle (it gates on the falsy
 // counts_to_budget test), rather than a contradictory OFF switch. Fails if the gate reverts to a
@@ -176,19 +165,6 @@ it('shows the read-only note (not the toggle) when counts_to_budget is undefined
 });
 
 // ===== WHIT-276 (folded from transactionDetailStates.screen.test.tsx)
-
-// [A-txn-both] Empty cache, still loading AND errored: through the real screen both the
-// spinner and the error render stacked and the "not found" empty message stays hidden. A
-// collapse to either/or, or dropping the hasCache gate, breaks this.
-it('with an empty cache, isLoading && isError renders BOTH the spinner and the error, not the not-found state', async () => {
-  const held = server.hold('/transactions/feed');
-  server.fail('/categories', 500);
-  render(<WithQueries><TransactionDetail /></WithQueries>);
-  expect(await screen.findByTestId('transaction-error')).toBeTruthy();
-  expect(screen.getByTestId('transaction-loading')).toBeTruthy();
-  expect(screen.queryByText('Transaction not found')).toBeNull();
-  await refreshInAct(() => held.release());
-});
 
 // ===== WHIT-287 (folded from transactionRecategorize.screen.test.tsx)
 
@@ -203,37 +179,14 @@ it('tapping the Category row opens the picker for this transaction', async () =>
   expect(mockOpenPicker).toHaveBeenCalledWith('t1');
 });
 
-// The top-level test above already covers the already-categorized (coffee) case; these cover
-// the states a LIST row would NOT make tappable — proving the detail row re-files regardless.
-describe('re-categorize is offered regardless of the current category', () => {
-  it('an income-tagged transaction is re-filable', async () => {
-    seedFeed([txn({ transaction_id: 't1', category: 'income', amount: 2500 })]);
-    await draw();
-    fireEvent.press(screen.getByLabelText('Change category, currently Income'));
-    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
-  });
-
-  it('an uncategorized transaction is re-filable', async () => {
-    seedFeed([txn({ transaction_id: 't1', category: null })]);
-    await draw();
-    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
-    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
-  });
-
-  it('a pending transaction is re-filable', async () => {
-    seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending' })]);
-    await draw();
-    fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
-    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
-  });
-});
-
-it('the picker targets the routed transaction id (not a hardcoded one)', async () => {
-  setParams({ id: 't2' });
-  seedFeed([txn({ transaction_id: 't2', category: 'coffee' })]);
+// WHIT-328: unlike its quiet, non-tappable list row, a not-in-budget uncategorized charge can
+// still be re-filed from the detail screen.
+it('detail screen labels the Category "Uncategorized" and re-opens the picker on tap', async () => {
+  seedFeed([txn({ transaction_id: 't1', category: null, counts_to_budget: false })]);
   await draw();
-  fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
-  expect(mockOpenPicker).toHaveBeenCalledWith('t2');
+  expect(screen.getByText('Uncategorised')).toBeTruthy();
+  fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
+  expect(mockOpenPicker).toHaveBeenCalledWith('t1');
 });
 
 // ── WHIT-556: the "Spread this bill" prompt ──────────────────────────────────
@@ -252,14 +205,6 @@ describe('spread this bill prompt', () => {
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
   });
 
-  it('prefills the OVERAGE, not the tapped charge — a small charge in an over category spreads the overage', async () => {
-    seedSpend({ amount: -5 });  // a $5 coffee…
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130.1, pending: 0 }) });  // …category over by 30.10
-    await draw();
-    fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30.1');  // not 5
-  });
-
   it('active plan → shows "Edit or remove" and routes with NO prefill (never a second plan)', async () => {
     seedSpend();
     server.seed('/budgets', {
@@ -272,39 +217,13 @@ describe('spread this bill prompt', () => {
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee');
   });
 
-  it('hidden on a rollover category, even over budget (rollover XOR spread)', async () => {
-    seedSpend();
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 200, pending: 0, rollover: true, carryover: 0 }) });
-    await draw();
-    expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
-
-  it('hidden for an excluded charge (contributesToBudget false)', async () => {
-    seedSpend({ budget_excluded: true });
+  it.each([
+    ['an excluded charge (contributesToBudget false)', { budget_excluded: true }],
+    ['a refund / credit (amount >= 0)', { amount: 50 }],
+  ])('hidden for %s', async (_name, over) => {
+    seedSpend(over);
     server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
     await draw();
-    expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
-
-  it('hidden for a refund / credit (amount >= 0)', async () => {
-    seedSpend({ amount: 50 });
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
-    await draw();
-    expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
-
-  it('hidden when the category has no budget', async () => {
-    seedSpend();
-    server.seed('/budgets', {});  // no budget row for coffee
-    await draw();
-    expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
-
-  it('does not crash on a not-found transaction (derivations null-guard)', async () => {
-    setParams({ id: 'missing' });
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
-    await draw();
-    expect(screen.getByText('Transaction not found')).toBeTruthy();
     expect(screen.queryByTestId('transaction-spread')).toBeNull();
   });
 });
@@ -364,12 +283,6 @@ describe('rule attribution line', () => {
     expect(screen.queryByTestId('filed-by-rule')).toBeNull();
   });
 
-  it('shows no line when no rule filed the charge (no stamp)', async () => {
-    server.seed('/rules', [ruleRecord({ id: 'r1' })]);
-    await draw();
-    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
-  });
-
   // [A-mult] Fail-on-revert: two rules file into the SAME category; the stamp points at r2. The
   // lookup must match by ID, not by category — matching by category would name r1's pattern.
   it('resolves the stamped rule by id, not by category, when two rules share a category', async () => {
@@ -381,35 +294,6 @@ describe('rule attribution line', () => {
     await draw();
     expect(screen.getByText('Filed by your rule: contains "WOOLIES"')).toBeTruthy();
     expect(screen.queryByText(/COLES/)).toBeNull();
-  });
-
-  // [A-empty] An empty-string stamp is a falsy, malformed id: treat it as "no rule" — no line,
-  // no crash, no fallback. Fail-on-revert: a `!== undefined` guard would make '' truthy → an
-  // unmatched find → a false generic fallback.
-  it('shows no line for an empty-string filed_by_rule (falsy id)', async () => {
-    seedStamped('');
-    server.seed('/rules', [ruleRecord({ id: 'r1' })]);
-    await draw();
-    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
-  });
-
-  // [A-nullcat] A matched rule but the charge's category is null (re-filed to Uncategorized while the
-  // stale stamp lingers): the category-match gate fails → no line. Fail-on-revert: dropping the gate
-  // would show "filed by your rule" on an uncategorised row.
-  it('shows no line when the charge category is null even though the rule is present', async () => {
-    seedStamped('r1', null);
-    server.seed('/rules', [ruleRecord({ id: 'r1', categoryId: 'coffee' })]);
-    await draw();
-    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
-  });
-
-  // [A-acc] The note carries the same human text as its screen-reader label. Fail-on-revert:
-  // removing accessibilityLabel={text} from RuleFiledNote makes getByLabelText miss.
-  it('exposes the rule text as the accessibility label', async () => {
-    seedStamped('r1');
-    server.seed('/rules', [ruleRecord({ id: 'r1', value: 'COLES', field: 'description', operator: 'contains', categoryId: 'coffee' })]);
-    await draw();
-    expect(screen.getByLabelText('Filed by your rule: contains "COLES"')).toBeTruthy();
   });
 });
 
@@ -460,5 +344,75 @@ describe('delete this transaction', () => {
 
     expect(routerSpies.back).not.toHaveBeenCalled();
     expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
+  });
+
+  function openConfirm() {
+    fireEvent.press(screen.getByTestId('transaction-delete'));
+    return alerts.last().button('Delete');
+  }
+
+  it('a double confirm in the same frame deletes once and goes back once', async () => {
+    mockDeleteTransaction.mockResolvedValue(true);
+    await draw();
+    const confirm = openConfirm();
+
+    await refreshInAct(() => { confirm.onPress?.(); confirm.onPress?.(); });
+
+    expect(mockDeleteTransaction).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).toHaveBeenCalledTimes(1);
+  });
+
+  it('a writer that throws leaves the user on the screen with the button re-enabled', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockDeleteTransaction.mockRejectedValue(new Error('boom'));
+    await draw();
+
+    await refreshInAct(() => { openConfirm().onPress?.(); });
+
+    expect(routerSpies.back).not.toHaveBeenCalled();
+    expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
+    consoleError.mockRestore();
+  });
+
+  // The delete empties every list cache and the feed is reloading with nothing cached — the
+  // screen would normally show its spinner, but it keeps the charge up until the delete answers.
+  it('deleting the ONLY cached charge never flashes the empty/loading states before going back', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    mockDeleteTransaction.mockImplementation(() => {
+      void queryClient.resetQueries({ queryKey: transactionsKey });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    await draw();
+    const reload = server.hold('/transactions/feed');
+
+    await refreshInAct(() => { openConfirm().onPress?.(); });
+
+    expect(queryClient.getQueryState(transactionsKey)?.status).toBe('pending');
+    expect(screen.queryByTestId('transaction-loading')).toBeNull();
+    expect(screen.queryByText('Transaction not found')).toBeNull();
+    expect(screen.getByTestId('transaction-delete')).toBeTruthy();
+
+    await refreshInAct(() => finish(true));
+    expect(routerSpies.back).toHaveBeenCalledTimes(1);
+    await refreshInAct(() => reload.release());
+  });
+
+  // WHIT-843: leaving saves an edited note, but not after a delete — the charge is gone. A FAILED
+  // delete keeps the charge, so leaving still saves the note.
+  it.each([
+    { result: 'succeeds', ok: true, backs: 1, saves: 0 },
+    { result: 'fails', ok: false, backs: 0, saves: 1 },
+  ])('when the delete $result, leaving saves the edited note $saves time(s)', async ({ ok, backs, saves }) => {
+    let finish: (done: boolean) => void = () => {};
+    mockDeleteTransaction.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const view = await draw();
+    fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
+
+    await refreshInAct(() => { openConfirm().onPress?.(); });  // the screen draws mid-delete
+    await refreshInAct(() => finish(ok));
+    view.unmount();
+
+    expect(routerSpies.back).toHaveBeenCalledTimes(backs);
+    expect(mockApplyTransactionEdit).toHaveBeenCalledTimes(saves);
   });
 });

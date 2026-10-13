@@ -105,7 +105,7 @@ def test_swipe_datetime_is_truncated_to_date_only(lam):
 # by resolve_account_id and dead-lettered. These lock the mapping and the shape of
 # the two rows that were actually stuck, taken verbatim from the FAILED partition.
 
-WESTPAC_BANKSYNC_ID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
+WESTPAC_BANKSYNC_ID = "CC6EE20D-4931-4B10-86CA-EADD45A062DC"
 
 
 def test_westpac_account_resolves_to_its_internal_id(lam):

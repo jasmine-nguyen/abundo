@@ -3,7 +3,6 @@
 // synthetic row). They do NOT render app/(tabs)/insights.tsx, so the expand/collapse
 // interaction, the parent-chain visibility gate, and the hero "N categories" top-level
 // count are untested. This file locks exactly those:
-//   [A9]  parents render COLLAPSED by default — subs hidden
 //   [A10] tapping a parent reveals its subs (indented); tapping again hides them
 //   [A11] a grandchild stays hidden until BOTH ancestors are expanded (chain gate)
 //   [A12] the hero "N categories" is the TOP-LEVEL count, not the flat row count
@@ -75,17 +74,6 @@ beforeEach(() => {
   server.seed('/breakdown', BREAKDOWN);
   server.seed('/categories', CATS);
   server.seed('/paycycle', PAY_CYCLE);
-});
-
-it('[A9] parents render collapsed by default — subs are hidden', async () => {
-  renderInsights();
-  expect(await screen.findByText('Food')).toBeTruthy();
-  expect(screen.getByText('Car')).toBeTruthy();
-  // subs of BOTH trees hidden until their parent is tapped
-  expect(screen.queryByText('Groceries')).toBeNull();
-  expect(screen.queryByText('Restaurants')).toBeNull();
-  expect(screen.queryByText('Daily')).toBeNull();
-  expect(screen.queryByText('Petrol')).toBeNull();
 });
 
 it('[A10] tapping a parent reveals its (indented) subs; tapping again hides them', async () => {

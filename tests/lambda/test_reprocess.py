@@ -61,6 +61,20 @@ def test_reprocess_recovers_and_deletes_the_failed_row(lam, repo):
     assert _failed_keys(repo) == []
 
 
+def test_reprocess_recovers_a_readded_westpac_row_under_its_internal_account(lam, repo):
+    # [A1] WHIT-861: the 40 rows from the re-added Westpac feed were dead-lettered with the
+    # new BankSync account id. Once that id is mapped, the sweep must store them under the
+    # unchanged internal id, so the app shows them on the existing Westpac account.
+    raw = _raw_row(txn_id="wbc1", account_id="CC6EE20D-4931-4B10-86CA-EADD45A062DC")
+    repo.save_failed_transactions([raw])
+
+    summary = reprocess_failed(lam.reprocess, repo)
+
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
+    assert ("ACCOUNT#westpac-altitude-qantas-black", "TXN#wbc1") in _txn_keys(repo)
+    assert _failed_keys(repo) == []
+
+
 # --- rows that still cannot process are LEFT in place ------------------------
 
 

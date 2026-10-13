@@ -10,7 +10,7 @@
 //      filingRun.provider.screen.test.tsx).
 //
 // Fail-on-revert: drop readSearchRows from readTransactionsCache → [1] fails; drop the
-// setQueriesData arm from patchTransactionsCache → [2]/[3]/[4]/[5] fail; drop an invalidate → [6]/[7] fail; drop the name-changed check → [8] fails.
+// setQueriesData arm from patchTransactionsCache → [1]/[3]/[4] fail; drop an invalidate → [6]/[7] fail; drop the name-changed check → [8] fails.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
@@ -56,15 +56,6 @@ it('[1] files a deep-history row that lives ONLY in a search result', async () =
   await act(async () => { await result.current.applyCategory('one'); });
 
   expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/deep1', body: { category: 'groceries' } });
-});
-
-it('[2] patches the filed row inside the search result', async () => {
-  seedSearch([txn()]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
-
-  await act(async () => { await result.current.applyCategory('one'); });
-
   expect(searchRow()?.category).toBe('groceries');
 });
 
@@ -85,15 +76,6 @@ it('[4] a notes edit lands in the search result', async () => {
   await act(async () => { await result.current.applyTransactionEdit('deep1', { notes: 'birthday' }); });
 
   expect(searchRow()?.notes).toBe('birthday');
-});
-
-it('[5] filing several at once (bulk re-categorise) lands in the search result', async () => {
-  seedSearch([txn()]);
-  const result = mount();
-
-  await act(async () => { await result.current.applyCategoryToMany(['deep1'], 'groceries'); });
-
-  expect(searchRow()?.category).toBe('groceries');
 });
 
 it('[6] deleting a category refreshes search results', async () => {

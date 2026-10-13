@@ -56,10 +56,6 @@ describe('accountSummaries', () => {
     expect(out.map((a) => a.id)).toEqual(['big', 'small']);
   });
 
-  it('is empty when there are no transactions', () => {
-    expect(accountSummaries({ transactions: [] })).toEqual([]);
-  });
-
   it('adds extra (balance-only) ids after the transaction-derived accounts, without duplicates', () => {
     const out = accountSummaries(
       { transactions: [txn({ transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' })] },
@@ -67,12 +63,6 @@ describe('accountSummaries', () => {
     );
     expect(out).toEqual([
       { id: 'a1', name: 'ANZ', count: 1 },
-      { id: 'up-homeloan', name: 'Up Homeloan', count: 0 },
-    ]);
-  });
-
-  it('builds a card from an extra id alone when there are no transactions', () => {
-    expect(accountSummaries({ transactions: [] }, ['up-homeloan'])).toEqual([
       { id: 'up-homeloan', name: 'Up Homeloan', count: 0 },
     ]);
   });

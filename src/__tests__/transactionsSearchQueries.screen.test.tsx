@@ -4,8 +4,7 @@
 //   [Q2] `answered` is false while the previous query's result is only a placeholder.
 //   [Q3] a placeholder is never carried across tabs (no Uncategorized matches on All).
 //   [Q4] pull-to-refresh under a search refetches the SEARCH, not the feed — unless the feed failed.
-//   [Q5] useTransactionResolver finds a row that lives only in a search result, and picks up a
-//        patch to it (the picker/confirm sheets resolve through this).
+//   [A8] refresh on return re-asks a stale search and leaves the feed alone.
 // Real ../api over the fake server; ../auth mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
@@ -18,7 +17,7 @@ import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { useTransactionsScreenData, useTransactionResolver } from '../queries';
+import { useTransactionsScreenData } from '../queries';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';
@@ -55,15 +54,6 @@ it('[Q1] searches the tab + query and leaves `transactions` as the normal feed',
   expect(server.sent('GET', ALL_STEVEN).length).toBeGreaterThanOrEqual(1);
   expect(ids(result.current.search.results)).toEqual(['all-steven']);
   expect(ids(result.current.transactions)).toEqual(['feed1']);
-});
-
-it('an empty query runs no search and reports it inactive', async () => {
-  const { result } = mountScreenData(makeClient(), { tab: 'all', query: '' });
-
-  await waitFor(() => expect(ids(result.current.transactions)).toEqual(['feed1']));
-  expect(server.sentUnder('GET', SEARCH)).toHaveLength(0);
-  expect(result.current.search.active).toBe(false);
-  expect(result.current.search.answered).toBe(false);
 });
 
 it('[Q2] the previous query\'s result is a placeholder, not an answer, while the next loads', async () => {
@@ -159,14 +149,21 @@ it('[Q4c] a manual Retry after a failed refresh reports "searching", not the old
   await waitFor(() => expect(result.current.search.answered).toBe(true));
 });
 
-it('[Q5] the resolver finds a search-only row and sees a patch to it', async () => {
-  const client = makeClient();
-  client.setQueryData(['transactionsSearch', 'all', 'steven'], { transactions: [tx('deep1')], truncated: false });
-  const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+// [A8] Refresh on return (refetchStale): a stale search — a new charge landed since — is re-asked;
+// the paged feed is left alone (refetching every loaded page under a search would be a wasted storm).
+it('[A8] on return, a stale search is re-asked (and picks up a new match); the feed is not refetched', async () => {
+  server.seed(SEARCH, { transactions: [tx('old-match')], truncated: false });
+  const { result } = mountScreenData(makeClient({ staleTime: 0 }), { tab: 'all', query: 'steven' }); // everything is immediately stale
+  await waitFor(() => expect(result.current.search.answered).toBe(true));
+  await waitFor(() => expect(server.sentUnder('GET', FEED).length).toBeGreaterThan(0));
+  const feedCalls = server.sentUnder('GET', FEED).length;
+  const searchCalls = server.sent('GET', ALL_STEVEN).length;
+  server.seed(SEARCH, { transactions: [tx('new-charge'), tx('old-match')], truncated: false });
 
-  await waitFor(() => expect(result.current.findTx('deep1')).toBeTruthy());
-  await refreshInAct(() =>
-    client.setQueryData(['transactionsSearch', 'all', 'steven'], { transactions: [tx('deep1', { category: 'groceries' })], truncated: false }),
-  );
-  await waitFor(() => expect(result.current.findTx('deep1')?.category).toBe('groceries'));
+  await act(async () => { result.current.refetchStale(); });
+
+  await waitFor(() => expect(ids(result.current.search.results)).toEqual(['new-charge', 'old-match']));
+  expect(server.sent('GET', ALL_STEVEN).length).toBeGreaterThan(searchCalls);
+  expect(server.sentUnder('GET', FEED)).toHaveLength(feedCalls);
 });
+

@@ -30,7 +30,7 @@ _WESTPAC_DATA = {
     "accountName": "Altitude Qantas Black Card",
     "accountNumber": "0908",
     "accountType": "unknown",
-    "accountId": "A3AC9195-9E8D-48B8-86D0-46D130D7F64A",
+    "accountId": "CC6EE20D-4931-4B10-86CA-EADD45A062DC",
     "bankId": "fiskil_77",
     "amount": -230,
     "availableBalance": 5770,

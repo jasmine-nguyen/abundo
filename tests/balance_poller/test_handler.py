@@ -81,7 +81,7 @@ _WESTPAC_PAYLOAD = {
     "success": True,
     "data": {
         "date": "2026-09-05T03:58:13.856Z", "accountName": "Altitude Qantas Black Card",
-        "accountType": "unknown", "accountId": "A3AC9195-9E8D-48B8-86D0-46D130D7F64A",
+        "accountType": "unknown", "accountId": "CC6EE20D-4931-4B10-86CA-EADD45A062DC",
         "amount": -230, "availableBalance": 5770, "currency": "AUD",
     },
 }
@@ -93,7 +93,7 @@ _PAYLOADS_BY_AID = {
     "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
     "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _WESTPAC_PAYLOAD,
+    "CC6EE20D-4931-4B10-86CA-EADD45A062DC": _WESTPAC_PAYLOAD,
 }
 
 

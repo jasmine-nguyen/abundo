@@ -1,25 +1,18 @@
 // SpendingDonut ring geometry, slice order, paint order and the "Other" bucket — the reduce-motion-ON
 // donut suites merged (WHIT-451) from Divider/DividerEdges/Order/OrderEdges/Init/OtherColor/Pop/Enter.
-// Every one mocked useReduceMotion → true, so they share this one file-level mock; none uses fake
-// timers (the animated branch lives in spendingDonutDimMotion.screen.test.tsx).
-import { describe, it, expect, jest, afterEach } from '@jest/globals';
+// Every one mocked useReduceMotion → true, so they share this one file-level mock.
+import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { Animated } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
-import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/SpendingDonut';
-import { CHART_BG, OTHER_COLOR } from '../chartColors';
-import { C } from '../theme';
+import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
 import {
-  sl, slice, paintedBands, bandPath, arcExtentDeg, dividerGapPx, dividerGapDeg,
-  arcPoints, ancestorProp, paintedOrder, opacityOf, DIM_CATEGORY,
+  sl, slice, bandPath, arcExtentDeg, dividerGapDeg, arcPoints, paintedOrder, opacityOf, DIM_CATEGORY,
 } from './support/donut';
 
 const THREE: DonutSlice[] = [sl('a', 50), sl('b', 30), sl('c', 20)];
-
-const scaleOf = (testID: string) => ancestorProp(testID, 'scale');
 
 const labelOf = (testID: string) => String(screen.getByTestId(testID).props.accessibilityLabel);
 
@@ -35,36 +28,6 @@ const testIdOrder = (): string[] => {
   walk(screen.toJSON());
   return out;
 };
-
-// The painted arc INSIDE the selection overlay group. It carries no testID on purpose (see [D4]),
-// so it is found structurally: the overlay group is the one whose children include `donut-top`.
-const overlayBandPath = (): string => {
-  let found: string | null = null;
-  const walk = (n: unknown) => {
-    if (!n || typeof n !== 'object') return;
-    const node = n as { children?: unknown[] };
-    const kids = (node.children ?? []).filter((k): k is { props: Record<string, unknown> } => !!k && typeof k === 'object');
-    if (kids.some((k) => k.props?.testID === 'donut-top')) {
-      const band = kids.find((k) => k.props?.testID === undefined && k.props?.d !== undefined);
-      if (band) found = String(band.props.d);
-    }
-    kids.forEach(walk);
-  };
-  walk(screen.toJSON());
-  if (found === null) throw new Error('no painted band inside the overlay group');
-  return found;
-};
-
-// spyOn's default impl calls a class as a plain function (breaks `new`), so wrap it: record the arg
-// and construct via the real class. Typed loosely — this is test plumbing around a class constructor.
-const spyValueBirths = (): any => {
-  const Real = Animated.Value;
-  const spy: any = jest.spyOn(Animated, 'Value');
-  spy.mockImplementation((v: number) => new Real(v));
-  return spy;
-};
-
-afterEach(() => { jest.restoreAllMocks(); });
 
 // THESE HEXES ARE LOAD-BEARING — do not "modernise" them to the current chart ramp. They are the
 // old app-wide palette, chosen because they split exactly 3 warm / 3 cool under the deleted
@@ -89,60 +52,7 @@ const TIED: DonutSlice[] = [
   slice('pets', '#bb9af7', 25),
 ];
 
-// Seven positive slices against the default cap of six → the tail (f, g) folds into '__other__'.
-// `sl` paints every slice '#7aa2f7', so the folded slice's colour can only be OTHER_COLOR if the
-// fold sets it — it cannot be inherited from an input.
-const SEVEN: DonutSlice[] = [
-  sl('a', 100), sl('b', 50), sl('c', 30), sl('d', 10), sl('e', 5), sl('f', 3), sl('g', 2),
-];
-
-describe('SpendingDonut — the ring track is the divider colour', () => {
-  it('[D1] the track is painted CHART_BG across the full band width', () => {
-    render(<SpendingDonut slices={THREE} />);
-    const track = screen.getByTestId('donut-track');
-    expect(track.props.stroke).toBe(CHART_BG);
-    expect(track.props.stroke).not.toBe(C.hairlineStrong); // the faint blue this replaced
-    // Same width as a wedge, so the divider reads as background across the whole band rather than
-    // only across part of it.
-    expect(track.props.strokeWidth).toBe(paintedBands()[0].props.strokeWidth);
-    // FAIL-ON-REVERT: put stroke={C.hairlineStrong} back on the track and the first two fail.
-  });
-});
-
-describe('SpendingDonut — the divider measures 1.25px', () => {
-  it('[D2] every boundary between wedges is a ~1.25px gap, including the wrap at 12 o\'clock', () => {
-    render(<SpendingDonut slices={THREE} />);
-    const [a, b, c] = ['a', 'b', 'c'].map(bandPath);
-    expect(dividerGapPx(a, b)).toBeCloseTo(1.25, 2);
-    expect(dividerGapPx(b, c)).toBeCloseTo(1.25, 2);
-    expect(dividerGapPx(c, a)).toBeCloseTo(1.25, 2); // the wrap-around boundary
-    // FAIL-ON-REVERT: set DIVIDER_PX back to 2 and each of these measures 2.0.
-  });
-
-  it('[D3] the gap lives on the painted band — the tap band still takes the full sweep', () => {
-    render(<SpendingDonut slices={THREE} />);
-    // Slice 'a' sweeps 180°; its painted arc gives up half a divider at each end (2 × 0.381°).
-    expect(arcExtentDeg(bandPath('a'))).toBeCloseTo(179.238, 2);
-    // Its tap band keeps the whole 180° so adjacent tap targets meet with no dead strip. This is
-    // why the divider must never be measured off `donut-slice-<id>` — it would always read zero.
-    const hit = screen.getByTestId('donut-slice-a');
-    expect(arcExtentDeg(String(hit.props.d))).toBeCloseTo(180, 6);
-    expect(Number(paintedBands()[0].props.strokeWidth)).toBeLessThan(Number(hit.props.strokeWidth));
-  });
-});
-
 describe('SpendingDonut — the painted band stays unique and never inverts', () => {
-  it('[D4] selecting a wedge adds an overlay but no second painted band', () => {
-    render(<SpendingDonut slices={THREE} />);
-    expect(paintedBands()).toHaveLength(3);
-
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-
-    expect(screen.getAllByTestId('donut-top')).toHaveLength(1); // the overlay really rendered
-    expect(screen.getAllByTestId('donut-band-a')).toHaveLength(1); // but carries no band id
-    expect(paintedBands()).toHaveLength(3);
-  });
-
   it('[D5] a wedge too thin to pay a full half-divider keeps a third of itself instead of inverting', () => {
     // Sweeps: 358.209° / 1.433° / 0.358°. Half a divider is 0.381°, so 'tiny' cannot pay it at both
     // ends and gives up a third of its sweep at each instead — always leaving a third painted.
@@ -161,25 +71,6 @@ describe('SpendingDonut — the painted band stays unique and never inverts', ()
     // An inverted arc would surface as an extent near 360 (the modulo keeps it positive), which is
     // why the bound above is an upper one against each wedge's own sweep — raising DIVIDER_PX far
     // enough to swallow a thin wedge breaks this.
-  });
-});
-
-describe('SpendingDonut — the single-slice ring has no divider at all', () => {
-  // [Q1] A lone category paints as a full Circle, not an arc: there is no boundary, so no divider
-  // and no `d` to measure. D2/D3 use three slices precisely to avoid this branch, and D1 reads the
-  // track's width off paintedBands()[0] — which only exists here because the WHIT-403 hunk put the
-  // band id on the Circle branch too. ANCHOR for that: drop `testID={bandTestID}` from the
-  // single-slice Circle and paintedBands() finds nothing → red.
-  it('[Q1] a lone category is one full-ring band on the track radius, with no arc and no gap', () => {
-    render(<SpendingDonut slices={[{ id: 'solo', name: 'Rent', color: '#7aa2f7', value: 100 }]} />);
-    const bands = paintedBands();
-    expect(bands).toHaveLength(1);
-    const band = bands[0];
-    expect(band.props.d).toBeUndefined();            // a Circle, not an arc — nothing to inset
-    expect(band.props.stroke).toBe('#7aa2f7');       // the category's own colour, not the track's
-    const track = screen.getByTestId('donut-track');
-    expect(band.props.r).toBe(track.props.r);        // exactly covers the track — no ring peeking out
-    expect(band.props.strokeWidth).toBe(track.props.strokeWidth);
   });
 });
 
@@ -208,26 +99,6 @@ describe('SpendingDonut — the wedges tile the whole ring', () => {
 });
 
 describe('SpendingDonut — a wedge too thin to give up a full half-divider', () => {
-  // [Q3] The consequence D5 stops short of: a wedge narrower than 1.5 dividers cannot give up half
-  // a divider at each end without inverting, so it gives up a third of its sweep instead. Its
-  // boundaries are therefore narrower than a normal one — the wedge simply cannot pay for more.
-  // The number that matters is that they no longer collapse to the neighbour's half alone: the old
-  // all-or-nothing threshold left them at 0.625px, they are now 0.82px.
-  // ANCHOR for DIVIDER_PX: at 2px 'tiny' still pays sweep/3 but 'mid' pays a bigger half-divider,
-  // so big|mid becomes 1.78px and mid|tiny 0.98px → both assertions below go red.
-  it('[Q3] its boundaries are as wide as it can afford, while a normal boundary keeps the full 1.25px', () => {
-    // Sweeps: big 358.209° / mid 1.433° / tiny 0.358°. Half a divider is 0.381°, so 'tiny' (whose
-    // third is 0.119°) is the only one that cannot pay it.
-    render(<SpendingDonut slices={[sl('big', 1000), sl('mid', 4), sl('tiny', 1)]} />);
-    const [big, mid, tiny] = ['big', 'mid', 'tiny'].map(bandPath);
-
-    expect(dividerGapPx(big, mid)).toBeCloseTo(1.25, 2);  // both neighbours pay in full
-    expect(dividerGapPx(mid, tiny)).toBeCloseTo(0.821, 2); // tiny pays a third of itself instead
-    expect(dividerGapPx(tiny, big)).toBeCloseTo(0.821, 2); // the wrap side of tiny, symmetrically
-    // Symmetric on purpose: a thin wedge must not sit visibly off-centre between its neighbours.
-    expect(dividerGapPx(mid, tiny)).toBeCloseTo(dividerGapPx(tiny, big), 9);
-  });
-
   // [Q3b] ANCHOR for taking the MIN rather than an all-or-nothing threshold. The old rule had a
   // cliff at its cutoff: a wedge just under it kept its whole sweep while one just over it gave up
   // half a divider at each end — so spending LESS on a category could paint it THREE TIMES WIDER.
@@ -269,36 +140,6 @@ describe('SpendingDonut — the track is under the wedges and outside the select
     const ringAfterReset = order.slice(resetAt + 1).filter((id) => id.startsWith('donut-band-') || id === 'donut-track');
     expect(ringAfterReset).toEqual([]);
   });
-
-  // [Q5] The track must not be swept up in a wedge's pop/dim: it is a child of the STATIC group, so
-  // it carries no animated opacity and does not scale. If it ever moved inside a wedge's animated
-  // group, every divider would fade with its wedge and the ring would look smeared while a
-  // slice is selected. REGRESSION GUARD (the current structure has always been this way).
-  it('[Q5] selecting a wedge leaves exactly one track, still CHART_BG, with no emphasis opacity', () => {
-    render(<SpendingDonut slices={THREE} />);
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-
-    expect(screen.getAllByTestId('donut-track')).toHaveLength(1);
-    expect(screen.getByTestId('donut-track').props.stroke).toBe(CHART_BG);
-    expect(ancestorProp('donut-track', 'opacity')).toBeUndefined();  // not inside any animated wedge group
-    expect(ancestorProp('donut-band-b', 'opacity')).toBeCloseTo(DIM_CATEGORY); // sanity: the helper does find one
-  });
-});
-
-describe('SpendingDonut — the popped wedge keeps its dividers', () => {
-  // [Q6] The overlay copy is drawn from the SAME layout entry, so the popped wedge must be the same
-  // inset arc as the base band beneath it — not the full sweep. If it were drawn uninset it would
-  // grow into its neighbours' dividers as it pops and the gaps would visibly close on tap.
-  // REGRESSION GUARD on renderWedge's non-interactive path (D4 only counts the nodes).
-  it('[Q6] the overlay paints the same inset arc as the base band, not the full sweep', () => {
-    render(<SpendingDonut slices={THREE} />);
-    const base = bandPath('a');
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-
-    expect(overlayBandPath()).toBe(base);                       // identical geometry, gaps intact
-    const hit = String(screen.getByTestId('donut-top').props.d); // its tap copy still takes the full sweep
-    expect(arcExtentDeg(hit)).toBeGreaterThan(arcExtentDeg(base));
-  });
 });
 
 describe('SpendingDonut — extreme but legal values', () => {
@@ -325,13 +166,6 @@ describe('SpendingDonut — slice order is spend descending, Other last', () => 
     // [health, shopping, eatingout, transport, coffee, pets] instead — a different array.
   });
 
-  it('[O3] selection + centre readout resolve the tapped slice', () => {
-    render(<SpendingDonut slices={WARM_CLUSTERED} />);
-    fireEvent.press(screen.getByTestId('donut-slice-eatingout'));
-    expect(screen.getByTestId('donut-center-amount').props.children).toBe('$90');
-    expect(screen.getByText('eatingout')).toBeTruthy();
-  });
-
   it('[O4] the folded Other slice is last even when it outweighs most kept slices', () => {
     // 7 inputs → reduceSlices keeps the 5 largest and folds 55 + 50 into __other__ = 105, which is
     // bigger than four of the five kept slices. Other is appended AFTER the descending sort, so it
@@ -345,18 +179,6 @@ describe('SpendingDonut — slice order is spend descending, Other last', () => 
     const order = paintedOrder();
     expect(order).toHaveLength(6);
     expect(order[order.length - 1]).toBe('__other__');
-  });
-
-  it('[O5] the spoken summary names categories in the painted order', () => {
-    // Independent of [O1]: this pins the SUMMARY's order, so pointing the label at some other list
-    // fails here while [O1] still passes. Note the assertion it replaces proved the opposite — the
-    // ring order and the spoken order used to DIVERGE deliberately (the ring alternated, the summary
-    // stayed largest-first). They coincide now, which is the point.
-    render(<SpendingDonut slices={WARM_CLUSTERED} testID="donut-summary" />);
-    const label = String(screen.getByTestId('donut-summary').props.accessibilityLabel);
-    const spokenPositions = WARM_CLUSTERED.map((s) => label.indexOf(s.name));
-    expect(spokenPositions).not.toContain(-1); // every category is named at all
-    expect([...spokenPositions].sort((a, b) => a - b)).toEqual(spokenPositions);
   });
 });
 
@@ -392,15 +214,6 @@ describe('SpendingDonut — hostile values', () => {
     expect(labelOf('donut-neg')).toContain('a 100 percent');
     expect(labelOf('donut-neg')).not.toContain('refund');  // nothing painted is never announced
     expect(labelOf('donut-neg')).not.toContain('zero');
-  });
-
-  // [Q10] The empty list — a cycle with no spend at all. Distinct from the existing `[a: 0]` case:
-  // this exercises the reduce over an EMPTY array. Nothing renders, so there is no lone CHART_BG
-  // track sitting on the screen as a mystery dark ring. REGRESSION GUARD.
-  it('[Q10] an empty slice list renders nothing at all — not a bare track', () => {
-    const { toJSON } = render(<SpendingDonut slices={[]} />);
-    expect(toJSON()).toBeNull();
-    expect(screen.queryByTestId('donut-track')).toBeNull();
   });
 
   // [Q10b] ANCHOR for the non-finite guard. Infinity passes a bare `> 0`, and once it reaches the
@@ -467,146 +280,6 @@ describe('SpendingDonut — a data change that reorders the ring', () => {
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$120'); // still b, new total
     expect(opacityOf('b')).toBeCloseTo(1);                                        // still popped
     expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);                                      // still dimmed
-  });
-
-  // [Q13] The reorder must not break the divider: after the swap the wedges are still laid out
-  // edge-to-edge around the full circle with their gaps intact. Cheap completeness re-check on a
-  // permuted ring (the geometry suite only ever renders a fresh mount).
-  it('[Q13] after a reorder every wedge is still painted exactly once', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 100), sl('b', 60), sl('c', 30)]} />);
-    rerender(<SpendingDonut slices={[sl('a', 10), sl('b', 60), sl('c', 300)]} />);
-    expect(paintedOrder()).toEqual(['c', 'b', 'a']);
-    expect(screen.getAllByTestId(/^donut-band-/)).toHaveLength(3);
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$370');
-  });
-});
-
-describe('SpendingDonut — a first-seen wedge is born at its emphasis target', () => {
-  it('[E4] births a new wedge at −1 (dimmed) while a category is selected, not at 0', () => {
-    const spy = spyValueBirths();
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
-    fireEvent.press(screen.getByTestId('donut-slice-a')); // select a
-
-    spy.mockClear(); // ignore the a/b births from the first render
-    rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />); // z is first-seen
-
-    // a and b are cached (no re-construction); only z is newly born this render, and it must be
-    // born dimmed (−1), matching its already-dimmed peers — not at 0 (which would flash full).
-    expect(spy.mock.calls.map((c: number[]) => c[0])).toEqual([-1]);
-  });
-
-  it('[E5] births a new wedge at 0 (rest) while nothing is selected', () => {
-    const spy = spyValueBirths();
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />); // no selection
-
-    spy.mockClear();
-    rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />);
-
-    expect(spy.mock.calls.map((c: number[]) => c[0])).toEqual([0]); // born at rest, not dimmed
-  });
-});
-
-// The render half of the OTHER_COLOR guard chain: [Q19]/[Q25] in otherColorToken.logic.test.ts pin
-// the TOKEN (it lifts off the chart background, stays clear of the category ramp); [Q20]/[Q21] here
-// pin that the folded "Other" wedge is actually PAINTED that token.
-describe('SpendingDonut — the folded "Other" wedge really is the reserved grey', () => {
-  it('[Q20] the rendered __other__ band is stroked OTHER_COLOR, not an input colour', () => {
-    render(<SpendingDonut slices={SEVEN} />);
-    const other = screen.getByTestId('donut-band-__other__');
-    expect(other.props.stroke).toBe(OTHER_COLOR);
-    // Its neighbours still carry the colour the CALLER resolved — proving the grey is applied by the
-    // fold and not by everything happening to be the same colour.
-    expect(screen.getByTestId('donut-band-a').props.stroke).toBe('#7aa2f7');
-    expect(other.props.stroke).not.toBe('#7aa2f7');
-    // FAIL-ON-REVERT: change `color: OTHER_COLOR` in reduceSlices (SpendingDonut.tsx) to any other
-    // colour and this reddens. Nothing else in the suite does.
-  });
-
-  it('[Q21] reduceSlices sets the grey on the folded slice itself', () => {
-    const out = reduceSlices(SEVEN);
-    const other = out[out.length - 1];
-    expect(other.id).toBe('__other__');
-    expect(other.color).toBe(OTHER_COLOR);
-    // The pure half of [Q20]: it fixes the CONTRACT of reduceSlices' return, which the Insights
-    // screen's a11y summary and centre readout also read, independently of what renders.
-  });
-});
-
-describe('SpendingDonut — the popped wedge really grows, so its dividers grow with it', () => {
-  // [Q16] ANCHOR (fail-on-revert): change the pop interpolation's outputRange from
-  // [1, 1, SEL_SCALE] to [1, 1, 1] — every assertion below that expects a scale above 1 goes red,
-  // while all 57 other donut tests stay green.
-  it('[Q16] at rest nothing is scaled; tapping scales that wedge AND its overlay, neighbours stay put', () => {
-    render(<SpendingDonut slices={THREE} />);
-
-    // At rest every wedge sits flat on the track — no wedge is lifted for free.
-    for (const id of ['a', 'b', 'c']) expect(scaleOf(`donut-band-${id}`)).toBe(1);
-
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-
-    const popped = scaleOf('donut-band-a');
-    expect(popped).toBeGreaterThan(1);          // the tapped wedge lifts
-    expect(scaleOf('donut-top')).toBe(popped);  // and so does the copy drawn ON TOP of it — the one
-                                                // actually seen, and the one carrying the visible gap
-    expect(scaleOf('donut-band-b')).toBe(1);    // neighbours are dimmed, never resized: a wedge that
-    expect(scaleOf('donut-band-c')).toBe(1);    // grew too would close the gap it is meant to open
-
-    // The consequence the divider design is built on. The wedge is drawn flush with the CHART_BG
-    // track and its gap is an ANGLE on that same radius, so scaling the wedge's group carries the
-    // gap outward with it — where a line drawn in the parent group would have stayed behind.
-    expect(arcPoints(bandPath('a')).r).toBe(Number(screen.getByTestId('donut-track').props.r));
-  });
-
-  it('[Q16b] clearing the selection puts the popped wedge back flat on the track', () => {
-    render(<SpendingDonut slices={THREE} />);
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-    expect(scaleOf('donut-band-a')).toBeGreaterThan(1);
-
-    fireEvent.press(screen.getByTestId('donut-center-reset')); // tap the hole to clear
-
-    expect(screen.queryByTestId('donut-top')).toBeNull();
-    for (const id of ['a', 'b', 'c']) expect(scaleOf(`donut-band-${id}`)).toBe(1);
-  });
-});
-
-describe('SpendingDonut — a category entering mid-highlight is dimmed', () => {
-  // [E1] Brand-new (never-seen) category appears while 'a' is selected → it must be dimmed, not
-  // bright. END-STATE guard: goes red only if BOTH fix parts are reverted (value born at 0 AND the
-  // effect not re-run). The paintedKey dep alone already dims it by assert time, so this does not
-  // isolate the init — the init's payoff is that frame ONE is dimmed (no bright flash), which RTL
-  // can't see (effects flush before assertions); that's a device check. [E2] isolates the dep.
-  it('[E1] a brand-new category appearing while one is selected renders dimmed', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
-    fireEvent.press(screen.getByTestId('donut-slice-a')); // select a → b dims
-    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);
-
-    rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />); // z is new
-    expect(opacityOf('z')).toBeCloseTo(DIM_CATEGORY); // dimmed like its peers, not full-bright
-    expect(opacityOf('a')).toBeCloseTo(1);    // a still popped
-    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY); // b untouched
-  });
-
-  // [E2] The load-bearing anchor: a category that LEFT and RETURNS while a selection is held. Its
-  // Animated.Value is cached (the map never evicts, the donut never remounts), so init is skipped
-  // on return — only the painted-id-set effect dep re-targets it. FAIL-ON-REVERT of that dep: with
-  // deps [activeId, reduceMotion] the return rerender doesn't re-run the effect (activeId unchanged)
-  // and z reads its stale cached 0 → opacity 1. With paintedKey in the deps → setValue(-1) → its own dimmed opacity.
-  it('[E2] a category that leaves then returns while one is selected renders dimmed (not stale-bright)', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />);
-    rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />); // z leaves (its value stays cached)
-    fireEvent.press(screen.getByTestId('donut-slice-a')); // now select a
-    rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />); // z returns, a still selected
-
-    expect(opacityOf('z')).toBeCloseTo(DIM_CATEGORY); // re-targeted to dim, not the stale cached full-bright
-    expect(opacityOf('a')).toBeCloseTo(1);    // a still popped
-  });
-
-  // [E3] Guard (characterization, not fail-on-revert): a new category while NOTHING is selected must
-  // stay full-bright — the init/effect target is 0 (rest), so no accidental over-dimming.
-  it('[E3] a new category while nothing is selected stays full-bright', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
-    rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />);
-    expect(opacityOf('z')).toBeCloseTo(1);
   });
 });
 

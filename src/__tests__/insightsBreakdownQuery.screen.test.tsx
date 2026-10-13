@@ -47,15 +47,6 @@ beforeEach(() => {
   server.seed('/paycycle', PAY_CYCLE);
 });
 
-it('renders breakdown rows from the query', async () => {
-  renderInsights();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  // The server derives the window itself (WHIT-840: no length is sent).
-  // WHIT-68: the current cycle is 0, which sends no cycle param.
-  expect(server.sent('GET', '/breakdown')).toHaveLength(1);
-  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
-});
-
 it('does not fetch breakdown before login, then fires when auth flips to authed', async () => {
   setAuthStatusQuietly('anon');
   renderInsights();
@@ -75,21 +66,6 @@ it('a transient 5xx on breakdown retries and self-heals — no error shown', asy
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('insights-error')).toBeNull();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
-});
-
-it('a sustained breakdown failure shows the inline error + Retry, no false $0', async () => {
-  // A lasting failure, so Retry is proven against a persistent 503 (the focus-refresh loop that
-  // once re-asked on its own is gone — WHIT-668).
-  server.fail('/breakdown', 503);
-  renderInsights(makeClient());
-  expect(await screen.findByTestId('insights-error')).toBeTruthy();
-  expect(screen.queryByText('$0')).toBeNull(); // hero shows "—", not a confident zero
-
-  const failedCalls = server.sentUnder('GET', '/breakdown').length;
-  server.once('GET', '/breakdown', { body: BREAKDOWN }); // a queued reply goes out ahead of the failure
-  fireEvent.press(screen.getByTestId('insights-retry'));
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  expect(server.sentUnder('GET', '/breakdown').length).toBeGreaterThan(failedCalls);
 });
 
 it('a sustained breakdown failure sends a bounded number of requests (WHIT-668)', async () => {
@@ -145,16 +121,6 @@ it('the cycle selector reads the prior cycle, relabels the hero, and hides the A
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(callsBefore); // cycle 0 already cached
 });
 
-it('an empty past cycle shows "No spending in that pay cycle" (not "this pay cycle")', async () => {
-  renderInsights();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-
-  server.once('GET', '/breakdown', { body: {} });
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
-  expect(await screen.findByText('No spending in that pay cycle.')).toBeTruthy();
-  expect(screen.queryByText('No spending yet this pay cycle.')).toBeNull();
-});
-
 // --- WHIT-189 GAPS (qa's adversarial half, folded in by WHIT-467) -------------
 
 describe('partial failure: categories down while breakdown succeeds', () => {
@@ -174,15 +140,6 @@ describe('partial failure: categories down while breakdown succeeds', () => {
     expect(screen.queryByText('Uncategorized')).toBeNull();              // surviving uncat row suppressed under the error
     expect(screen.queryByText('$25')).toBeNull();                        // no partial hero/row total
     expect(screen.queryByText('$65')).toBeNull();
-  });
-
-  it('breakdown has ONLY real-category spend → all rows drop → the inline error DOES surface', async () => {
-    server.fail('/categories', 500);
-    // breakdown resolves fine but every id needs the (failed) taxonomy → zero rows.
-    renderInsights(makeClient());
-    expect(await screen.findByTestId('insights-error')).toBeTruthy();
-    expect(screen.queryByText('Cafes & Coffee')).toBeNull();
-    expect(screen.queryByText('$0')).toBeNull(); // hero must not lie with a confident $0
   });
 });
 

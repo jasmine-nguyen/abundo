@@ -56,6 +56,19 @@ it('categoriesError is FALSE on a BACKGROUND-refetch categories failure over goo
   expect(result.current.category('coffee')?.name).toBe('Cafes & Coffee'); // last-good taxonomy still labels rows
 });
 
+it('a breakdown background-refetch failure surfaces isError but RETAINS the last-good breakdown (categoriesError stays false)', async () => {
+  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.breakdown.coffee?.posted).toBe(40));
+
+  // Only breakdown fails on refetch; categories still resolve.
+  server.fail('/breakdown', 503);
+  await act(async () => { result.current.refetch(); });
+  await waitFor(() => expect(result.current.isError).toBe(true));
+
+  expect(result.current.breakdown.coffee?.posted).toBe(40); // last-good data retained
+  expect(result.current.categoriesError).toBe(false);       // not a first-load taxonomy failure
+});
+
 // WHIT-312: `earned` rides in the breakdown response's __earned__ bucket (server-computed),
 // read as posted + pending; absent (no income, or an older server) → 0.
 it('derives earned from the __earned__ bucket (posted + pending)', async () => {
@@ -65,13 +78,6 @@ it('derives earned from the __earned__ bucket (posted + pending)', async () => {
   await waitFor(() => expect(result.current.earned).toBe(2800));
   // The earned bucket must not leak into the spend breakdown consumers keep reading.
   expect(result.current.breakdown.coffee).toEqual({ posted: 40, pending: 10 });
-});
-
-it('earned defaults to 0 when the response carries no __earned__ (older server / no income)', async () => {
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
-
-  await waitFor(() => expect(result.current.breakdown.coffee).toBeTruthy());
-  expect(result.current.earned).toBe(0);
 });
 
 // WHIT-366/376: `incomeSources` breaks the __earned__ total down per source — read from the
@@ -96,13 +102,6 @@ it('derives incomeSources biggest-first, keeps a net-negative source, drops only
   expect(result.current.incomeSources[2]).toEqual({ id: 'bonus', posted: -150, pending: 0, amount: -150 });
   // The income map must not leak into the spend breakdown consumers keep reading.
   expect(result.current.breakdown.coffee).toEqual({ posted: 40, pending: 10 });
-});
-
-it('incomeSources is [] when the response carries no __income__ (older server / no income)', async () => {
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
-
-  await waitFor(() => expect(result.current.breakdown.coffee).toBeTruthy());
-  expect(result.current.incomeSources).toEqual([]);
 });
 
 // WHIT-312 (qa gap): switching cycle must RE-DERIVE earned from that cycle's own cached

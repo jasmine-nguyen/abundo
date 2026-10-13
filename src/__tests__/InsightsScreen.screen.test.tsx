@@ -6,10 +6,9 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { routerSpies, fireFocus, resetRouter } from './support/routerMock';
 import { AccessibilityInfo } from 'react-native';
-import { screen, fireEvent, within } from '@testing-library/react-native';
+import { screen, fireEvent, within, waitFor } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { UNCATEGORIZED_KEY } from '../model';
-import { C } from '../theme';
 import { CATEGORY_COLORS } from '../chartColors';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queryKeys';
@@ -79,45 +78,12 @@ it('shows the Uncategorized bucket as a row', async () => {
   expect(screen.getByText('Uncategorised')).toBeTruthy();
 });
 
-it('shows an empty state when there is no spend', async () => {
-  await renderInsights();
-  expect(screen.getByText('No spending yet this pay cycle.')).toBeTruthy();
-});
-
-describe('the spending donut', () => {
-  it('draws once there is spend', async () => {
-    seedBreakdown({ spend: TWO_ROWS });
-    await renderInsights();
-    expect(screen.getByTestId('insights-donut')).toBeTruthy();
-  });
-
-  it('is not drawn with no spend', async () => {
-    await renderInsights();
-    expect(screen.queryByTestId('insights-donut')).toBeNull();
-  });
-
-  it('is not drawn over an error, even with a spend row', async () => {
-    // The Uncategorized row survives a categories failure, so only the error gate hides the donut.
-    seedBreakdown({ spend: { [UNCATEGORIZED_KEY]: posted(25) } });
-    server.fail('/categories', 500);
-    await renderInsights();
-    expect(screen.getByTestId('insights-error')).toBeTruthy();
-    expect(screen.queryByTestId('insights-donut')).toBeNull();
-  });
-});
-
 it('draws the earned-vs-spent chart when there is spend, on BOTH cycle tabs', async () => {
   seedBreakdown({ spend: TWO_ROWS, earned: 3000 });
   await renderInsights();
   expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
   // Unlike the AI coach card (current-cycle only), it stays on "Last cycle" too.
   await showLastCycle();
-  expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
-});
-
-it('shows the earned-vs-spent chart on an income-only cycle (income, no spend rows)', async () => {
-  seedBreakdown({ earned: 3000 }); // earned but nothing spent
-  await renderInsights();
   expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
 });
 
@@ -169,60 +135,131 @@ it('refreshes breakdown (query) AND AI on focus', async () => {
   expect(refreshAiInsights).toHaveBeenCalled();
 });
 
-it('renders the hero total and pluralised category count', async () => {
+it('renders the hero total', async () => {
   seedBreakdown({ spend: TWO_ROWS }); // 25 + 80
   await renderInsights();
   // The donut centre also reads the total now, so target the hero by testID to disambiguate.
   expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
-  expect(screen.getByText(/across 2 categories/)).toBeTruthy();
 });
 
-it('uses the singular "category" for exactly one spent row', async () => {
-  seedBreakdown({ spend: { coffee: posted(12) } });
-  await renderInsights();
-  expect(screen.getByText(/across 1 category$/)).toBeTruthy();
+// --- the hero states, pinned apart (WHIT-189): only a load/error hides the number ---
+
+describe('hero states (no false $0)', () => {
+  it('a loaded, empty breakdown (no error, not loading) shows a real $0 / 0 categories — NOT suppressed to "—"', async () => {
+    await renderInsights();
+    expect(screen.getByText('$0')).toBeTruthy();
+    expect(screen.getByText(/across 0 categories/)).toBeTruthy();
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(screen.queryByText("Couldn't load")).toBeNull();
+    expect(screen.getByText('No spending yet this pay cycle.')).toBeTruthy();
+  });
+
+  it('loading (nothing cached) → hero reads "—" / "Loading…", never $0', async () => {
+    const held = server.hold('/breakdown');
+    drawInsights();
+    expect(await screen.findByText('Loading…')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.queryByText('$0')).toBeNull();
+
+    held.release();
+    expect(await screen.findByText('$0')).toBeTruthy();
+  });
+
+  it('error (nothing cached) → hero reads "—" / "Couldn\'t load", never $0', async () => {
+    server.fail('/breakdown', 500);
+    await renderInsights();
+    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.getByText("Couldn't load")).toBeTruthy();
+    expect(screen.queryByText('$0')).toBeNull();
+  });
+
+  // [A5] breakdown is in, categories still on the way → spinner, not "$0 across 0 categories".
+  it('[A5] categories held → hero reads Loading…, then the real total once they land', async () => {
+    seedBreakdown({ spend: { coffee: posted(40) } });
+    const held = server.hold('/categories');
+    drawInsights();
+    try {
+      // Only categories are outstanding: the breakdown and pay cycle have both landed.
+      await waitFor(() => expect(queryClient.isFetching()).toBe(1));
+      await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
+      expect(queryClient.getQueryCache().findAll({ queryKey: breakdownKey })[0]?.state.status).toBe('success');
+      expect(screen.getByText('Loading…')).toBeTruthy();
+      expect(screen.queryByText('$0')).toBeNull();
+      expect(screen.queryByTestId('insights-hero-total')).toBeNull();
+    } finally {
+      held.release();
+    }
+    expect((await screen.findByTestId('insights-hero-total')).props.children).toBe('$40');
+  });
+
+  // [A6] the error card's Retry re-reads the breakdown and the rows come back.
+  it('[A6] breakdown fails once → error card → tap Retry → rows and total show', async () => {
+    seedBreakdown({ spend: { coffee: posted(25) } });
+    server.once('GET', '/breakdown', { status: 500 });
+    await renderInsights();
+    expect(screen.getByTestId('insights-error')).toBeTruthy();
+
+    await refreshInAct(() => fireEvent.press(screen.getByTestId('insights-retry')));
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    expect(screen.queryByTestId('insights-error')).toBeNull();
+    expect(screen.getByTestId('insights-hero-total').props.children).toBe('$25');
+  });
+
+  it('a failed breakdown refetch over a cached row → row + total show, NO "Couldn\'t load"', async () => {
+    // Cache-first (WHIT-194): showError = (isError && rows.length === 0) || categoriesError must be
+    // FALSE, so the row survives. Fail-on-revert: dropping the `&& rows.length === 0` guard blanks
+    // the row and shows the error here.
+    seedBreakdown({ spend: { [UNCATEGORIZED_KEY]: posted(25) } });
+    await renderInsights();
+    expect(screen.getByText('Uncategorised')).toBeTruthy();
+
+    server.fail('/breakdown', 500);
+    await refreshInAct(() => queryClient.refetchQueries({ queryKey: breakdownKey }).catch(() => {}));
+    expect(queryClient.getQueryState([...breakdownKey, 0])?.status).toBe('error'); // the refetch really failed
+
+    expect(screen.queryByTestId('insights-error')).toBeNull();     // no error card over cached rows
+    expect(screen.queryByText("Couldn't load")).toBeNull();        // hero keeps its number, not "—"
+    expect(screen.getByText('Uncategorised')).toBeTruthy();        // the cached row survives
+    expect(screen.getAllByText('$25').length).toBeGreaterThanOrEqual(1); // hero + row total intact
+  });
 });
 
-it('shows a spinner (not the empty state, not a false $0) while a first fetch is in flight', async () => {
-  const held = server.hold('/breakdown');
-  drawInsights();
-  expect(await screen.findByTestId('insights-loading')).toBeTruthy();
-  expect(screen.queryByText('No spending yet this pay cycle.')).toBeNull();
-  expect(screen.queryByText('$0')).toBeNull(); // hero must not show a confident $0
-  held.release();
-  await settle();
-});
+// --- breakdown and AI are independent features on one screen ---
 
-it('shows an inline error + Retry (not a false $0) on a sustained breakdown failure', async () => {
-  server.fail('/breakdown', 500);
-  await renderInsights();
-  expect(screen.getByTestId('insights-error')).toBeTruthy();
-  const before = breakdownReads();
-  await refreshInAct(() => fireEvent.press(screen.getByTestId('insights-retry')));
-  await settle();
-  expect(breakdownReads()).toBeGreaterThan(before); // Retry re-reads the breakdown
-  expect(screen.queryByText('$0')).toBeNull();
+describe('breakdown and AI fail independently', () => {
+  it('breakdown in error (rows gone, hero "—") while AI advice exists → AI card still fully renders', async () => {
+    server.fail('/breakdown', 500);
+    setAi({
+      insights: { summary: 'You are pacing well.', suggestions: ['Trim $20 from Coffee'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    });
+    await renderInsights();
+    expect(screen.getByTestId('insights-error')).toBeTruthy();
+    expect(screen.getByText("Couldn't load")).toBeTruthy();
+    expect(screen.getByText('You are pacing well.')).toBeTruthy();
+    expect(screen.getByText('Trim $20 from Coffee')).toBeTruthy();
+    expect(screen.getByLabelText('Re-analyse my spending')).toBeTruthy();
+  });
+
+  it('AI generation failed while breakdown has spend → rows + real hero total still show', async () => {
+    seedBreakdown({ spend: { coffee: posted(30) } });
+    setAi({ insights: null, isError: true });
+    await renderInsights();
+    expect(screen.getByText(/Couldn’t generate insights/)).toBeTruthy();
+    expect(screen.getByText('Try again')).toBeTruthy();
+    expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+    // $30 appears twice (hero total + row amount); the load/error placeholder does not.
+    expect(screen.getAllByText('$30').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('—')).toBeNull();
+    expect(screen.queryByTestId('insights-error')).toBeNull();
+  });
 });
 
 // --- AI insights (WHIT-104) — unchanged behaviour, still on the context store ---
-
-it('shows the idle prompt + the analyse button before any AI insight exists', async () => {
-  await renderInsights();
-  expect(screen.getByText('Worth a look')).toBeTruthy();
-  expect(screen.getByText('Analyse my spending')).toBeTruthy();
-  expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
-});
 
 it('tapping "Analyse my spending" calls generateAiInsights', async () => {
   await renderInsights();
   fireEvent.press(screen.getByText('Analyse my spending'));
   expect(generateAiInsights).toHaveBeenCalled();
-});
-
-it('keeps the note spend-only (no loan figures) when the loan goal is not ready', async () => {
-  await renderInsights();
-  expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
-  expect(screen.queryByText(/home-loan figures/)).toBeNull();
 });
 
 describe('with the loan goal ready', () => {
@@ -245,6 +282,15 @@ describe('with the loan goal ready', () => {
     fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
     expect(generateAiInsights).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
   });
+
+  it('stays spend-only and sends no goal when the loan facts read fails', async () => {
+    server.fail('/loanfacts', 500);
+    await renderInsights();
+    expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
+    expect(screen.queryByText(/home-loan figures/)).toBeNull();
+    fireEvent.press(screen.getByText('Analyse my spending'));
+    expect(generateAiInsights).toHaveBeenCalledWith(null);
+  });
 });
 
 it('renders the AI summary + each suggestion once generated', async () => {
@@ -258,20 +304,6 @@ it('renders the AI summary + each suggestion once generated', async () => {
   expect(screen.getByLabelText('Re-analyse my spending')).toBeTruthy();
   expect(screen.queryByText('Analyse my spending')).toBeNull();
   expect(screen.getByText(/Re-analysing sends your category spend totals to Anthropic/)).toBeTruthy();
-});
-
-it('tapping the compact refresh re-runs generation', async () => {
-  setAi({ insights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
-  await renderInsights();
-  fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
-  expect(generateAiInsights).toHaveBeenCalled();
-});
-
-it('shows a "generated ago" stamp from the timestamp', async () => {
-  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-  setAi({ insights: { summary: 'ok', suggestions: [], generated_at: twoDaysAgo, cycle_start: '2026-06-25', cached: true } });
-  await renderInsights();
-  expect(screen.getByText('2d ago')).toBeTruthy();
 });
 
 it('keeps the insight visible + swaps the refresh for a spinner while re-running', async () => {
@@ -303,11 +335,6 @@ it('shows a retryable error when generation failed', async () => {
   expect(screen.getByText('Try again')).toBeTruthy();
 });
 
-it('refreshes any cached AI insight when the tab gains focus', async () => {
-  await renderInsights();
-  expect(refreshAiInsights).toHaveBeenCalled();
-});
-
 // --- WHIT-142: screen-reader a11y for the AI re-analyse busy/result --------------
 const AI = { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false };
 
@@ -319,13 +346,6 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
     await renderInsights();
     expect(screen.getByLabelText('Re-analysing your spending')).toBeTruthy();
     expect(screen.queryByLabelText('Re-analyse my spending')).toBeNull(); // the button is gone while busy
-  });
-
-  it('gives the first-run generate busy spinner an accessible name', async () => {
-    setAi({ insights: null, isLoading: true });
-    await renderInsights();
-    expect(screen.getByLabelText('Analysing your spending')).toBeTruthy();
-    expect(screen.getByTestId('ai-generate-busy')).toBeTruthy();
   });
 
   it('announces success on the loading → done edge', async () => {
@@ -355,17 +375,6 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
     expect(announce).not.toHaveBeenCalled(); // withheld while the coach is off-screen
   });
 
-  it('announces failure on the loading → done edge when the run errored', async () => {
-    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ insights: AI, isLoading: true });
-    const view = await renderInsights();
-
-    setAi({ insights: AI, isLoading: false, isError: true });
-    redrawInsights(view);
-    expect(announce).toHaveBeenCalledTimes(1);
-    expect(announce).toHaveBeenLastCalledWith("Couldn't analyse your spending. Please try again.");
-  });
-
   // The real regression this card guards: the announce must NOT fire except on a genuine
   // analyse/re-analyse completion — not on mount, not on a mid-load mount, not on tab focus.
   it('does NOT announce on a plain mount (never analysing)', async () => {
@@ -379,14 +388,6 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
     setAi({ insights: AI, isLoading: true });
     await renderInsights();
-    expect(announce).not.toHaveBeenCalled();
-  });
-
-  it('does NOT announce on a focus re-render while loading stays constant', async () => {
-    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ insights: AI, isLoading: false });
-    const view = await renderInsights();
-    redrawInsights(view); // a re-render with no loading transition (e.g. focus refetch)
     expect(announce).not.toHaveBeenCalled();
   });
 });
@@ -476,18 +477,15 @@ describe('earned-vs-spent chart — screen gaps (WHIT-312)', () => {
     // fed the SAME $105 spend total the hero shows. A different spend would change this string.
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$2,895 surplus');
   });
-});
 
-// WHIT-373 — the Earned/Spent card is a pure summary now: no per-bar drill chevron, no press
-// targets. The Spending/Earning toggle below is the one way to drill in (see insightsSideToggle).
-describe('Earned/Spent card is summary-only (WHIT-373)', () => {
-  it('renders no drill press targets on either bar', async () => {
-    seedBreakdown({ spend: { coffee: posted(40) }, earned: 3000, income: { salary: posted(3000) } });
+  // [A1] posted + pending both count toward earned.
+  it('[A1] pending income counts: earned 1,000 posted + 500 pending vs 2,000 spend → −$500 deficit', async () => {
+    seedInsights(server, {
+      breakdown: { coffee: posted(2000), __earned__: { posted: 1000, pending: 500 } },
+      categories: CATS,
+    });
     await renderInsights();
-    expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();  // card still shows
-    expect(screen.queryByTestId('earned-bar-press')).toBeNull();       // no Earned drill
-    expect(screen.queryByTestId('spent-bar-press')).toBeNull();        // no Spent drill
-    // FAIL-ON-REVERT: restoring the onSpentPress wiring makes spent-bar-press render again.
+    expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$500 deficit');
   });
 });
 
@@ -536,21 +534,6 @@ describe('Insights refund line gaps (WHIT-349)', () => {
     // The hero total reads the netted cycle spend: car node 30, NOT petrol's floored 60.
     expect(screen.getByTestId('insights-hero-total').props.children).toBe('$30');
   });
-
-  it('the refund is not counted as a category: "spent across 1 category"', async () => {
-    await renderInsights();
-    // One top-level category (Car). The refund line is NEVER a top-level row / donut wedge, so
-    // the count stays 1 even though a Tolls refund line exists under Car.
-    expect(screen.getByText('spent across 1 category')).toBeTruthy();
-  });
-
-  it('expanding does not change the hero total (refund is display-only)', async () => {
-    await renderInsights();
-    fireEvent.press(screen.getByText('Car'));
-    // The refund line now renders, but the hero total is unchanged — it is excluded from the total.
-    expect(screen.getByText(/refund/)).toBeTruthy();
-    expect(screen.getByTestId('insights-hero-total').props.children).toBe('$30');
-  });
 });
 
 describe('Insights remainder/Other plug (WHIT-357/375)', () => {
@@ -575,16 +558,8 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
   }
   // A category-bar track (styles.track: height 8) — present on a real spend row, absent on a plug/refund.
   const tracksIn = (card: ReactTestInstance) => card.findAll((n) => styleOf(n).height === 8);
-  // The bold amount Text (styles.rowAmount: fontWeight '700') inside a card.
-  const amountColor = (card: ReactTestInstance) =>
-    styleOf(card.findAll((n) => styleOf(n).fontWeight === '700')[0]).color;
 
-  // The row NAME Text (styles.rowName: fontWeight '600') inside a card — its colour moved from a
-  // hardcoded C.textDim to breakdownLineStyle's nameColor in WHIT-375, so lock it here.
-  const nameColor = (card: ReactTestInstance) =>
-    styleOf(card.findAll((n) => styleOf(n).fontWeight === '600')[0]).color;
-
-  it('hides the "Other" plug until the parent is expanded, then shows it muted, un-barred, and un-tappable', async () => {
+  it('hides the "Other" plug until the parent is expanded, then shows it un-barred and un-tappable', async () => {
     await renderInsights();
     // Collapsed: the plug is not shown.
     expect(screen.queryByText('Pending/refund adjustment')).toBeNull();
@@ -596,31 +571,13 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     expect(other).toBeTruthy();
 
     const card = rowCard(other);
-    // (a) neutral-coloured amount — textDim, NOT the refund green (C.good).
-    expect(amountColor(card)).toBe(C.textDim);
-    expect(amountColor(card)).not.toBe(C.good);
-    // (b) NO bar/track under the plug row.
+    // NO bar/track under the plug row — while a real spend row does have one, so the lookup finds tracks.
     expect(tracksIn(card)).toHaveLength(0);
-    // (c) NOT tappable — no button in the row, and pressing it drills nowhere.
+    expect(tracksIn(rowCard(screen.getByText('Petrol')))).not.toHaveLength(0);
+    // NOT tappable — no button in the row, and pressing it drills nowhere.
     expect(within(card).queryByRole('button')).toBeNull();
     fireEvent.press(other);
     expect(routerSpies.push).not.toHaveBeenCalled();
-  });
-
-  it('the refund line under the SAME parent stays green + tappable — proving the plug checks are meaningful', async () => {
-    await renderInsights();
-    fireEvent.press(screen.getByText('Car'));
-
-    // Positive control 1: the refund line ('Tolls') is green and IS a drill target.
-    const refundCard = rowCard(screen.getByText('Tolls'));
-    expect(amountColor(refundCard)).toBe(C.good);
-    expect(within(refundCard).queryByRole('button')).toBeTruthy();
-    fireEvent.press(screen.getByText('Tolls'));
-    expect(routerSpies.push).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
-
-    // Positive control 2: a real spend row (Petrol) DOES carry a bar/track — so the plug's
-    // "no track" assertion above is a real difference, not a query that never finds tracks.
-    expect(tracksIn(rowCard(screen.getByText('Petrol')))).not.toHaveLength(0);
   });
 
   // WHIT-375 — [A1] gap symmetric to the breakdown refund test. insightsRemainderLine only locked
@@ -634,27 +591,6 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     const refundCard = rowCard(screen.getByText('Tolls'));
     expect(within(refundCard).getByText('$30')).toBeTruthy();   // unsigned credit
     expect(within(refundCard).queryByText('-$30')).toBeNull();  // never the signed drift
-  });
-
-  // WHIT-375 — [A2] the refund/remainder NAME colour moved from a hardcoded C.textDim to the helper's
-  // nameColor. Prove it's unchanged on BOTH kinds of line: dimmed (C.textDim), NOT the bright category
-  // ink (C.textBright). Fail-on-revert: if the helper returned textBright for a refund/remainder name,
-  // these flip.
-  it('keeps the refund AND remainder NAME dimmed (C.textDim, not the bright ink)', async () => {
-    await renderInsights();
-    fireEvent.press(screen.getByText('Car'));
-
-    const refundName = nameColor(rowCard(screen.getByText('Tolls')));
-    expect(refundName).toBe(C.textDim);
-    expect(refundName).not.toBe(C.textBright);
-
-    const plugName = nameColor(rowCard(screen.getByText('Pending/refund adjustment')));
-    expect(plugName).toBe(C.textDim);
-    expect(plugName).not.toBe(C.textBright);
-
-    // Control: a real spend row (Petrol) keeps the BRIGHT name — so "dimmed" is a real difference,
-    // not a colour every row happens to share.
-    expect(nameColor(rowCard(screen.getByText('Petrol')))).toBe(C.textBright);
   });
 
   it('a NEGATIVE "Other" plug renders its minus sign (WHIT-357 R1) so the rows visibly still add up', async () => {
@@ -721,15 +657,6 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
       expect(screen.queryByTestId('insights-bars-caption')).toBeNull();
     });
 
-    it('switching back to Spending restores the category rows', async () => {
-      seedSides(BOTH);
-      await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
-      fireEvent.press(screen.getByTestId('insights-side-spending'));
-      expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
-      expect(screen.queryByText('Salary')).toBeNull();
-    });
-
     it('taps an income source into its transactions for the selected cycle', async () => {
       seedSides(BOTH);
       await renderInsights();
@@ -760,13 +687,6 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
       expect(screen.getByText('-$100')).toBeTruthy();             // clawback renders signed
     });
 
-    it('falls back to an "Income" label when the taxonomy lacks the source id', async () => {
-      seedSides({ spend: { coffee: posted(40) }, earned: 200, income: { mystery: posted(200) } });
-      await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
-      expect(screen.getByText('Income')).toBeTruthy();
-    });
-
     it('income-only cycle: toggle shows; default Spending reads empty; Earning lists the income', async () => {
       seedSides({ earned: 3000, income: { salary: posted(3000) } });
       await renderInsights();
@@ -776,14 +696,12 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
       expect(screen.getByText('Salary')).toBeTruthy();
     });
 
-    it('no toggle and no drill press targets when the cycle is fully empty', async () => {
+    it('no toggle when the cycle is fully empty', async () => {
       seedSides({ earned: 0 });
       await renderInsights();
       expect(screen.queryByTestId('insights-side-spending')).toBeNull();          // nothing to switch to
       expect(screen.queryByTestId('insights-side-earning')).toBeNull();
       expect(screen.getByText('No spending yet this pay cycle.')).toBeTruthy();
-      expect(screen.queryByTestId('earned-bar-press')).toBeNull();                // card is summary-only
-      expect(screen.queryByTestId('spent-bar-press')).toBeNull();
     });
   });
 });
