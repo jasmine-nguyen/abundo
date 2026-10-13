@@ -5,7 +5,7 @@
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { View, Text, Animated, StyleSheet } from 'react-native';
-import { render } from '@testing-library/react-native';
+import { render, fireEvent } from '@testing-library/react-native';
 import { C } from '../theme';
 import { styleOf } from './support/layout';
 import { contentStyle, headerMotion, scrollTo } from './support/scrollChromeHeader';
@@ -16,14 +16,18 @@ jest.mock('react-native-safe-area-context', () => require('./support/safeAreaMoc
 import { NavBarsProvider } from '../motion/NavBarsContext';
 import { ScrollChromeHeader, floatingHeaderStyle } from '../motion/ScrollChromeHeader';
 
-function renderHeader() {
-  return render(
+function header(subtitle?: React.ReactNode) {
+  return (
     <NavBarsProvider reduceMotion>
-      <ScrollChromeHeader title="Budgets">
+      <ScrollChromeHeader title="Budgets" subtitle={subtitle}>
         <Text>body</Text>
       </ScrollChromeHeader>
-    </NavBarsProvider>,
+    </NavBarsProvider>
   );
+}
+
+function renderHeader() {
+  return render(header());
 }
 
 it('scrolling down slides the header up by its full height, scrolling back up shows it again', () => {
@@ -42,6 +46,22 @@ it('scrolling down slides the header up by its full height, scrolling back up sh
 
 it('insets the list top by the full header height (notch + body)', () => {
   expect(contentStyle(renderHeader()).paddingTop).toBe(105);
+});
+
+// [A1] WHIT-863: with the freshness line under the title, the header slides away by its MEASURED
+// height (notch included), not the fixed 105, so the line never peeks out when scrolled.
+// [A2] When the line goes away (e.g. while Transactions searches the server), the old measured
+// height is dropped and the list top falls back to 105 straight away.
+it('with a subtitle, slides away by the measured header height and drops it when the subtitle goes (WHIT-863)', () => {
+  const r = render(header(<Text>Updated 9:40am</Text>));
+  fireEvent(r.getByTestId('screen-header'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 140 } } });
+  expect(contentStyle(r).paddingTop).toBe(140);
+
+  scrollTo(r, 200);
+  expect(headerMotion(r)).toMatchObject({ translateY: -140, opacity: 0 });
+
+  r.rerender(header(null));
+  expect(contentStyle(r).paddingTop).toBe(105);
 });
 
 // WHIT-729: when scrolling hides the header, the area behind the status bar (clock, Dynamic Island,

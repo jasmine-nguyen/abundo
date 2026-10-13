@@ -39,6 +39,7 @@ export default function Accounts() {
   return (
     <ScrollChromeHeader
       title="Accounts"
+      subtitle={showError ? null : <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />}
       // Show the pull spinner for a user pull unless the cold-load spinner owns the screen
       // (WHIT-363: never double-spin). `!showSpinner` — not `transactions.length > 0` — so a
       // pull on the settled "No accounts yet" empty state still shows feedback, now that the
@@ -46,7 +47,6 @@ export default function Accounts() {
       refreshing={pulling && !showSpinner}
       onRefresh={onRefresh}
     >
-      {!showError && <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />}
       <ListStates
         showSpinner={showSpinner}
         showError={showError}

@@ -7,7 +7,7 @@
 // state has a single owner —
 // the provider's stateRef (read here, written via setNavBars), which also honours
 // reduce-motion. `prevY` is per-ScrollView scroll geometry, not chrome state.
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, Text, Animated, ScrollView, StyleSheet, StyleProp, ViewStyle, RefreshControl } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +15,7 @@ import { C, FONT } from '../theme';
 import { useNavBars } from './NavBarsContext';
 import { SettingsButton } from '../components/SettingsButton';
 import { nextNavBarsState } from './navBarsVisibility';
+import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
 
 // A tab screen's header is a fixed-height row (a ~40px action button) with paddingTop
 // insets.top + 6 and paddingBottom 12. headerHeight = insets.top + HEADER_BODY_HEIGHT is
@@ -32,24 +33,24 @@ export const TAB_BAR_CLEARANCE = 120;
 export const ASK_BUTTON_BOTTOM_CLEARANCE = 72;
 
 // The absolute, opaque header shell. The safe-area paddingTop and the animated slide/fade
-// are layered on top.
+// are layered on top. Its contents are a column: the gear/title/action row, then the optional
+// subtitle (WHIT-863).
 export const floatingHeaderStyle = StyleSheet.create({
   header: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: C.bg,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 12,
   },
 }).header;
 
 export const SCREEN_PADDING = 18;
-// The title sits in HEADER_BODY_HEIGHT minus 18px of padding (40px). 19px × 1.5 still fits, so at
-// the biggest text sizes it can't grow over the top of the screen's first card (WHIT-743).
-const TITLE_MAX_SCALE = 1.5;
 
 export function ScrollChromeHeader({
-  title, right, refreshing, onRefresh, contentContainerStyle, keyboardShouldPersistTaps, children,
+  title, subtitle, right, refreshing, onRefresh, contentContainerStyle, keyboardShouldPersistTaps, children,
 }: {
   title: string;
+  // Small text under the title (the freshness line, WHIT-863). With one, the header's measured
+  // height drives the list's top gap, the slide distance and the pull spinner's offset.
+  subtitle?: React.ReactNode;
   right?: React.ReactNode;
   // Given onRefresh, the wrapper builds the pull-to-refresh spinner, offset by headerHeight so it
   // doesn't draw behind the opaque floating header at y≈0 (WHIT-211). No onRefresh → no spinner.
@@ -62,7 +63,9 @@ export function ScrollChromeHeader({
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
-  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
+  const [measuredHeight, setMeasuredHeight] = useState(0);
+  const fixedHeight = insets.top + HEADER_BODY_HEIGHT;
+  const headerHeight = subtitle != null && measuredHeight > 0 ? Math.max(fixedHeight, measuredHeight) : fixedHeight;
   const { visibility, setNavBars, stateRef } = useNavBars();
   const prevY = useRef(0);
 
@@ -82,10 +85,17 @@ export function ScrollChromeHeader({
   return (
     <View style={{ flex: 1 }}>
       <View pointerEvents="none" style={[styles.statusStrip, { height: insets.top }]} />
-      <Animated.View style={[floatingHeaderStyle, { paddingTop: insets.top + 6 }, headerStyle]}>
-        <SettingsButton />
-        <Text style={styles.title} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{title}</Text>
-        {right ?? <View style={styles.slot} />}
+      <Animated.View
+        testID="screen-header"
+        onLayout={(e) => setMeasuredHeight(e.nativeEvent.layout.height)}
+        style={[floatingHeaderStyle, { paddingTop: insets.top + 6 }, headerStyle]}
+      >
+        <View style={styles.titleRow}>
+          <SettingsButton />
+          <Text style={styles.title} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{title}</Text>
+          {right ?? <View style={styles.slot} />}
+        </View>
+        {subtitle != null && <View>{subtitle}</View>}
       </Animated.View>
 
       <ScrollView
@@ -117,6 +127,7 @@ export function ScrollChromeHeader({
 }
 
 const styles = StyleSheet.create({
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   // The right-hand 40px spacer, as wide as the gear on the left, so the title stays centred
   // when a screen has no right action.
   slot: { width: 40 },
