@@ -118,11 +118,13 @@ it('Transactions: shows "Bank synced <account> <time>" per account on both tabs,
   expect(await screen.findByText('-$42.00')).toBeTruthy();
 
   const expectBankSynced = async () => {
-    await waitFor(() => expect(screen.getByTestId('transactions-updated')).toHaveTextContent(
+    // [A3] WHIT-863: the Bank synced times (amber included) move into the header with the line.
+    const header = within(screen.getByTestId('screen-header'));
+    await waitFor(() => expect(header.getByTestId('transactions-updated')).toHaveTextContent(
       'Updated 9:40am · Bank synced Up Spending 8:10am · Westpac Altitude Qantas Black 16 Sep, 7:55am',
     ));
-    expect(styleOf(screen.getByTestId('transactions-bank-synced-up-spending')).color).not.toBe(C.warn);
-    expect(styleOf(screen.getByTestId('transactions-bank-synced-westpac-altitude-qantas-black')).color).toBe(C.warn);
+    expect(styleOf(header.getByTestId('transactions-bank-synced-up-spending')).color).not.toBe(C.warn);
+    expect(styleOf(header.getByTestId('transactions-bank-synced-westpac-altitude-qantas-black')).color).toBe(C.warn);
   };
 
   await expectBankSynced();
