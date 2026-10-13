@@ -99,6 +99,22 @@ def test_lambda_handler_all_feeds_succeed(monkeypatch):
     assert len(calls) == len(handler.SYNC_FEED_IDS)  # one POST per feed
 
 
+def test_lambda_handler_triggers_the_readded_westpac_feed(monkeypatch):
+    # Westpac's feed was deleted and re-added on 13 Oct 2026 (WHIT-861): the run must
+    # POST to the new feed, never the deleted one.
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
+    calls = []
+    monkeypatch.setattr(
+        handler.urllib.request, "urlopen",
+        lambda req, timeout=None: calls.append(req.full_url) or _ok_response(),
+    )
+
+    handler.lambda_handler({}, None)
+
+    assert any("Glb3YbhSmBJCvi97TaJt" in url for url in calls)
+    assert not any("zJiG0SNKKWScMp9bFdD4" in url for url in calls)
+
+
 def test_lambda_handler_isolates_per_feed_failure(monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     feed_ids = list(handler.SYNC_FEED_IDS)
