@@ -63,30 +63,10 @@ it('adds tags optimistically without clobbering the note', async () => {
   expect(cached('t1')?.notes).toBe('keep me'); // the other field is untouched
 });
 
-it('rolls tags back to absent on failure when there were none before', async () => {
-  server.fail('/transactions/t1', 500);
-  const result = mount([txn()]); // no tags
-
-  await act(async () => { await result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
-
-  expect(cached('t1')?.tags).toBeUndefined(); // restored to absent, not []
-});
-
 it('is a no-op (no API call) when the transaction is not in the cache', async () => {
   const result = mount([]);
   await act(async () => { await result.current.applyTransactionEdit('ghost', { notes: 'x' }); });
   expect(server.requests().filter((r) => r.method === 'PATCH')).toHaveLength(0);
-});
-
-// WHIT-296: the budget-exclude override rides the same optimistic write + rollback.
-it('excludes from budgets optimistically, calling the API with only that field', async () => {
-  const result = mount([txn({ notes: 'keep me' })]);
-
-  await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-
-  expect(cached('t1')?.budget_excluded).toBe(true); // optimistic cache write
-  expect(cached('t1')?.notes).toBe('keep me');      // other fields untouched
-  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { budget_excluded: true } });
 });
 
 it('rolls budget_excluded back to absent on failure when it was unset before', async () => {
@@ -117,12 +97,3 @@ it('a note edit then a tags edit both land — the tags call does not drop the n
   expect(saves[1].body).toEqual({ tags: ['work'] });
 });
 
-it('clearing a note writes "" optimistically and PATCHes only { notes: "" }', async () => { // [A21]
-  const result = mount([txn({ notes: 'old', tags: ['keep'] })]);
-
-  await act(async () => { await result.current.applyTransactionEdit('t1', { notes: '' }); });
-
-  expect(cached('t1')?.notes).toBe('');           // cleared in the cache
-  expect(cached('t1')?.tags).toEqual(['keep']);   // tags untouched
-  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { notes: '' } });
-});

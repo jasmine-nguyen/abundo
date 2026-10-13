@@ -7,7 +7,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
-import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
+import { seedTransactionsCache, seedTransactionsPages, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
@@ -18,6 +18,7 @@ import { anthropicSubTxn as txn } from './factory';
 const server = installFakeServer();
 
 const KEEP = txn({ transaction_id: 'keep', status: 'posted' });
+const OLDER = txn({ transaction_id: 'older', status: 'posted', date: '2026-08-01' });
 
 function seedEveryCopy() {
   seedTransactionsCache(queryClient, [txn(), KEEP]);
@@ -26,9 +27,23 @@ function seedEveryCopy() {
   queryClient.setQueryData(['categoryTransactions', 'subscriptions'], [txn()]);
 }
 
+// The duplicate sits on page 2 of the feed, so the removal must walk every loaded page.
+function seedPagedFeeds() {
+  seedTransactionsPages(queryClient, [
+    { transactions: [KEEP], nextCursor: 'c1' },
+    { transactions: [txn(), OLDER], nextCursor: null },
+  ]);
+  queryClient.setQueryData(['uncategorizedFeed'], { pages: [{ transactions: [txn(), KEEP], nextCursor: null }], pageParams: [undefined] });
+  queryClient.setQueryData(['transactionsRecent'], [txn(), KEEP]);
+}
+
 function ids(rows: Transaction[] | undefined) {
   return (rows ?? []).map((row) => row.transaction_id);
 }
+
+type Feed = { pages: { transactions: Transaction[]; nextCursor: string | null }[] };
+const uncategorizedIds = () => ids(queryClient.getQueryData<Feed>(['uncategorizedFeed'])?.pages.flatMap((p) => p.transactions));
+const recentIds = () => ids(queryClient.getQueryData<Transaction[]>(['transactionsRecent']));
 
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 
@@ -68,4 +83,60 @@ it('a failed delete puts the charge back everywhere and warns', async () => {
   expect(ids(queryClient.getQueryData<Transaction[]>(['budgetTransactions', 'subscriptions']))).toEqual(['dup', 'keep']);
   expect(ids(queryClient.getQueryData<Transaction[]>(['categoryTransactions', 'subscriptions']))).toEqual(['dup']);
   expect(result.current.toast).toBe('Could not delete. Please try again.');
+});
+
+it('drops the charge from the uncategorized feed, the recent window and a deep feed page, keeping page shape', async () => {
+  seedPagedFeeds();
+  const result = mount();
+  await act(async () => { await result.current.deleteTransaction('dup'); });
+
+  expect(ids(readTransactionsCache(queryClient))).toEqual(['keep', 'older']);
+  expect(queryClient.getQueryData<Feed>(['transactions'])?.pages.map((p) => p.nextCursor)).toEqual(['c1', null]);
+  expect(uncategorizedIds()).toEqual(['keep']);
+  expect(recentIds()).toEqual(['keep']);
+});
+
+it('removes the charge at once, before the server answers', async () => {
+  seedPagedFeeds();
+  const held = server.hold('/transactions/dup');
+  const result = mount();
+
+  let pending!: Promise<boolean>;
+  act(() => { pending = result.current.deleteTransaction('dup'); });
+  expect(ids(readTransactionsCache(queryClient))).toEqual(['keep', 'older']);
+  expect(uncategorizedIds()).toEqual(['keep']);
+  expect(recentIds()).toEqual(['keep']);
+
+  held.release();
+  await act(async () => { await pending; });
+  expect(ids(readTransactionsCache(queryClient))).toEqual(['keep', 'older']);
+});
+
+it('success refreshes the totals and the scoped lists, never the paged feeds (no refetch storm)', async () => {
+  seedPagedFeeds();
+  const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+  const result = mount();
+  await act(async () => { await result.current.deleteTransaction('dup'); });
+
+  const refreshed = invalidatedKeys(invalidate);
+  expect(refreshed).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions', 'categoryTransactions', 'uncategorizedCount']));
+  expect(refreshed).not.toContain('transactions');
+  expect(refreshed).not.toContain('uncategorizedFeed');
+  invalidate.mockRestore();
+});
+
+it('a rollback after the caches were cleared (signed out mid-delete) does not bring data back', async () => {
+  seedPagedFeeds();
+  server.fail('/transactions/dup', 500);
+  const held = server.hold('/transactions/dup');
+  const result = mount();
+
+  let pending!: Promise<boolean>;
+  act(() => { pending = result.current.deleteTransaction('dup'); });
+  queryClient.clear();
+  held.release();
+  await act(async () => { await pending; });
+
+  expect(queryClient.getQueryData(['transactions'])).toBeUndefined();
+  expect(queryClient.getQueryData(['transactionsRecent'])).toBeUndefined();
 });

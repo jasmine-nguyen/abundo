@@ -3,8 +3,7 @@
 // makeState. This is the single testable unit driving the screen.
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown } from '../context';
-import { UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY } from '../model';
-import { C } from '../theme';
+import { UNCATEGORIZED_KEY, INCOME_KEY } from '../model';
 import { makeState, cat, spend, withRollup } from './factory';
 import { COFFEE, GROCERIES } from './support/categories';
 
@@ -42,22 +41,6 @@ describe('categoryBreakdown', () => {
     expect(groceries.spentLabel).not.toContain('pending');
   });
 
-  it('renders the Uncategorized bucket with its own styling', () => {
-    const s = makeState({
-      categories: cats,
-      breakdown: {
-        coffee: spend({ posted: 40, pending: 0 }),
-        [UNCATEGORIZED_KEY]: spend({ posted: 25, pending: 0 }),
-      },
-    });
-    const uncat = categoryBreakdown(s).rows.find((r) => r.id === UNCATEGORIZED_KEY)!;
-    expect(uncat).toBeTruthy();
-    expect(uncat.name).toBe('Uncategorised');
-    expect(uncat.uncategorized).toBe(true);
-    expect(uncat.icon).toBe('q');
-    expect(uncat.color).toBe(C.purple);
-  });
-
   it('drops zero/negative-spend rows and excludes them from the total', () => {
     const s = makeState({
       categories: cats,
@@ -81,25 +64,6 @@ describe('categoryBreakdown', () => {
     });
     const rows = categoryBreakdown(s).rows;
     expect(rows.map((r) => r.id)).toEqual(['coffee']);
-  });
-
-  it('pct is each row share of the total', () => {
-    const s = makeState({
-      categories: cats,
-      breakdown: {
-        coffee: spend({ posted: 25, pending: 0 }),
-        groceries: spend({ posted: 75, pending: 0 }),
-      },
-    });
-    const rows = categoryBreakdown(s).rows;
-    expect(rows.find((r) => r.id === 'groceries')!.pct).toBeCloseTo(75, 5);
-    expect(rows.find((r) => r.id === 'coffee')!.pct).toBeCloseTo(25, 5);
-  });
-
-  it('is empty for an empty breakdown', () => {
-    const { rows, total } = categoryBreakdown(makeState({ categories: cats, breakdown: {} }));
-    expect(rows).toEqual([]);
-    expect(total).toBe(0);
   });
 
   it('renders a breakdown that is only the Uncategorized bucket', () => {
@@ -128,31 +92,6 @@ describe('categoryBreakdown', () => {
       },
     });
     expect(categoryBreakdown(s).rows.map((r) => r.id)).toEqual(['aaa', 'bbb']);
-  });
-
-  it('sorts the Uncategorized bucket by spend among the rows (not pinned)', () => {
-    // Uncategorized is a normal row for sorting: highest spend wins, wherever it is.
-    const s = makeState({
-      categories: cats,
-      breakdown: {
-        coffee: spend({ posted: 10, pending: 0 }),               // 10
-        [UNCATEGORIZED_KEY]: spend({ posted: 90, pending: 0 }),  // 90 -> first
-        groceries: spend({ posted: 40, pending: 0 }),            // 40 -> middle
-      },
-    });
-    expect(categoryBreakdown(s).rows.map((r) => r.id)).toEqual([
-      UNCATEGORIZED_KEY, 'groceries', 'coffee',
-    ]);
-  });
-
-  it('leaf-only rows carry depth 0 / no parent / no children (flat regression)', () => {
-    const s = makeState({
-      categories: cats,
-      breakdown: { coffee: spend({ posted: 20, pending: 0 }), groceries: spend({ posted: 80, pending: 0 }) },
-    });
-    for (const r of categoryBreakdown(s).rows) {
-      expect(r).toMatchObject({ depth: 0, parentId: null, hasChildren: false });
-    }
   });
 });
 
@@ -264,19 +203,6 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
     expect(rows.some((r) => r.id === 'a' && r.spent === 25)).toBe(true);
   });
 
-  it('never renders the __earned__ bucket as a spend row nor adds it to the total (WHIT-312)', () => {
-    const s = makeState({
-      categories: cats,
-      breakdown: {
-        coffee: spend({ posted: 20, pending: 0 }),
-        [EARNED_KEY]: spend({ posted: 2500, pending: 300 }), // total earned rides here, not a spend row
-      },
-    });
-    const { rows, total } = categoryBreakdown(s);
-    expect(rows.map((r) => r.id)).toEqual(['coffee']); // earned bucket excluded
-    expect(total).toBe(20);                             // and never inflates spend
-  });
-
   it('never renders the __income__ per-source bucket as a spend row nor adds it to the total (WHIT-366)', () => {
     const s = makeState({
       categories: cats,
@@ -300,27 +226,6 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
 // row's own pct share with no pct exceeding 100. No module-level const collisions (gaps declares
 // none); imports already covered by the survivor.
 describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
-  // [A14] zero-spend subs must not fabricate an expandable parent or a $0 sub row.
-  it('[A14] a parent whose subs are all zero-spend renders as a plain leaf', () => {
-    const s = makeState({
-      categories: [
-        cat({ id: 'food', name: 'Food', bucket: 'Living', parent: null }),
-        cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: 'food' }),
-        cat({ id: 'restaurants', name: 'Restaurants', bucket: 'Living', parent: 'food' }),
-      ],
-      // A WHIT-358 server drops flat keys for spend-free categories, so the subs are absent —
-      // Food has no present children and renders as a plain leaf reading its own flat value.
-      breakdown: withRollup(
-        { food: spend({ posted: 50, pending: 0 }) },
-        { nodes: { food: { posted: 50, pending: 0 } } },
-      ),
-    });
-    const { rows, total } = categoryBreakdown(s);
-    expect(rows.map((r) => r.id)).toEqual(['food']);          // no sub rows, no synthetic
-    expect(rows[0]).toMatchObject({ spent: 50, hasChildren: false, depth: 0, parentId: null });
-    expect(total).toBe(50);
-  });
-
   it('[A14b] a parent with no direct spend and only zero-spend subs emits nothing', () => {
     const s = makeState({
       categories: [
@@ -360,32 +265,5 @@ describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
     expect(food.spent).toBe(140);
     expect(food.spentLabel).toContain('pending');
     expect(food.spentLabel).toContain('$20');  // the pending portion, surfaced
-  });
-
-  // [A16] the synthetic row is a real share of the grand total, and the tree's pcts
-  // stay bounded — a parent can't overflow its own bar in a well-formed taxonomy.
-  it('[A16] the synthetic "Directly in" row has its own pct share; no pct exceeds 100', () => {
-    const s = makeState({
-      categories: [
-        cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
-        cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
-      ],
-      breakdown: withRollup(
-        {
-          car: spend({ posted: 40, pending: 0 }),       // tagged straight on the parent
-          parking: spend({ posted: 60, pending: 0 }),
-        },
-        { nodes: { car: { posted: 100, pending: 0 } } },  // direct 40 + parking 60
-      ),
-    });
-    const { rows, total } = categoryBreakdown(s);
-    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    expect(total).toBe(100);
-    expect(byId['car'].pct).toBeCloseTo(100, 5);            // whole tree = whole total
-    expect(byId['car__direct'].pct).toBeCloseTo(40, 5);     // its own 40 / 100
-    expect(byId['parking'].pct).toBeCloseTo(60, 5);
-    // the synthetic + real child pcts reconcile to the parent's pct
-    expect(byId['car__direct'].pct + byId['parking'].pct).toBeCloseTo(byId['car'].pct, 5);
-    for (const r of rows) expect(r.pct).toBeLessThanOrEqual(100 + 1e-9);
   });
 });

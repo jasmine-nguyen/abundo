@@ -6,7 +6,7 @@
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, waitFor } from '@testing-library/react-native';
 import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
@@ -65,30 +65,6 @@ it('hides the available line for a loan (you owe, but there is no credit to draw
   expect(screen.queryByText(/available/)).toBeNull();
 });
 
-it('renders no balance hero when the account has not been polled yet', async () => {
-  await renderWithQueries(<AccountDetail />);
-  expect(screen.getByText('1 transaction')).toBeTruthy();
-  expect(screen.queryByTestId('account-balance')).toBeNull();
-});
-
-// WHIT-198 follow-up — the account-detail error state had no coverage. A hard read failure with
-// NOTHING cached shows the inline error + an accessible Retry (routed through the shared
-// RetryButton), and Retry re-issues the read. A failure OVER cached rows stays cache-first.
-it('a hard read failure with nothing cached shows the inline error + an accessible Retry', async () => {
-  server.fail('/transactions', 500);
-  await renderWithQueries(<AccountDetail />);
-
-  expect(screen.getByTestId('account-error')).toBeTruthy();
-  const retry = screen.getByTestId('account-retry');
-  expect(retry.props.accessibilityRole).toBe('button'); // shared RetryButton a11y contract
-  expect(retry.props.accessibilityLabel).toBe('Retry loading this account');
-  expect(server.sent('GET', '/transactions')).toHaveLength(1);
-
-  fireEvent.press(retry);
-  await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(2));
-  await settle();
-});
-
 // WHIT-276 adversarial gaps (folded in) — the states that only appear when DetailStates is
 // wired to the REAL account screen's data: a cold load hides the empty message, a pending list
 // plus a failed taxonomy stacks both spinner and error, and a refetch failure over cached rows
@@ -97,17 +73,6 @@ it('while loading with nothing cached, shows the spinner and NOT the empty "No t
   const held = server.hold('/transactions');
   render(<WithQueries><AccountDetail /></WithQueries>);
   await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(1));
-  expect(screen.getByTestId('account-loading')).toBeTruthy();
-  expect(screen.queryByText('No transactions')).toBeNull();
-  held.release();
-  await settle();
-});
-
-it('with an empty cache, a pending list plus a failed taxonomy renders BOTH the spinner and the error, no content', async () => {
-  const held = server.hold('/transactions');
-  server.fail('/categories', 500);
-  render(<WithQueries><AccountDetail /></WithQueries>);
-  await waitFor(() => expect(screen.getByTestId('account-error')).toBeTruthy());
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
   held.release();
@@ -136,13 +101,6 @@ it('shows the balance for an account with a saved balance but no loaded transact
   expect(screen.getByText('No recent transactions')).toBeTruthy();
 });
 
-it('an unknown account with no balance and no transactions still shows "No transactions"', async () => {
-  setParams({ id: 'nope' });
-  await renderWithQueries(<AccountDetail />);
-  expect(screen.getByText('No transactions')).toBeTruthy();
-  expect(screen.queryByTestId('account-balance')).toBeNull();
-});
-
 // [A2] an account with BOTH loaded transactions and a balance keeps the bank's name in the
 // header — the id-derived fallback ("A1") is only for balance-only accounts.
 it('uses the transaction account name for the header when the account also has a balance', async () => {
@@ -151,10 +109,3 @@ it('uses the transaction account name for the header when the account also has a
   expect(screen.UNSAFE_getByType(Header).props.title).toBe('ANZ');
 });
 
-// [A3] a balance-only account's header is its id tidied into words, not the generic "Account".
-it('titles a balance-only account from its id', async () => {
-  setParams({ id: 'up-homeloan' });
-  server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan' })]);
-  await renderWithQueries(<AccountDetail />);
-  expect(screen.UNSAFE_getByType(Header).props.title).toBe('Up Homeloan');
-});

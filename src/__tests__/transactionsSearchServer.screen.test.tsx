@@ -5,6 +5,7 @@
 // the search requests the screen sends. Fake timers drive the typing pause.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
+import { RefreshControl } from 'react-native';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 jest.mock('../context', () =>
@@ -16,6 +17,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { refreshAfter } from '../transactionCache';
 import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 
@@ -25,9 +27,9 @@ useTestQueryClient();
 const FEED = '/transactions/feed';
 const SEARCH = '/transactions/search';
 
-const row = (id: string, merchant: string, amount: number, date = '2026-07-01') => ({
+const row = (id: string, merchant: string, amount: number, date = '2026-07-01', category: string | null = null) => ({
   transaction_id: id, date, authorized_date: date, description: merchant.toUpperCase(),
-  merchant_name: merchant, amount, account_id: 'a1', account_name: 'ANZ', category: null,
+  merchant_name: merchant, amount, account_id: 'a1', account_name: 'ANZ', category,
   status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 });
 const COLES = row('coles', 'Coles', -12.5);
@@ -65,24 +67,6 @@ describe('asking the server', () => {
     await pauseTyping();
     await waitFor(() => expect(searches()).toEqual(['/transactions/search?tab=all&q=steven']));
   });
-
-  it('asks for the Uncategorized tab when searching there', async () => {
-    await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    type('steven');
-    await pauseTyping();
-    await waitFor(() => expect(searches()).toEqual(['/transactions/search?tab=uncategorized&q=steven']));
-  });
-
-  it('a query of only $ or , never asks the server (it matches everything locally)', async () => {
-    await draw();
-    type('$,');
-    await pauseTyping();
-    await act(async () => { jest.advanceTimersByTime(1000); });
-    expect(searches()).toEqual([]);
-    expect(screen.getByText('-$12.50')).toBeTruthy();
-    expect(screen.queryByTestId('transactions-searching')).toBeNull();
-  });
 });
 
 describe('what the list shows', () => {
@@ -102,16 +86,6 @@ describe('what the list shows', () => {
     expect(screen.getByText('-$11.00')).toBeTruthy();
     expect(screen.queryByText('-$12.50')).toBeNull();
     expect(screen.getByTestId('transactions-searching')).toBeTruthy();
-  });
-
-  it('once answered, shows the server\'s matches (not the loaded rows)', async () => {
-    seedSearch([STEVEN_DEEP]);
-    await draw();
-    type('steven');
-    await pauseTyping();
-    expect(await screen.findByText('-$77.00')).toBeTruthy();
-    expect(screen.queryByText('-$11.00')).toBeNull();
-    expect(screen.queryByTestId('transactions-searching')).toBeNull();
   });
 
   it('keeps filtering the answer by the live text while the next answer is on its way', async () => {
@@ -269,7 +243,91 @@ describe('when the server search fails', () => {
   });
 });
 
-it('limits the search box to the server\'s query length', async () => {
-  await draw();
-  expect(screen.getByPlaceholderText('Search transactions').props.maxLength).toBe(100);
+describe('search transitions', () => {
+  const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
+
+  it('[A1] the previous query\'s answer never produces "No matches" for newer live text', async () => {
+    seedFeed([COLES]);
+    seedSearch([STEVEN_DEEP]);
+    await draw();
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByText('-$77.00')).toBeTruthy();
+
+    type('stevenx'); // the screen still holds the "steven" answer until typing pauses
+    expect(screen.queryByTestId('transactions-no-results')).toBeNull();
+    expect(screen.getByTestId('transactions-searching')).toBeTruthy();
+  });
+
+  it('[A2] clearing the box restores the feed immediately, before the debounce settles', async () => {
+    seedFeed([COLES]);
+    seedSearch([STEVEN_DEEP], true);
+    await draw();
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
+    expect(screen.queryByTestId('transactions-load-more')).toBeNull();
+
+    fireEvent.press(screen.getByLabelText('Clear search'));
+    expect(screen.getByText('-$12.50')).toBeTruthy();
+    expect(screen.queryByText('-$77.00')).toBeNull();
+    expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
+    expect(screen.queryByTestId('transactions-searching')).toBeNull();
+    expect(screen.queryByTestId('transactions-search-truncated')).toBeNull();
+
+    await pauseTyping();
+    expect(searches()).toEqual(['/transactions/search?tab=all&q=steven']); // clearing asks nothing new
+  });
+
+  it('[A3] Uncategorized tab: a re-filed search result drops out, an unfiled one stays', async () => {
+    const filed = row('steven-filed', 'Steven Nguyen', -33, '2024-01-01', 'groceries');
+    server.seed('/categories', [GROCERIES_TOP]);
+    server.seed('/transactions/uncategorized/feed', { transactions: [], nextCursor: 'c1' });
+    server.seed('/transactions/uncategorized/count', { count: 2 });
+    seedSearch([STEVEN_DEEP, filed]);
+    await draw();
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByText('-$77.00')).toBeTruthy();
+    expect(searches()).toEqual(['/transactions/search?tab=uncategorized&q=steven']);
+    expect(screen.queryByText('-$33.00')).toBeNull();
+  });
+
+  it('[A4] pull-to-refresh spins when only the search result has rows', async () => {
+    seedFeed([], null);
+    seedSearch([STEVEN_DEEP]);
+    await draw();
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByText('-$77.00')).toBeTruthy();
+
+    const held = server.hold('/accounts/balances/refresh'); // the pull stays in flight
+    await act(async () => { refreshControl().props.onRefresh(); });
+    await waitFor(() => expect(searches()).toHaveLength(2)); // the pull re-asks the search
+    expect(refreshControl().props.refreshing).toBe(true);
+
+    held.release();
+    await waitFor(() => expect(refreshControl().props.refreshing).toBe(false));
+  });
+
+  // The card's original bug as an invariant. A "$"-only query (the first key of "$42") never asks the
+  // server, so it must behave like an empty box — not claim "No matches" above Load More.
+  it('[A5] "$" on the Uncategorized tab never claims "No matches" while Load More is showing', async () => {
+    server.seed('/categories', [GROCERIES_TOP]);
+    server.seed('/transactions/uncategorized/count', { count: 4 }); // unfiled charges exist deeper in history
+    server.seed('/transactions/uncategorized/feed', {
+      transactions: [row('filed', 'Coles', -12.5, '2026-07-01', 'groceries')], nextCursor: 'c1',
+    });
+    await draw();
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    expect(await screen.findByTestId('transactions-uncategorized-more')).toBeTruthy();
+    type('$');
+    await pauseTyping();
+    expect(searches()).toEqual([]);
+    expect(screen.queryByTestId('transactions-no-results')).toBeNull();
+    expect(screen.getByTestId('transactions-uncategorized-more')).toBeTruthy();
+    expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
+  });
 });
+

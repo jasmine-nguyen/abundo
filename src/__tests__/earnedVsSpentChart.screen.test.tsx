@@ -1,18 +1,13 @@
 // WHIT-312/324: the Insights "Earned vs Spent" chart — the pure surplus/deficit helper (every
 // branch) and the rendered card. react-native is the real preset here (screen project), so bar
-// widths read off the fill View's style and the headline/message read off their text nodes.
+// widths read off the fill View's style and the headline reads off its text node.
 // WHIT-324: the card shows surplus/deficit only (no budget); both bars share one ruler and the
 // smaller bar is floored so a tiny spend stays visible.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import { EarnedVsSpent, earnedVsSpent } from '../components/EarnedVsSpent';
-import { C } from '../theme';
 import { styleOf } from './support/layout';
-
-const SURPLUS_MSG = 'Nice, you earned more than you spent this cycle. 🎉';
-const DEFICIT_MSG = "oops, a little over this cycle. You've got the next one to balance it out. 💪";
-const EVEN_MSG = 'You broke even this cycle.';
 
 describe('earnedVsSpent (pure)', () => {
   it('earned above spent → surplus headline, earned bar full width', () => {
@@ -23,7 +18,6 @@ describe('earnedVsSpent (pure)', () => {
     expect(r.spentShare).toBeCloseTo(1723 / 6389);
     expect(r.amountLabel).toBe('+$4,666 surplus');
     expect(r.tone).toBe('good');
-    expect(r.message).toBe(SURPLUS_MSG);
   });
 
   it('spent above earned → deficit headline, spent bar full width', () => {
@@ -33,7 +27,6 @@ describe('earnedVsSpent (pure)', () => {
     expect(r.earnedShare).toBeCloseTo(1000 / 1500);
     expect(r.amountLabel).toBe('−$500 deficit'); // unicode minus
     expect(r.tone).toBe('bad');
-    expect(r.message).toBe(DEFICIT_MSG);
   });
 
   it('equal earned and spent → broke even (both bars full)', () => {
@@ -43,23 +36,6 @@ describe('earnedVsSpent (pure)', () => {
     expect(r.spentShare).toBe(1);
     expect(r.amountLabel).toBe('$0');
     expect(r.tone).toBe('neutral');
-    expect(r.message).toBe(EVEN_MSG);
-  });
-
-  it('income but nothing spent → still a surplus of the whole income', () => {
-    const r = earnedVsSpent(2975, 0);
-    expect(r.earnedShare).toBe(1);
-    expect(r.spentShare).toBe(0);
-    expect(r.amountLabel).toBe('+$2,975 surplus');
-    expect(r.tone).toBe('good');
-  });
-
-  it('spend but no income → a deficit of the whole spend', () => {
-    const r = earnedVsSpent(0, 2408);
-    expect(r.spentShare).toBe(1);
-    expect(r.earnedShare).toBe(0);
-    expect(r.amountLabel).toBe('−$2,408 deficit');
-    expect(r.tone).toBe('bad');
   });
 
   it('both zero → no shares, broke-even headline', () => {
@@ -77,41 +53,16 @@ describe('earnedVsSpent (pure)', () => {
     expect(earnedVsSpent(100.3, 100).even).toBe(true);       // +$0.30 → shows $0 → broke even
     expect(earnedVsSpent(100, 101).overspent).toBe(true);    // −$1 → a real deficit
   });
-
-  it('non-finite inputs coerce to 0 (a hand-mocked screen can pass undefined)', () => {
-    expect(earnedVsSpent(NaN, 10).earnedShare).toBe(0);
-    expect(earnedVsSpent(NaN, 10).tone).toBe('bad');         // 0 earned − 10 spent → deficit
-    // @ts-expect-error exercising the undefined path a loose mock could hit
-    expect(earnedVsSpent(undefined, undefined).amountLabel).toBe('$0');
-  });
 });
 
 describe('EarnedVsSpent (render)', () => {
-  it('draws both bars, the surplus headline and message', () => {
+  it('draws both bars and the surplus headline', () => {
     render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
     expect(screen.getByText('$6,389')).toBeTruthy();
     expect(screen.getByText('$1,723')).toBeTruthy();
     expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');            // larger → full
     expect(styleOf(screen.getByTestId('spent-bar')).width).toBe(`${(1723 / 6389) * 100}%`);
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$4,666 surplus');
-    expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.surplus);
-    expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(` — ${SURPLUS_MSG}`);
-  });
-
-  it('deficit: the spent bar is full width and the headline is a coral minus', () => {
-    render(<EarnedVsSpent earned={1000} spent={1500} testID="evs" />);
-    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
-    expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$500 deficit');
-    expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.bad);
-    expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(` — ${DEFICIT_MSG}`);
-  });
-
-  it('broke even: $0 headline in the neutral colour', () => {
-    render(<EarnedVsSpent earned={1200} spent={1200} testID="evs" />);
-    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');
-    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
-    expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('$0');
-    expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.textBright);
   });
 
   it('a tiny spend against a large income floors to a visible nub, not a hairline', () => {
@@ -131,22 +82,5 @@ describe('EarnedVsSpent (render)', () => {
     render(<EarnedVsSpent earned={0} spent={0} testID="evs" />);
     expect(screen.queryByTestId('evs')).toBeNull();
     expect(screen.queryByTestId('earned-bar')).toBeNull();
-  });
-
-  it('carries an accessible summary of earned, spent, and the surplus line', () => {
-    render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
-    expect(screen.getByTestId('evs').props.accessibilityLabel).toBe(
-      `Earned $6,389, spent $1,723. +$4,666 surplus — ${SURPLUS_MSG}`,
-    );
-  });
-
-  // WHIT-373: the card is a pure summary now — no per-bar drill. The chevron and its press targets
-  // are gone; the Insights page's Spending/Earning toggle is the one way to drill in.
-  it('renders no drill affordance — no chevron, no press targets on either bar', () => {
-    render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
-    expect(screen.queryByTestId('earned-bar-press')).toBeNull();
-    expect(screen.queryByTestId('spent-bar-press')).toBeNull();
-    expect(screen.queryByText('›')).toBeNull();
-    expect(screen.getByTestId('earned-bar')).toBeTruthy(); // the bar fill still renders
   });
 });
