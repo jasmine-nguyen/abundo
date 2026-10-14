@@ -51,13 +51,9 @@ taking a moment to write it clearly.
   clashing" · null/undefined → "missing" · deploy → "release" · helper/module →
   say what it does ("the part that works out totals").
 
-`AGENTS.md` is already in your context. It holds the Linear team, card
-prefix, default card label, the check commands the pipeline runs, and any skip
-patterns for card picking.
-
-Cards are Linear issues in that team, read and written with the Linear tools
-(`list_issues`, `get_issue`, `save_issue`, `save_comment`). A card's type is
-its label: `Bug`, `Feature`, `Improvement`, `Spike`, `Tech debt` or `Test`.
+`AGENTS.md` is already in your context. It holds the board data source ID,
+card prefix, default card type, the check commands the pipeline runs, and any
+card picking rules (sort field, blocker relation, skip patterns) the project uses.
 
 ## Resuming a stopped build
 
@@ -77,48 +73,52 @@ the card number for card builds) and check where it is:
 1. Figure out what to build:
 
    **a) Card number given** — `$ARGUMENTS` looks like a card number
-   (matches the card prefix from AGENTS.md, e.g. CAD-92, ABU-42)
-   or a bare number (e.g. 92, meaning `<prefix>-92`). Fetch it with
-   `get_issue` and `includeRelations`: title, description, labels and
-   blockers.
+   (matches the card prefix from AGENTS.md, e.g. CAD-92, WHIT-42)
+   or a bare number (e.g. 92). Look the card up by "Card ID". Fetch its
+   title, description, and Type.
 
-   Check whether all its blockers ("blocked by" relations) have Status
-   'Done' and their PR merged (a card goes to Done when its PR opens,
-   before it merges: `gh pr list --search <card ID> --state merged`). If
-   not, warn the user, list the unfinished blockers, and ask whether to
-   continue anyway.
+   If AGENTS.md has a blocker relation, check whether all
+   blockers have Status = 'Done' and their PR merged (a card goes to Done
+   when its PR opens, before it merges: `gh pr list --search <card ID>
+   --state merged`). If not, warn the user, list the unfinished blockers,
+   and ask whether to continue anyway.
 
-   **b) Plain-text request** — `$ARGUMENTS` is not a card number. First
-   search the team for an open card that already asks for this
-   (`list_issues` with `query`). If one matches, tell the user and build
-   that card instead (1a). Otherwise create a new card with `save_issue`
-   in the AGENTS.md team, Status 'Todo', and a clear title. Set its label
-   from the request: if it reports something broken or asks to look into
-   an issue, use `Bug`; if it asks for new behaviour, use `Feature`;
-   otherwise use the default card label from AGENTS.md. Tell the user to
-   set its priority and blockers in Linear later. The reply holds the
-   card's assigned ID.
+   **b) Plain-text request** — `$ARGUMENTS` is not a card number. Create
+   a new card on the board: use `notion-create-pages` with the board data
+   source, Status = 'To Do', and a clear title. Set Type from the request:
+   if it reports something broken or asks to look into an issue, use
+   `Bug` (or `Defect` if that's the board's option); if it asks for new behaviour, use `Story`; otherwise use the
+   default card type from AGENTS.md. Leave the sort field empty. Tell
+   the user to set the sort field and blockers on the board later. Fetch
+   the card to get its assigned number.
 
    **c) Empty** — `$ARGUMENTS` is empty. Pick the next actionable card:
-   1. List the team's cards with Status 'Backlog' and with Status 'Todo'
-      (`list_issues` once per status, with `team`, `state`, `limit` 250,
-      fields `title`, `priority`, `labels`, `createdAt`). Sort them together
-      by priority: Urgent, High, Medium, Low, then no priority; oldest first
-      within the same priority. Also list the team's 'In Progress' cards
-      (step 4).
-   2. If AGENTS.md has skip patterns, skip cards whose title contains any
-      pattern.
-   3. Walk the list in order. Fetch each card's blockers (`get_issue`
-      with `includeRelations`). A card is ready only when every blocker is
-      Done and its PR merged (see 1a). No blockers = ready. Pick the first
-      ready card.
-   4. If any card has Status 'In Progress', mention it and ask whether to
-      resume that instead.
-   5. Echo the chosen card, its priority, and a one-line note for any
-      higher cards that were skipped — include which blocker is holding
-      each one up.
-   6. If no card is ready, say so and list the blocked cards with their
-      blockers. Don't pick anything.
+
+   If AGENTS.md has a **sort field** and **blocker relation**:
+   1. Query cards with Status = 'To Do' and a non-empty sort field,
+      sorted by the sort field ascending. Include url, Card ID, Name,
+      the sort field, and the blocker relation.
+   2. Walk that list in order. For each card:
+      - If AGENTS.md has skip patterns, skip cards whose Name
+        contains any pattern.
+      - Read the blocker relation. For each blocker URL, check its
+        Status. A card is ready only when every blocker is Done and its
+        PR merged (see 1a). (No blockers = ready.)
+   3. Pick the first ready card.
+   4. If any card has Status = 'In Progress', mention it and ask
+      whether to resume that instead.
+   5. Echo the chosen card, its sort value, and a one-line note for
+      any lower-order cards that were skipped — include which blocker
+      is holding each one up.
+   6. If no card is ready, say so and list the blocked cards with
+      their blockers. Don't pick anything.
+
+   If AGENTS.md does **not** have a sort field (fallback):
+   1. Query cards with Status IN ('To Do', 'In Progress'), ordered by:
+      `CASE "Priority" WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ASC`
+   2. If AGENTS.md has skip patterns, exclude cards whose Name
+      contains those patterns.
+   3. Take the first row. Fetch it.
 
    Echo which card you're building and why before continuing.
 
@@ -126,12 +126,9 @@ the card number for card builds) and check where it is:
    description to `.build/cards/<card ID>.md` with the Write tool —
    never paste card text into a shell command, where quotes or `$(...)`
    in the card would break or run. Then run:
-   `python3 build_graph.py --card <card ID> --type "<card type>" --details-file .build/cards/<card ID>.md`
+   `python3 build_graph.py --card <card ID> --type "<card Type>" --details-file .build/cards/<card ID>.md`
 
-   `<card type>` is the card's label from the list above; with none of
-   them, the default card label from AGENTS.md.
-
-   `<card ID>` is the full ID with its prefix (e.g. `ABU-622`, not `622`),
+   `<card ID>` is the full ID with its prefix (e.g. `WHIT-622`, not `622`),
    even if the user typed a bare number. It names the build, the branch
    and the PR.
 
@@ -141,10 +138,10 @@ the card number for card builds) and check where it is:
    branch, so the script refuses to start without it. If you don't know the
    branch, ask the user.
 
-   `--type` sets the branch, commit and PR prefix: Bug → `fix`, Tech debt
-   and Test → `chore`, anything else (Feature, Improvement, Spike) → `feat`.
-   Bug cards also take the bug path: the bug is reproduced with a failing
-   test before it's fixed.
+   `--type` sets the branch, commit and PR prefix: Story/Feature → `feat`,
+   Bug/Defect → `fix`, Chore → `chore`, Refactor → `refactor`, Docs → `docs`.
+   Anything else falls back to `feat`. Bug and Defect cards also take the
+   bug path: the bug is reproduced with a failing test before it's fixed.
 
    Routine cards (small to medium, easy to undo, nothing to decide) skip plan
    sign-off. If the user asks to see the plan before anything is built, add
@@ -163,6 +160,17 @@ the card number for card builds) and check where it is:
    While it runs, keep the user posted. The script prints one plain-English
    line when each step starts (⌛) and one when it ends (✅ done, ❌ or ↩️ sent
    back, ❓ or ⏸ waiting for them). Relay those lines as they come, as written.
+
+   If you have the `mcp__savvy-progress__progress` tool, also mirror the build
+   on its progress bar. Leave out `tasks`: the build's agents run inside the
+   script, so the bar's agents panel can't see them.
+   - At start: `title` "<card ID>: <card title>" (a few words), `phase` "plan",
+     `total` 1, `done` 0.
+   - When the implementer, test writer or reproducer starts: `phase` "delegate".
+     When the code review, ponytail or QA starts: `phase` "review".
+   - "starting slice N of M": `total` M, `done` N-1.
+   - When the script ends (step 5): `finished` true, plus `done` equal to
+     `total` only if the build passed.
    Don't add commentary of your own, and don't go silent.
 
    **PLAN APPROVED AUTOMATICALLY** — the planners rated the card routine, so
@@ -176,7 +184,7 @@ the card number for card builds) and check where it is:
    2. Unless the build-pause mod is loaded (see step 3), send a push
       notification (the PushNotification tool, if you have it), since the user
       may have walked away: the card, "plan approved automatically", and the
-      Task in one plain line, e.g. "ABU-42: plan approved automatically.
+      Task in one plain line, e.g. "WHIT-42: plan approved automatically.
       Building: a total at the bottom of the spending list".
 
    Don't ask anything: the build is already running.
@@ -235,7 +243,7 @@ the card number for card builds) and check where it is:
    The user may have walked away while the build ran. So, without the mod, at
    every pause first send them a push notification (the PushNotification
    tool, if you have it): one plain line saying the card and what it's waiting
-   for, e.g. "ABU-42: the plan is ready for your sign-off". Do the same when
+   for, e.g. "WHIT-42: the plan is ready for your sign-off". Do the same when
    the build ends (PR opened, failed or stopped).
 
    **Plan review in the browser.** At a PLAN FOR REVIEW, when `plannotator` is
@@ -271,9 +279,9 @@ the card number for card builds) and check where it is:
      If the user chooses to **split** the card (the designer offers this when
      the plan has 3 or more slices):
      1. Read the slices from the PLAN FOR REVIEW block (under "Slices"). For every slice after the first,
-        create a card the same way as step 1b. Title it with the
-        slice's title and describe what it delivers. Set this card as each
-        new card's blocker (`blockedBy`).
+        create a card on the board the same way as step 1b. Title it with the
+        slice's title and describe what it delivers. If AGENTS.md
+        has a blocker relation, set this card as each new card's blocker.
      2. Resume with `rework: Split. Plan only slice 1: <title>. The other
         slices are now their own cards: <new card IDs>.` The designer replans
         just slice 1, and you'll get a new PLAN FOR REVIEW.
@@ -285,7 +293,7 @@ the card number for card builds) and check where it is:
      - **Include the long-term fix** — the plan doesn't cover it yet, so don't
        approve. Resume with `rework: Include the long-term fix: <what it is>.`
        and you'll get a new PLAN FOR REVIEW.
-     - **Later** — create a card for the long-term fix the same
+     - **Later** — create a card for the long-term fix on the board the same
        way as step 1b, then approve (`go: Q<n> C; …`) and tell the user which
        card you filed.
    - **CARD LOOKS INVALID** — show the block (why it looks unneeded, the
@@ -384,9 +392,10 @@ the card number for card builds) and check where it is:
      the title, and the description in a code block to paste. Either way,
      relay the PR link once there is one.
    - **BUILD CANCELLED** — the user stopped it. Set the card's Status back
-     to 'Todo', and mention the branch if the script printed one.
+     to 'To Do', and mention the branch if the script printed one.
    - **CARD CLOSED** — the user agreed the card isn't needed. Set its Status
-     to 'Canceled' and add a comment with the evidence (`save_comment`).
+     to 'Done' (or the board's won't-do option) and add a comment with the
+     evidence.
    - **BUILD FAILED** — the automatic loop ran out of rounds. Don't ask the
      user what to do about the findings below the line: fix them yourself
      in the codebase. The exception is **Decisions for the user**: those are
@@ -408,9 +417,9 @@ the card number for card builds) and check where it is:
      in plain English, and offer to do the ones you can.
    - If it printed **MANUAL CHECKS**, list them for the user: they're what a
      person should try before merging.
-   - If it printed **TECH DEBT CARDS TO FILE**, create each one in the
-     AGENTS.md team (Status 'Todo', label `Tech debt`), and tell the user
-     they were filed.
+   - If it printed **TECH DEBT CARDS TO FILE**, create each one on the board
+     (Status 'To Do', Type 'Tech Debt' if the board has it, otherwise the
+     default card type), and tell the user they were filed.
    - Once the PR is open (by the script or by you), update the card's Status to 'Done'.
    - If a replan printed a backup branch (🗄), tell the user it's still on
      their machine, and offer to delete it once the ticket is done:

@@ -2,16 +2,18 @@
 
 ## Board
 
-Linear team: `<team name, e.g. abundo>`
-Card prefix: `<team key, e.g. ABU>`
-Default card label: `Improvement`
+Notion data source: `collection://<your-board-id>`
+Card prefix: `<PREFIX>`
+Default card type: `<type option from your board, e.g. Task, Feature>`
 
 ## Card picking
 
+Sort field: `<property name that controls build order, e.g. Order>`
+Blocker relation: `<relation property name, e.g. Blocked by>`
 Skip cards matching: `<optional pattern to exclude, remove line if not needed>`
 
-/build picks the next Backlog or Todo card by Linear priority (oldest first on ties) and
-skips cards with an unfinished "blocked by" card.
+If your board doesn't have a sort field or blocker relation, remove those
+lines — /build will fall back to sorting by Priority (High > Medium > Low).
 
 ## Stack
 
