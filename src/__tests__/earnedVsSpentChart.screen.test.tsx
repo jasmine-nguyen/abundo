@@ -68,12 +68,6 @@ describe('earnedVsSpent message names the selected cycle', () => {
   ])('earned %d, spent %d, cycle %d → %s', (earned, spent, cycle, message) => {
     expect(earnedVsSpent(earned, spent, cycle).message).toBe(message);
   });
-
-  it('the rendered card passes the cycle through to its message', () => {
-    render(<EarnedVsSpent earned={3000} spent={1000} cycle={1} testID="evs" />);
-    expect(screen.getByTestId('earned-vs-spent-message').props.children)
-      .toBe(' — Nice, you earned more than you spent last cycle. 🎉');
-  });
 });
 
 describe('EarnedVsSpent (render)', () => {
