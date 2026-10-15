@@ -10,6 +10,7 @@ import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScree
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
+import { SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 
@@ -353,7 +354,7 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
 
   return (
     <>
-      <Text style={styles.sectionLabel}>NOTE</Text>
+      <SectionLabel style={{ marginTop: 22 }}>NOTE</SectionLabel>
       <TextInput
         testID="note-input"
         accessibilityLabel="Note"
@@ -377,7 +378,7 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
         </Pressable>
       )}
 
-      <Text style={styles.sectionLabel}>TAGS</Text>
+      <SectionLabel style={{ marginTop: 22 }}>TAGS</SectionLabel>
       <View style={styles.tagsWrap}>
         {tags.map((tag) => (
           <View key={tag} style={styles.tagChip}>
@@ -465,7 +466,6 @@ const styles = StyleSheet.create({
   switchKnob: { width: 20, height: 20, borderRadius: 999, backgroundColor: C.textDim, alignSelf: 'flex-start' },
   switchKnobOn: { backgroundColor: C.accentInk, alignSelf: 'flex-end' },
 
-  sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 8, marginHorizontal: 4 },
   noteInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 14, minHeight: 88, fontFamily: FONT.body, fontSize: 14.5, color: C.textBright, textAlignVertical: 'top' },
   noteSaveBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent },
   noteSaveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },

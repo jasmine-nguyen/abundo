@@ -8,7 +8,7 @@ import { budgetDetail, groupTransactionsByDate, useAppContext } from '../../src/
 import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
-import { BudgetBar } from '../../src/components/ui';
+import { BudgetBar, SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 // How many related-transaction rows to show before the "Load More" button.
@@ -133,7 +133,7 @@ export default function BudgetDetail() {
           ) : null}
         </View>
 
-        <Text style={styles.sectionLabel}>RELATED TRANSACTIONS</Text>
+        <SectionLabel style={{ marginTop: 22, marginBottom: 4 }}>RELATED TRANSACTIONS</SectionLabel>
         {groupTransactionsByDate(bd.relItems.slice(0, visibleCount)).map((g) => (
           <View key={g.label} style={{ marginTop: 6 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
@@ -188,7 +188,6 @@ const styles = StyleSheet.create({
   cycleLabel: { flexShrink: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.textMid },
   cycleAmount: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.accentSofter },
   cycleTag: { fontSize: 11.5, color: C.textDim },
-  sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 4, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
   loadMore: { marginTop: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
