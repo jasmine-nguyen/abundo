@@ -15,7 +15,7 @@ import { RefreshControl } from 'react-native';
 import { C } from '../theme';
 import { Icon, ICON, GLYPH } from '../icons';
 import { ACCOUNT_KIND_ICON } from '../accountDisplay';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -47,8 +47,8 @@ const ROW = {
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', { transactions, nextCursor: null });
-const feedReads = () => server.sentUnder('GET', '/transactions/feed');
+const FEED = '/transactions/feed';
+const feedReads = () => server.sentUnder('GET', FEED);
 
 beforeEach(() => {
   resetRouter();
@@ -61,7 +61,7 @@ it('derives one card per account_id from the transactions (consistent name)', as
   const anz = { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' };
   const up = { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Homeloan' };
   const up2 = { ...ROW, transaction_id: 't3', account_id: 'a2', account_name: 'Up Homeloan' };
-  seedFeed([anz, up, up2]);
+  seedFeedPage(server, FEED, [anz, up, up2]);
   await renderWithQueries(<Accounts />);
   // One card per account; the Up account (2 txns) collapses to a single consistent name.
   expect(screen.getByText('ANZ')).toBeTruthy();
@@ -69,7 +69,7 @@ it('derives one card per account_id from the transactions (consistent name)', as
 });
 
 it('tapping an account card navigates to that account\'s detail route', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   await renderWithQueries(<Accounts />);
   fireEvent.press(screen.getByText('ANZ'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/a1');
@@ -85,7 +85,7 @@ it('shows the cold-load spinner (empty + loading)', async () => {
 });
 
 it('keeps its cards through a background error when txns are cached (cache-first)', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   await renderWithQueries(<Accounts />);
   server.fail('/transactions/feed', 500);
   await refreshInAct(() => queryClient.refetchQueries());
@@ -135,7 +135,7 @@ it('does NOT raise the pull spinner during a cold load (inline spinner owns it)'
 // for every account in the balances payload, not only accounts seen in the loaded transactions.
 // Fail-on-revert: derive cards from transactions only → no "Up Homeloan" card → red.
 it('shows a card for a balance-only account (no loaded transactions) with its live balance', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   server.seed('/accounts/balances', [
     bal({ account_id: 'a1', amount: 96270.59 }),
     bal({ account_id: 'up-homeloan', amount: -500000, account_type: 'mortgage' }),
@@ -155,7 +155,7 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
 // the same next-milestone maths as the Home loan screen, while other cards keep their own line.
 // Balance $250,000 against the saved plan's next target ($200,000) → $50,000 to go.
 it('the home loan card shows the next payoff milestone; other cards keep their own subtitle', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   server.seed('/accounts/balances', [
     bal({ account_id: 'a1', amount: 96270.59 }),
     bal({ account_id: 'up-homeloan', amount: -250000, available_balance: 0, account_type: 'mortgage' }),
@@ -172,7 +172,7 @@ it('the home loan card shows the next payoff milestone; other cards keep their o
 // [A1] ABU-64: the payoff reads fire only when a balance is the home loan, so the tab costs nothing
 // extra without one. Fail-on-revert: drop the `enabled` gate → the reads fire.
 it('does not read the home-loan data when no balance is a mortgage', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   server.seed('/accounts/balances', [bal({ account_id: 'a1' })]);
   await renderWithQueries(<Accounts />);
   expect(screen.getByText('ANZ')).toBeTruthy();
@@ -182,7 +182,7 @@ it('does not read the home-loan data when no balance is a mortgage', async () =>
 // [A2] ABU-64: the payoff line is secondary: a failed home-loan read keeps the loan card's fallback
 // subtitle and never surfaces the tab's error state.
 it('a failed home-loan read keeps the loan card with its fallback subtitle', async () => {
-  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -250000, account_type: 'mortgage' })]);
   seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:00:00Z' } });
   server.fail('/homeloan', 500);
@@ -220,7 +220,7 @@ it('shows the four accounts in a fixed order, icon and colour, with owed balance
       description: 'UNIFLEXREMEDIALMASSAGE ALTONA NORT AUS', amount: -155, category: 'health',
     }),
   ];
-  seedFeed(feed);
+  seedFeedPage(server, FEED, feed);
   server.seed('/accounts/balances', [
     bal({ account_id: 'up-spending', amount: 96270.59 }),
     bal({ account_id: 'anz-rewards-black-visa', amount: -6492.26, available_balance: 4549, account_type: 'unknown' }),
@@ -256,7 +256,7 @@ it('shows the four accounts in a fixed order, icon and colour, with owed balance
     expect(screen.getByText('Home loan · payoff inside')).toBeTruthy();
 
     // A busier day for the home loan (now the most rows) changes neither the order nor the colours.
-    seedFeed([...feed, ...[2, 3, 4].map((n) => row({ transaction_id: `h${n}`, account_id: 'up-homeloan', account_name: 'Up Homeloan' }))]);
+    seedFeedPage(server, FEED, [...feed, ...[2, 3, 4].map((n) => row({ transaction_id: `h${n}`, account_id: 'up-homeloan', account_name: 'Up Homeloan' }))]);
     await refreshInAct(() => queryClient.refetchQueries());
     expect(cardOrder()).toEqual(names);
     expect(chips().map((p) => p.color)).toEqual(colours);

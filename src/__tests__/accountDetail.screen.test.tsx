@@ -9,7 +9,7 @@ import React from 'react';
 import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 import { C, MINUS } from '../theme';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
@@ -36,10 +36,9 @@ const ROW = {
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-// The account page's own list: one end-of-history page of GET /transactions/feed?account=a1.
+// The account page's own list: GET /transactions/feed?account=a1.
 const FEED = '/transactions/feed';
 const FIRST_PAGE = `${FEED}?account=a1`;
-const seedFeed = (transactions: unknown[]) => server.seed(FEED, { transactions, nextCursor: null });
 
 const bal = (over: Partial<AccountBalance> = {}) => accountBalance({
   amount: -6492.26, available_balance: 8171.88, as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
@@ -49,7 +48,7 @@ beforeEach(() => {
   resetAuth();
   resetRouter();
   setParams({ id: 'a1' });
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
 });
 
 it('shows an owed balance in bright neutral text with "owed", and the credit-card "available" line', async () => {
@@ -102,7 +101,7 @@ it('a background refetch failure over cached rows keeps the transaction list ren
 // the `detail` branch → red.
 it('shows the balance for an account with a saved balance but no transactions', async () => {
   setParams({ id: 'up-homeloan' });
-  seedFeed([]);
+  seedFeedPage(server, FEED, []);
   server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -500000, available_balance: 0, account_type: 'mortgage' })]);
   await renderWithQueries(<AccountDetail />);
   expect(screen.getByTestId('account-balance')).toBeTruthy();
@@ -183,7 +182,7 @@ it.each([
   ['during the cold load', true, false],
   ['on a settled empty page', false, true],
 ])('a pull %s: pull spinner shown = %s', async (_name, coldLoad, spinning) => {
-  seedFeed([]);
+  seedFeedPage(server, FEED, []);
   const list = coldLoad ? server.hold(FEED) : null;
   render(<WithQueries><AccountDetail /></WithQueries>);
   await waitFor(() => expect(server.sent('GET', FIRST_PAGE)).toHaveLength(1));
@@ -201,7 +200,7 @@ it.each([
 // [A3] a day with nothing counted to spend (income only) shows the bare day label, no " · total".
 // Fail-on-revert: always append the total in DayHeading → "… · null" shows.
 it('a day heading with no spend shows only the day label', async () => {
-  seedFeed([{ ...ROW, amount: 500, category: 'income' }]);
+  seedFeedPage(server, FEED, [{ ...ROW, amount: 500, category: 'income' }]);
   await renderWithQueries(<AccountDetail />);
   expect(screen.getByText('Shop')).toBeTruthy();
   expect(screen.queryByText(/ · /)).toBeNull();

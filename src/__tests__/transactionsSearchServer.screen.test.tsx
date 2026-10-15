@@ -16,7 +16,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { refreshAfter } from '../transactionCache';
 import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
@@ -36,7 +36,6 @@ const COLES = row('coles', 'Coles', -12.5);
 const STEVEN_LOADED = row('steven-new', 'Steven Nguyen', -11);
 const STEVEN_DEEP = row('steven-old', 'Steven Nguyen', -77, '2024-02-03');
 
-const seedFeed = (transactions: unknown[], nextCursor: string | null = 'c1') => server.seed(FEED, { transactions, nextCursor });
 const seedSearch = (transactions: unknown[], truncated = false) => server.seed(SEARCH, { transactions, truncated });
 const searches = () => server.sentUnder('GET', SEARCH).map((request) => request.path);
 
@@ -52,7 +51,7 @@ async function draw() {
 beforeEach(() => {
   jest.useFakeTimers();
   resetAuth();
-  seedFeed([COLES, STEVEN_LOADED]);
+  seedFeedPage(server, FEED, [COLES, STEVEN_LOADED], 'c1');
 });
 afterEach(() => { jest.useRealTimers(); });
 
@@ -71,7 +70,7 @@ describe('asking the server', () => {
 
 describe('what the list shows', () => {
   it('shows a deep-history match the loaded pages never held (the "steven" bug)', async () => {
-    seedFeed([COLES]);
+    seedFeedPage(server, FEED, [COLES], 'c1');
     seedSearch([STEVEN_DEEP]);
     await draw();
     type('steven');
@@ -89,7 +88,7 @@ describe('what the list shows', () => {
   });
 
   it('keeps filtering the answer by the live text while the next answer is on its way', async () => {
-    seedFeed([], null);
+    seedFeedPage(server, FEED, []);
     seedSearch([STEVEN_DEEP, row('stephanie', 'Stephanie', -5)]);
     await draw();
     type('ste');
@@ -101,7 +100,7 @@ describe('what the list shows', () => {
   });
 
   it('never shows "No matches" while the server is still searching', async () => {
-    seedFeed([COLES]);
+    seedFeedPage(server, FEED, [COLES], 'c1');
     await draw();
     const held = server.hold(SEARCH);
     type('steven');
@@ -123,7 +122,7 @@ describe('what the list shows', () => {
   });
 
   it('says when the result cap cut off older matches', async () => {
-    seedFeed([], null);
+    seedFeedPage(server, FEED, []);
     seedSearch([STEVEN_DEEP], true);
     await draw();
     type('steven');
@@ -206,7 +205,7 @@ describe('match summary', () => {
 
 describe('when the server search fails', () => {
   it('says so with a Retry — never "No matches", even when nothing loaded matches', async () => {
-    seedFeed([COLES]);
+    seedFeedPage(server, FEED, [COLES], 'c1');
     server.fail(SEARCH, 500);
     await draw();
     type('steven');
@@ -231,7 +230,7 @@ describe('when the server search fails', () => {
   });
 
   it('an earlier query\'s failure does not show while the next query waits to be sent', async () => {
-    seedFeed([COLES]);
+    seedFeedPage(server, FEED, [COLES], 'c1');
     server.fail(SEARCH, 500);
     await draw();
     type('stev');
@@ -249,7 +248,7 @@ describe('search transitions', () => {
   const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
 
   it('[A1] the previous query\'s answer never produces "No matches" for newer live text', async () => {
-    seedFeed([COLES]);
+    seedFeedPage(server, FEED, [COLES], 'c1');
     seedSearch([STEVEN_DEEP]);
     await draw();
     type('steven');
@@ -262,7 +261,7 @@ describe('search transitions', () => {
   });
 
   it('[A2] clearing the box restores the feed immediately, before the debounce settles', async () => {
-    seedFeed([COLES]);
+    seedFeedPage(server, FEED, [COLES], 'c1');
     seedSearch([STEVEN_DEEP], true);
     await draw();
     type('steven');
@@ -296,7 +295,7 @@ describe('search transitions', () => {
   });
 
   it('[A4] pull-to-refresh spins when only the search result has rows', async () => {
-    seedFeed([], null);
+    seedFeedPage(server, FEED, []);
     seedSearch([STEVEN_DEEP]);
     await draw();
     type('steven');

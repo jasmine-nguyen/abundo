@@ -197,7 +197,14 @@ def test_account_param_pages_only_that_accounts_history_and_rejects_bad_input(ha
     # A cursor from the all-accounts feed names several accounts → can't resume one account.
     all_accounts_cursor = json.loads(
         handler.get_transactions_feed(_feed_event({"limit": "1"}), repo)["body"])["nextCursor"]
-    for params in ({"account": "bogus"}, {"account": SPENDING, "cursor": all_accounts_cursor}):
+    # [A2] So can a cursor from ANOTHER account's own page (it would page ANZ's rows as SPENDING's).
+    anz_cursor = json.loads(
+        handler.get_transactions_feed(_feed_event({"limit": "1", "account": ANZ}), repo)["body"])["nextCursor"]
+    for params in (
+        {"account": "bogus"},
+        {"account": SPENDING, "cursor": all_accounts_cursor},
+        {"account": SPENDING, "cursor": anz_cursor},
+    ):
         assert handler.get_transactions_feed(_feed_event(params), repo)["statusCode"] == 400
 
     # An empty ?account= is the all-accounts feed.

@@ -5,7 +5,7 @@
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp, resetAppProbe } from './support/renderWithApp';
@@ -28,7 +28,6 @@ const ROW = {
   description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
-const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', { transactions, nextCursor: null });
 
 beforeEach(() => {
   resetAuth();
@@ -40,7 +39,7 @@ describe('Accounts tab', () => {
   // [A1] Retry after a cold failure, once the server recovers, draws the cards. Fail-on-revert:
   // wire onRetry to a no-op → the error stays and no card appears.
   it('[A1] Retry after a cold failure draws the cards once the server answers', async () => {
-    seedFeed([ROW]);
+    seedFeedPage(server, '/transactions/feed', [ROW]);
     server.fail('/transactions/feed', 500);
     await renderWithApp(<Accounts />);
     expect(screen.getByTestId('accounts-error')).toBeTruthy();
@@ -62,7 +61,7 @@ describe('Accounts tab', () => {
   // [A2] A balances outage alone must not blank the cards or show the list error: the card
   // shows the "—" placeholder. Fail-on-revert: fold the balances error into isError → error state.
   it('[A2] a failed balances read keeps the cards with the "—" placeholder, no error', async () => {
-    seedFeed([ROW]);
+    seedFeedPage(server, '/transactions/feed', [ROW]);
     server.fail('/accounts/balances', 500);
     await renderWithApp(<Accounts />);
     expect(screen.getByText('ANZ')).toBeTruthy();
@@ -76,7 +75,7 @@ describe('Account detail', () => {
   // Fail-on-revert: stop filtering by account_id → the other account's row shows.
   it('[A5] shows only the opened account\'s rows', async () => {
     setParams({ id: 'a1' });
-    seedFeed([ROW, { ...ROW, transaction_id: 't2', merchant_name: 'Other shop', account_id: 'a2', account_name: 'Up' }]);
+    seedFeedPage(server, '/transactions/feed', [ROW, { ...ROW, transaction_id: 't2', merchant_name: 'Other shop', account_id: 'a2', account_name: 'Up' }]);
     await renderWithApp(<AccountDetail />);
     expect(screen.getByText('Woolworths')).toBeTruthy();
     expect(screen.queryByText('Other shop')).toBeNull();
@@ -85,7 +84,7 @@ describe('Account detail', () => {
   // [A6] A balances outage keeps the list and shows no hero and no error.
   it('[A6] a failed balances read keeps the list, with no balance hero and no error', async () => {
     setParams({ id: 'a1' });
-    seedFeed([ROW]);
+    seedFeedPage(server, '/transactions/feed', [ROW]);
     server.fail('/accounts/balances', 500);
     await renderWithApp(<AccountDetail />);
     expect(screen.getByText('Woolworths')).toBeTruthy();

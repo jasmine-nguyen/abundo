@@ -782,6 +782,15 @@ function useBalancesMap(authed: boolean) {
   );
 }
 
+// Load More over a paged feed: whether older pages remain, a guarded "fetch the next page" (no
+// double fetch while one is in flight), and whether one is loading now.
+function useFeedPaging(feedQuery: { hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => unknown }) {
+  const loadMore = useCallback(() => {
+    if (feedQuery.hasNextPage && !feedQuery.isFetchingNextPage) feedQuery.fetchNextPage();
+  }, [feedQuery]);
+  return { hasMore: feedQuery.hasNextPage, loadMore, isLoadingMore: feedQuery.isFetchingNextPage };
+}
+
 // A pull SNAPS a paged feed back to its newest page: trim to the first page, so the refetch that
 // follows is one round trip. Keeps the list's original load time: setQueryData stamps "now"
 // otherwise, and a failed refetch would then claim the trimmed list is fresh (WHIT-713).
@@ -848,11 +857,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   // the screen owns it via a local `pulling` flag cleared in .finally(); no consumer reads this today.
   const isFetching = (feedQuery.isFetching && !feedQuery.isFetchingNextPage) || categoriesQuery.isFetching;
 
-  const hasMore = feedQuery.hasNextPage;
-  const isLoadingMore = feedQuery.isFetchingNextPage;
-  const loadMore = useCallback(() => {
-    if (feedQuery.hasNextPage && !feedQuery.isFetchingNextPage) feedQuery.fetchNextPage();
-  }, [feedQuery]);
+  const { hasMore, loadMore, isLoadingMore } = useFeedPaging(feedQuery);
 
   // Refresh — the approved "keep your place, re-check on return" behaviour:
   //  • focus (refetchStale): re-check the loaded pages IN PLACE — refetch each by its own stable
@@ -962,9 +967,7 @@ export function useAccountTransactionsScreenData(accountId: string): AccountTran
   );
   const { isLoading, isError } = useCombineScreenQueries([feedQuery, categoriesQuery]);
 
-  const loadMore = useCallback(() => {
-    if (feedQuery.hasNextPage && !feedQuery.isFetchingNextPage) feedQuery.fetchNextPage();
-  }, [feedQuery]);
+  const paging = useFeedPaging(feedQuery);
   const refetch = useCallback(() => {
     trimFeedToFirstPage(queryClient, [...accountFeedKey, accountId], feedQuery);
     return Promise.all([
@@ -974,10 +977,7 @@ export function useAccountTransactionsScreenData(accountId: string): AccountTran
     ]);
   }, [queryClient, accountId, feedQuery, categoriesQuery]);
 
-  return {
-    transactions, category, balances, isLoading, isError, refetch,
-    hasMore: feedQuery.hasNextPage, loadMore, isLoadingMore: feedQuery.isFetchingNextPage,
-  };
+  return { transactions, category, balances, isLoading, isError, refetch, ...paging };
 }
 
 /** The transaction detail screen: the category lookup plus the feed/taxonomy load status for its
