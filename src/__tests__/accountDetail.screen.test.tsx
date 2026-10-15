@@ -6,8 +6,9 @@
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react-native';
-import { C } from '../theme';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
+import { RefreshControl } from 'react-native';
+import { C, MINUS } from '../theme';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -17,7 +18,8 @@ import { transactionsRecentKey } from '../queryKeys';
 import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
+const mockShowToast = jest.fn();
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined, showToast: mockShowToast })));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import AccountDetail from '../../app/account/[id]';
@@ -129,5 +131,71 @@ it('uses the transaction account name for the header when the account also has a
   server.seed('/accounts/balances', [bal()]);
   await renderWithQueries(<AccountDetail />);
   expect(screen.UNSAFE_getByType(Header).props.title).toBe('ANZ');
+});
+
+// ABU-66: the account page matches Transactions. A pull re-reads the list and fetches live
+// balances (spinner clears after), each day heading carries its total, and the big balance
+// stays on one line, shrinking to fit under the large-text cap.
+it('pull refreshes the list and live balances, headings show the day total, balance shrinks to fit', async () => {
+  server.seed('/accounts/balances', [bal({ amount: -592994.43, available_balance: 0 })]);
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
+
+  const amount = screen.getByText('-$592,994.43');
+  expect(amount.props.numberOfLines).toBe(1);
+  expect(amount.props.adjustsFontSizeToFit).toBe(true);
+  expect(amount.props.maxFontSizeMultiplier).toBe(2);
+
+  const listReads = server.sent('GET', '/transactions').length;
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
+  await waitFor(() => expect(server.sent('GET', '/transactions').length).toBeGreaterThan(listReads));
+  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+});
+
+// [A1] the account page's pull puts the live number on screen and confirms it (the failure path
+// is the shared hook's, covered in usePullToRefresh.screen.test.tsx). Fail-on-revert: drop
+// refreshLiveBalances / the success message from [id].tsx's usePullToRefresh → the balance stays
+// -$100.00 or the toast never fires.
+it('a pull whose live balance call succeeds shows the live balance and confirms it', async () => {
+  server.seed('/accounts/balances', [bal({ amount: -100, available_balance: 0 })]);
+  server.once('POST', '/accounts/balances/refresh', { body: [bal({ amount: -250, available_balance: 0 })] });
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByText('-$100.00')).toBeTruthy();
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
+  expect(await screen.findByText('-$250.00')).toBeTruthy();
+  expect(mockShowToast).toHaveBeenCalledTimes(1);
+});
+
+// [A2] WHIT-363 on the account page: a pull during the cold load leaves the inline spinner alone
+// (no second spinner); a pull on a settled empty page does spin. Fail-on-revert: `refreshing={pulling}`
+// → the cold-load row reds; gating on `transactions.length > 0` → the settled-empty row reds.
+it.each([
+  ['during the cold load', true, false],
+  ['on a settled empty page', false, true],
+])('a pull %s: pull spinner shown = %s', async (_name, coldLoad, spinning) => {
+  server.seed('/transactions', []);
+  const list = coldLoad ? server.hold('/transactions') : null;
+  render(<WithQueries><AccountDetail /></WithQueries>);
+  await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(1));
+  if (!coldLoad) await waitFor(() => expect(screen.getByText('No transactions')).toBeTruthy());
+  const liveRefresh = server.hold('/accounts/balances/refresh');
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
+  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(spinning);
+  liveRefresh.release();
+  list?.release();
+  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+  await settle();
+});
+
+// [A3] a day with nothing counted to spend (income only) shows the bare day label, no " · total".
+// Fail-on-revert: always append the total in DayHeading → "… · null" shows.
+it('a day heading with no spend shows only the day label', async () => {
+  server.seed('/transactions', [{ ...ROW, amount: 500, category: 'income' }]);
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByText('1 transaction')).toBeTruthy();
+  expect(screen.queryByText(/ · /)).toBeNull();
 });
 

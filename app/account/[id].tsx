@@ -1,11 +1,14 @@
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmtBalance, fmt, PRESSED } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { accountDetail, accountNameFromId } from '../../src/context';
-import { useRecentTransactionsScreenData } from '../../src/queries';
+import { accountDetail, accountNameFromId, useAppContext } from '../../src/context';
+import { useRecentTransactionsScreenData, useRefreshLiveBalances } from '../../src/queries';
+import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { Header } from '../../src/components/Header';
+import { DayHeading } from '../../src/components/DayHeading';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -23,6 +26,10 @@ export default function AccountDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { transactions, category, balances, isLoading, isError, refetch } = useRecentTransactionsScreenData();
+  const { showToast } = useAppContext();
+  const refreshLiveBalances = useRefreshLiveBalances();
+  // ABU-66: the same pull as Accounts — re-read the list and fetch live balances.
+  const { pulling, onRefresh } = usePullToRefresh(refetch, refreshLiveBalances, showToast, 'Balances up to date');
   const detail = accountDetail({ transactions, category }, id);
   const bal = balances.get(id);
   // Show "available credit" only for a credit card: you OWE (amount < 0) yet have credit
@@ -40,6 +47,8 @@ export default function AccountDetail() {
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
+        // WHIT-363: never double-spin — the cold-load spinner owns an empty first load.
+        refreshControl={<RefreshControl refreshing={pulling && !(isLoading && transactions.length === 0)} onRefresh={onRefresh} tintColor={C.accent} />}
       >
         <DetailStates
           isLoading={isLoading}
@@ -52,10 +61,17 @@ export default function AccountDetail() {
         >
           {bal && (
             <View testID="account-balance" style={styles.balCard}>
-              <Text style={styles.balLabel}>Current balance</Text>
-              <Text style={[styles.balAmount, { color: bal.amount < 0 ? C.bad : C.good }]}>{fmtBalance(bal.amount)}</Text>
+              <Text style={styles.balLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Current balance</Text>
+              <Text
+                style={[styles.balAmount, { color: bal.amount < 0 ? C.bad : C.good }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}
+              >
+                {fmtBalance(bal.amount)}
+              </Text>
               {showAvailable && (
-                <Text style={styles.balAvailable}>{fmt(bal.available_balance!)} available</Text>
+                <Text style={styles.balAvailable} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmt(bal.available_balance!)} available</Text>
               )}
               <BalanceFreshnessPill asOf={bal.as_of} tone="card" />
             </View>
@@ -68,23 +84,23 @@ export default function AccountDetail() {
               onPress={() => router.push('/mortgage')}
               style={({ pressed }) => [styles.payoffLink, pressed && PRESSED]}
             >
-              <Text style={styles.payoffText}>See payoff progress</Text>
+              <Text style={styles.payoffText} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>See payoff progress</Text>
               <Glyph name="chevron" size={16} color={C.textFaint} />
             </Pressable>
           )}
           {detail && (
             <>
-              <Text style={styles.count}>{detail.count} {detail.count === 1 ? 'transaction' : 'transactions'}</Text>
+              <Text style={styles.count} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{detail.count} {detail.count === 1 ? 'transaction' : 'transactions'}</Text>
               {detail.groups.map((g) => (
                 <View key={g.label} style={{ marginTop: 14 }}>
-                  <Text style={styles.groupLabel}>{g.label}</Text>
+                  <DayHeading label={g.label} dayTotal={g.dayTotal} />
                   {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} category={category} />)}
                 </View>
               ))}
             </>
           )}
           {/* WHIT-643: a saved balance but none of the loaded transactions — a quiet account. */}
-          {!detail && bal && <Text style={styles.count}>No recent transactions</Text>}
+          {!detail && bal && <Text style={styles.count} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>No recent transactions</Text>}
           {!detail && !bal && (
             // No transaction or balance carries this id (unknown/stale account) — settled, not loading.
             <EmptyState title="No transactions" sub="This account has no transactions yet." />
@@ -103,6 +119,4 @@ const styles = StyleSheet.create({
   payoffLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginTop: 10 },
   payoffText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
 
-  count: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },
-  groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
-});
+  count: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },});

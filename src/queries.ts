@@ -694,6 +694,20 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   return { breakdown: breakdownQuery.data ?? {}, earned, incomeSources, category, categoriesError, ...status };
 }
 
+// Pull-to-refresh (Accounts, Transactions, account page): fetch FRESH balances live from the bank
+// (throttled server-side), then seed the cache so the cards update. Throws on failure so the screen
+// owns the toast and TanStack keeps the last-good balances (never blanks the cards). cancelQueries
+// first: an in-flight stored GET (the mount fetch, or a reconnect revalidate) can otherwise resolve
+// AFTER the seed and clobber the fresh value back to the once-a-day number (a timing-dependent race).
+export function useRefreshLiveBalances(): () => Promise<void> {
+  const queryClient = useQueryClient();
+  return useCallback(async () => {
+    const fresh = await refreshAccountBalances();
+    await queryClient.cancelQueries({ queryKey: accountBalancesKey });
+    queryClient.setQueryData(accountBalancesKey, fresh);
+  }, [queryClient]);
+}
+
 // --- the Transactions screen's composite view (WHIT-190a) --------------------
 // The bounded "recent" shape (tab-bar dot, account detail, goal-edit picker). No Load More.
 export interface RecentTransactionsScreenData {
@@ -703,7 +717,7 @@ export interface RecentTransactionsScreenData {
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // a read failed after retries → inline retry
   isFetching: boolean; // any first-page/list fetch in flight (incl. a background refetch) — a background-activity flag on the shared shape. NOT the pull spinner (WHIT-363 — the screen owns that via a local `pulling` flag).
-  refetch: () => void; // force refresh (inline Retry / pull)
+  refetch: () => Promise<unknown>; // force refresh (inline Retry / pull)
   refetchStale: () => void; // focus refresh — only refetches stale queries
 }
 // WHIT-576: the tab's search over ALL history. `results` holds the server's matches for the
@@ -850,20 +864,11 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   // Inline Retry (list-load error) refreshes the list AND re-reads the STORED balances — cheap,
   // no live bank call. The live call is pull-only (refreshLiveBalances). Balances stay out of
   // isFetching/isError so a balances hiccup can't blank or stick-spin the list (WHIT-212/363).
-  const refetch = useCallback(() => {
-    refetchList();
-    queryClient.refetchQueries({ queryKey: accountBalancesKey });
-  }, [refetchList, queryClient]);
-  // Pull-to-refresh: fetch FRESH balances live from the bank (throttled server-side), then seed
-  // the cache so the Accounts cards update. Throws on failure so the screen owns the toast and
-  // TanStack keeps the last-good balances (never blanks the cards). cancelQueries first: an
-  // in-flight stored GET (the mount fetch, or a reconnect revalidate) can otherwise resolve AFTER
-  // the seed and clobber the fresh value back to the once-a-day number (a real, timing-dependent race).
-  const refreshLiveBalances = useCallback(async () => {
-    const fresh = await refreshAccountBalances();
-    await queryClient.cancelQueries({ queryKey: accountBalancesKey });
-    queryClient.setQueryData(accountBalancesKey, fresh);
-  }, [queryClient]);
+  const refetch = useCallback(() => Promise.all([
+    refetchList(),
+    queryClient.refetchQueries({ queryKey: accountBalancesKey }),
+  ]), [refetchList, queryClient]);
+  const refreshLiveBalances = useRefreshLiveBalances();
   const latest = useLatestRef({ categoriesQuery, feedQuery, searchActive, searchQueryResult });
   const refetchStale = useCallback(() => {
     const { categoriesQuery, feedQuery, searchActive, searchQueryResult } = latest.current;

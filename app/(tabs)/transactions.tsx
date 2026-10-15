@@ -12,6 +12,7 @@ import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motio
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
+import { DayHeading } from '../../src/components/DayHeading';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { SearchField } from '../../src/components/SearchField';
 import { useFirstFilingSeen } from '../../src/hooks/useFirstFilingSeen';
@@ -254,24 +255,21 @@ export default function Transactions() {
           error={error}
         />
 
-        {!showSpinner && !showError && groups.map((g) => {
-          const heading = g.dayTotal ? `${g.label} · ${g.dayTotal}` : g.label;
-          return (
-            <View key={g.label} style={{ marginTop: 18 }}>
-              <Text style={styles.groupLabel}>{heading}</Text>
-              {g.items.map((t) => (
-                <TransactionRow
-                  key={t.transaction_id}
-                  t={t}
-                  category={category}
-                  selectable={selectionMode}
-                  selected={selected.has(t.transaction_id)}
-                  onToggleSelect={() => toggleSelect(t.transaction_id)}
-                />
-              ))}
-            </View>
-          );
-        })}
+        {!showSpinner && !showError && groups.map((g) => (
+          <View key={g.label} style={{ marginTop: 18 }}>
+            <DayHeading label={g.label} dayTotal={g.dayTotal} />
+            {g.items.map((t) => (
+              <TransactionRow
+                key={t.transaction_id}
+                t={t}
+                category={category}
+                selectable={selectionMode}
+                selected={selected.has(t.transaction_id)}
+                onToggleSelect={() => toggleSelect(t.transaction_id)}
+              />
+            ))}
+          </View>
+        ))}
 
         {!showSpinner && !showError && searchPending && (
           <View testID="transactions-searching" style={styles.searchStatus}>
@@ -394,7 +392,6 @@ const styles = StyleSheet.create({
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
   hintBold: { color: C.textBright, fontWeight: '700' },
 
-  groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
 
   // Load More: same treatment as the budget-detail reveal button (app/budget/[id]), plus a
   // matched-height spinner slot so the list doesn't jump when it swaps in while a page loads.

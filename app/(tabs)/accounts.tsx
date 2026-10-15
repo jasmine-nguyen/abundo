@@ -7,6 +7,7 @@ import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData, useHomeLoanProgress } from '../../src/queries';
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -20,7 +21,7 @@ export default function Accounts() {
   const { showToast } = useAppContext();
   // Same data source as the old segment — the all-accounts cursor feed — so behaviour and the
   // cold-load/error states are identical to before the move.
-  const { transactions, balances, isLoading, isError, error, refreshError, updatedAt, refetch, refetchStale, refetchList, refreshLiveBalances } = useTransactionsScreenData();
+  const { transactions, balances, isLoading, isError, error, refreshError, updatedAt, bankSynced, refetch, refetchStale, refetchList, refreshLiveBalances } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-215: derived from the transactions themselves (one card per account_id), not a
@@ -41,7 +42,7 @@ export default function Accounts() {
   return (
     <ScrollChromeHeader
       title="Accounts"
-      subtitle={showError ? null : <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />}
+      subtitle={showError ? null : <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} showUpdated bankSynced={bankSynced} />}
       // Show the pull spinner for a user pull unless the cold-load spinner owns the screen
       // (WHIT-363: never double-spin). `!showSpinner` — not `transactions.length > 0` — so a
       // pull on the settled "No accounts yet" empty state still shows feedback, now that the
@@ -77,21 +78,25 @@ export default function Accounts() {
             let subtitle = `${a.count} ${a.count === 1 ? 'transaction' : 'transactions'}`;
             if (a.count === 0) subtitle = 'No recent transactions';
             if (isHomeLoanAccount(bal)) subtitle = loanLine ?? 'Home loan · payoff inside';
+            let balanceLabel = 'balance not loaded yet';
+            if (bal) balanceLabel = fmtBalance(bal.amount);
             return (
               <Pressable
                 key={a.id}
+                accessibilityRole="button"
+                accessibilityLabel={`${a.name}, ${balanceLabel}, ${subtitle}`}
                 onPress={() => router.push(`/account/${a.id}`)}
                 style={({ pressed }) => [styles.acct, pressed && PRESSED]}
               >
                 <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.acctName}>{a.name}</Text>
-                  <Text style={styles.acctSub}>{subtitle}</Text>
+                  <Text style={styles.acctName} numberOfLines={2} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{a.name}</Text>
+                  <Text style={styles.acctSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{subtitle}</Text>
                 </View>
                 {bal ? (
-                  <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]} numberOfLines={1} adjustsFontSizeToFit>{fmtBalance(bal.amount)}</Text>
+                  <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmtBalance(bal.amount)}</Text>
                 ) : (
-                  <Text style={styles.acctBalPending}>—</Text>
+                  <Text style={styles.acctBalPending} accessibilityLabel="Balance not loaded yet" maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>—</Text>
                 )}
               </Pressable>
             );
