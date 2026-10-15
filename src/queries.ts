@@ -813,8 +813,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     const allFeedTransactions = pages.flatMap((p) => p.transactions);
     return accountSummaries({ transactions: allFeedTransactions }, Object.keys(syncedAt))
       .filter((account) => account.id in syncedAt)
-      .map((account) => ({ id: account.id, name: account.name, at: syncedAt[account.id] }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .map((account) => ({ id: account.id, name: account.name, at: syncedAt[account.id] }));
   }, [allFeedQuery.data]);
 
   const isLoading = feedQuery.isLoading || categoriesQuery.isLoading;
