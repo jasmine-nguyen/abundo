@@ -24,11 +24,10 @@ import { styleOf } from './support/layout';
 import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { pinToday } from './support/clock';
+import { accountBalance } from './support/accountBalance';
+import type { AccountBalance } from '../api';
 
-const bal = (over: Record<string, unknown> = {}) => ({
-  account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
-  as_of: '2026-07-08T09:32:02.405Z', account_type: 'checking', ...over,
-});
+const bal = (over: Partial<AccountBalance> = {}) => accountBalance({ amount: 96270.59, available_balance: 96270.59, ...over });
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 

@@ -16,6 +16,8 @@ import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
 import { styleOf } from './support/layout';
+import { accountBalance } from './support/accountBalance';
+import type { AccountBalance } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 const mockShowToast = jest.fn();
@@ -34,9 +36,8 @@ const ROW = {
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-const bal = (over: Record<string, unknown> = {}) => ({
-  account_id: 'a1', amount: -6492.26, available_balance: 8171.88, currency: 'AUD',
-  as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
+const bal = (over: Partial<AccountBalance> = {}) => accountBalance({
+  amount: -6492.26, available_balance: 8171.88, as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
 
 beforeEach(() => {
