@@ -93,6 +93,37 @@ describe('categoryBreakdown', () => {
     });
     expect(categoryBreakdown(s).rows.map((r) => r.id)).toEqual(['aaa', 'bbb']);
   });
+
+  it("labels each row with its share of the cycle's spend, not its own amount (ABU-63)", () => {
+    // Cycle total 200: Food 150 (Groceries 90 + Restaurants 40 posted / 20 pending), Coffee 49.5,
+    // Tiny 0.5. A child's share is of the cycle total (matching its bar), not of its parent.
+    const s = makeState({
+      categories: [
+        cat({ id: 'food', name: 'Food', bucket: 'Living', parent: null }),
+        cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: 'food' }),
+        cat({ id: 'restaurants', name: 'Restaurants', bucket: 'Living', parent: 'food' }),
+        cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),
+        cat({ id: 'tiny', name: 'Tiny', bucket: 'Lifestyle', parent: null }),
+      ],
+      breakdown: withRollup(
+        {
+          groceries: spend({ posted: 90, pending: 0 }),
+          restaurants: spend({ posted: 40, pending: 20 }),
+          coffee: spend({ posted: 49.5, pending: 0 }),
+          tiny: spend({ posted: 0.5, pending: 0 }),
+        },
+        { nodes: { food: { posted: 130, pending: 20 } } },
+      ),
+    });
+    const labels = Object.fromEntries(categoryBreakdown(s).rows.map((r) => [r.id, r.spentLabel]));
+    expect(labels).toEqual({
+      food: '75% of spend · $20 pending',
+      groceries: '45% of spend',
+      restaurants: '30% of spend · $20 pending',
+      coffee: '25% of spend',
+      tiny: '<1% of spend',
+    });
+  });
 });
 
 // --- sub-category drill-down tree (WHIT-226) --------------------------------

@@ -10,6 +10,7 @@ import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { formatDateRange } from '../../src/dateutil';
 import type { DateRange } from '../../src/api';
+import { LARGE_TEXT_MAX_SCALE, HERO_BIG_MAX_SCALE } from '../../src/hooks/useLargeText';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -65,9 +66,9 @@ export default function CategoryDetail() {
           {detail ? (
             <>
               <View testID="category-total" style={styles.totalCard}>
-                <Text style={styles.totalLabel}>{verb} {periodLabel}</Text>
-                <Text style={styles.totalAmount}>{fmtExact(detail.total)}</Text>
-                {detail.pending > 0 && <Text style={styles.totalPending}>{fmtExact(detail.pending)} pending</Text>}
+                <Text style={styles.totalLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{verb} {periodLabel}</Text>
+                <Text style={styles.totalAmount} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{fmtExact(detail.total)}</Text>
+                {detail.pending > 0 && <Text style={styles.totalPending} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmtExact(detail.pending)} pending</Text>}
               </View>
               <Text style={styles.count}>{detail.count} {detail.count === 1 ? 'transaction' : 'transactions'}</Text>
               {detail.groups.map((g) => (

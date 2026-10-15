@@ -3,15 +3,15 @@ import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-nati
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmtExact, fmtSignedExact, tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
-import { Icon } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { urgentFirst } from '../../src/budgetOrder';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
+import { BudgetBar, RetryButton, HeroGradientFill, HeroBlobs, HeaderIconButton } from '../../src/components/ui';
+import { StackingRowHeader, rowTextStyles } from '../../src/components/StackingRowHeader';
 import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
-import { useLargeText, LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
+import { useLargeText, LARGE_TEXT_MAX_SCALE, HERO_BIG_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { loadFailureReason } from '../../src/apiError';
 
 // The tick just crosses the bar; nothing sits beside it (WHIT-741, WHIT-744).
@@ -20,8 +20,6 @@ const SHORT_TICK_TAIL = 3;
 const NOTE_GAP = 8;
 // The tick band's height plus its 1pt top margin in BudgetBar.
 const TICK_BAND = SHORT_TICK_TAIL + 1;
-// Both big hero numbers grow with the user's text size up to the same cap, so they stay one size (WHIT-741).
-const HERO_BIG_MAX_SCALE = 1.4;
 
 const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'spending', heading: 'SPENDING' },
@@ -31,39 +29,18 @@ const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
 // At very large text the row stacks (name, then sub-lines, then amount) instead of squeezing,
 // so no word splits mid-word (WHIT-743).
 function RowHeader({ b }: { b: BudgetView }) {
-  const large = useLargeText();
-  const chip = <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>;
-  const name = <Text style={styles.rowName} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.name}</Text>;
-  const subs = <Text style={styles.rowSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.spentLabel}</Text>;
-  const remain = (
-    <>
-      <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainAmount}</Text>
-      <Text style={styles.rowRemainLabel} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainLabel}</Text>
-    </>
-  );
-  if (large) {
-    return (
-      <View>
-        <View style={styles.rowNameLine}>
-          {chip}
-          <View style={{ flex: 1, minWidth: 0 }}>{name}</View>
-        </View>
-        <View style={styles.rowStackBody}>
-          {subs}
-          <View style={styles.rowStackRemain}>{remain}</View>
-        </View>
-      </View>
-    );
-  }
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
-      {chip}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        {name}
-        {subs}
-      </View>
-      <View style={styles.rowRight}>{remain}</View>
-    </View>
+    <StackingRowHeader
+      icon={b.icon} color={b.color} chipBg={b.chipBg}
+      name={<Text style={rowTextStyles.name} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.name}</Text>}
+      sub={<Text style={rowTextStyles.sub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.spentLabel}</Text>}
+      right={(
+        <>
+          <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainAmount}</Text>
+          <Text style={styles.rowRemainLabel} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainLabel}</Text>
+        </>
+      )}
+    />
   );
 }
 
@@ -104,8 +81,7 @@ function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLe
   return (
     <View style={styles.hero}>
       <HeroGradientFill />
-      <View style={styles.heroBlob1} />
-      <View style={styles.heroBlob2} />
+      <HeroBlobs />
       <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
       <View style={large ? styles.heroTopStack : styles.heroTop}>
         <View style={large ? undefined : styles.heroDaysCol}>
@@ -235,8 +211,6 @@ export default function Budgets() {
 
 const styles = StyleSheet.create({
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
-  heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
-  heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft, letterSpacing: 0.2 },
   // The days column sizes to its number and the money column takes the rest, so neither number
   // shrinks alone (WHIT-741). Same size + top alignment keeps their baselines level.
@@ -264,14 +238,6 @@ const styles = StyleSheet.create({
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, marginBottom: 12 },
   slimNote: { marginTop: 6 },
-  // Caps the amount column so a big number shrinks instead of squeezing the name (large text).
-  rowRight: { alignItems: 'flex-end', maxWidth: '45%' },
-  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  rowStackBody: { marginTop: 6 },
-  rowStackRemain: { marginTop: 6 },
-  chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
-  rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginTop: 1 },
   noteUnderBar: { marginTop: NOTE_GAP },

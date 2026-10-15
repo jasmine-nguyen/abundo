@@ -8,6 +8,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import { EarnedVsSpent, earnedVsSpent } from '../components/EarnedVsSpent';
 import { styleOf } from './support/layout';
+import { C } from '../theme';
 
 describe('earnedVsSpent (pure)', () => {
   it('earned above spent → surplus headline, earned bar full width', () => {
@@ -91,6 +92,16 @@ describe('EarnedVsSpent (render)', () => {
     render(<EarnedVsSpent earned={2975} spent={0} cycle={0} testID="evs" />);
     expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('0%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$2,975 surplus');
+  });
+
+  // ABU-63: rose means "over", so the Spent bar is neutral unless spending beat income.
+  it.each([
+    ['surplus', 3000, 1000, C.textMid],
+    ['broke even', 1000, 1000, C.textMid],
+    ['deficit', 1000, 3000, C.bad],
+  ])('the Spent bar colour on a %s', (_case, earned, spent, color) => {
+    render(<EarnedVsSpent earned={earned} spent={spent} cycle={0} testID="evs" />);
+    expect(styleOf(screen.getByTestId('spent-bar')).backgroundColor).toBe(color);
   });
 
   it('renders nothing when there was neither income nor spend', () => {

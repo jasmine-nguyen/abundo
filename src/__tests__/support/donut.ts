@@ -1,7 +1,11 @@
 // Shared helpers for the donut screen tests — extracted so a change to the rendered node shape or
 // the react-native-svg jest stub is a one-file edit, not four.
-import { screen } from '@testing-library/react-native';
+import { configure, screen } from '@testing-library/react-native';
 import type { DonutSlice } from '../../components/SpendingDonut';
+
+// The centre readout is hidden from screen readers (the slice labels speak it, ABU-63), so the donut
+// suites that import this file query hidden elements too.
+configure({ defaultIncludeHiddenElements: true });
 
 // The emphasis animation lives on the AnimatedG wrapping each testID'd shape, resolved to a plain
 // number under the jest SVG stub (which renders svg elements as Views). Walk up from the shape to

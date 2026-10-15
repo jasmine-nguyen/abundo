@@ -4,13 +4,14 @@ import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
 import { CHART_BG, OTHER_COLOR, wedgeDim } from '../chartColors';
 import { useReduceMotion } from '../motion/useReduceMotion';
+import { HERO_BIG_MAX_SCALE } from '../hooks/useLargeText';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
 // category, sized by its share of the total, painted in that category's own colour so the
 // ring and the rows below it read as one legend. The category rows underneath double as the
 // chart's legend + table view (name · amount · share), so the donut needs no separate key.
-// At rest the hole shows the TOTAL spent. Tap a wedge to read that category's name + total instead;
-// tap it again — OR tap the hole — to clear back to the total.
+// At rest the hole shows the biggest slice's share + name (the hero already shows the total, ABU-63).
+// Tap a wedge to read that category's name + total instead; tap it again — OR tap the hole — to clear back.
 
 // The grouped "Other" slice grey comes from the chart palette (OTHER_COLOR) — distinct from any
 // category hue and low-saturation so it reads as "not one thing".
@@ -127,8 +128,8 @@ function arcPath(startDeg: number, endDeg: number, r: number): string {
 }
 
 // A donut of category spend for the selected cycle. `slices` are the top-level categories
-// (already this cycle's). The hole shows the total spent by default; tap any wedge to pop it out
-// and read that category's name + total instead, and tap the hole to clear back to the total.
+// (already this cycle's). The hole shows the biggest slice's share by default; tap any wedge to pop
+// it out and read that category's name + total instead, and tap the hole to clear back.
 // Renders nothing when there is no positive spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
   // Ring order is exactly reduceSlices' output: spend descending, with the folded "Other" appended
@@ -283,7 +284,9 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 
   const label = `Spending by category. ${painted
     .map((s) => `${s.name} ${pct(s.value)} percent`)
-    .join(', ')}. Tap a slice for its total, or the centre for the total spent.`;
+    .join(', ')}. Tap a slice for its total.`;
+  // At rest the hole shows the biggest slice (painted is spend-descending; a folded "Other" is last).
+  const top = painted[0];
 
   return (
     <View style={styles.wrap} testID={testID} accessibilityLabel={label}>
@@ -301,11 +304,11 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
           <Circle cx={0} cy={0} r={R} fill="none" stroke={CHART_BG} strokeWidth={STROKE} testID="donut-track" />
           {wedges}
           {topWedge}
-          {/* Tap the hole to clear the selection and return to the total-spent readout. A
+          {/* Tap the hole to clear the selection and return to the biggest-slice readout. A
               transparent disc filling the whole visible hole, drawn LAST so it sits on top: it
               always wins a centre tap, and cedes each wedge's inward hit reach to itself. Only a
               live a11y target while something is selected — at rest a centre tap is a harmless
-              no-op (the readout already shows the total). */}
+              no-op (the readout is already at rest). */}
           <Circle
             cx={0}
             cy={0}
@@ -314,23 +317,26 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
             testID="donut-center-reset"
             onPress={() => setSelectedId(null)}
             accessible={activeId !== null}
-            accessibilityLabel="Show total spent"
+            accessibilityLabel="Show the biggest category"
           />
         </G>
       </Svg>
-      {/* Centre readout. Default: the total spent this cycle. Tapped: that category's name +
-          total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so
-          taps fall through to the reset disc + wedges beneath. */}
-      <View style={styles.center} pointerEvents="none">
+      {/* Centre readout. Default: the biggest slice's share + name (the hero already shows the
+          total — ABU-63). Tapped: that category's name + total — which is what "tap a slice to see
+          the amount" asks for. pointerEvents=none so taps fall through to the reset disc + wedges
+          beneath. Text is capped because the hole is a fixed size. Hidden from screen readers: the
+          chart summary and each slice's label already speak it, and the biggest category's name
+          would otherwise be read twice (here and on its row). */}
+      <View style={styles.center} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         {selected ? (
           <>
-            <Text testID="donut-center-amount" style={styles.centerAmount}>{fmt(selected.value)}</Text>
-            <Text style={styles.centerName} numberOfLines={2}>{selected.name}</Text>
+            <Text testID="donut-center-amount" style={styles.centerAmount} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{fmt(selected.value)}</Text>
+            <Text style={styles.centerName} numberOfLines={2} maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{selected.name}</Text>
           </>
         ) : (
           <>
-            <Text testID="donut-center-total" style={styles.centerAmount}>{fmt(sum)}</Text>
-            <Text style={styles.centerName}>total spent</Text>
+            <Text testID="donut-center-top-share" style={styles.centerAmount} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{`${pct(top.value)}%`}</Text>
+            <Text style={styles.centerName} numberOfLines={2} maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{top.name}</Text>
           </>
         )}
       </View>

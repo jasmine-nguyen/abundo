@@ -40,6 +40,16 @@ export function HeroGradientFill() {
   );
 }
 
+// The hero card's two soft corner circles (DESIGN.md). Drop in right after HeroGradientFill.
+export function HeroBlobs() {
+  return (
+    <>
+      <View style={styles.heroBlob1} />
+      <View style={styles.heroBlob2} />
+    </>
+  );
+}
+
 // A Retry affordance for a failed-read error state. Owns the accessibility contract (button
 // role + a screen-reader label) and the "Retry" label in ONE place, so the app's several
 // error states — the Goal hero balance error, the Goal repayment error, and the milestone
@@ -175,6 +185,8 @@ export function HeaderIconButton({ icon, onPress, accessibilityLabel, testID, ic
 }
 
 const styles = StyleSheet.create({
+  heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
+  heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },
   hdrIconBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   track: { position: 'relative', backgroundColor: C.progressTrack, overflow: 'hidden' },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginHorizontal: 4, marginBottom: 8 },

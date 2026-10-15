@@ -218,7 +218,7 @@ Categories have their own fixed hues and are not part of the UI palette above. T
 - **Label** (700, 12pt, +0.3 tracking): section labels above groups of cards, in Ink Mid.
 - **Tab label** (600, 11pt): tab bar labels.
 
-Sizes are set in points. Text grows with Dynamic Type (the iPhone's text-size setting). On Budgets it stops at 2× (1.4× for the two hero numbers); tab labels stop at 1.2× and screen titles have their own cap. Other screens don't cap yet, so very large settings can still crowd tight rows there. From 1.5× the Budgets top card stacks its numbers and stats into one column, and each budget row stacks: chip + name, then the spent line, then the amount and label underneath (WHIT-743).
+Sizes are set in points. Text grows with Dynamic Type (the iPhone's text-size setting). On Budgets and Insights it stops at 2× (1.4× for hero numbers and the donut's centre); tab labels stop at 1.2× and screen titles have their own cap. Other screens don't cap yet, so very large settings can still crowd tight rows there. From 1.5× the Budgets top card stacks its numbers and stats into one column, and each budget row stacks: chip + name, then the spent line, then the amount and label underneath (WHIT-743).
 
 ### Named Rules
 **The Numbers-Wear-Tight Rule.** Money and counts are set in Inter Tight with negative tracking; words are set in Inter. A dollar figure in Inter, or a sentence in Inter Tight, reads off-brand.
@@ -258,7 +258,7 @@ Soft, wide and confident.
 - **Icon button:** a 40×40pt square, 12pt radius, `tint(C.accentAlt, 0.16)` fill (header actions such as the settings gear).
 
 ### Segmented control
-Pill-shaped switch for "This cycle / Last cycle", "Spending / Earning" and the Transactions "All / Uncategorised" tabs. A Night Card container (14pt radius, 3pt inset, hairline border) holds segments with an 11pt radius, each at least 44pt tall. Inactive text is Ink Dim 600; the active segment takes a tint fill passed by the caller and bolds to 700. A segment can carry a count bubble after its label: Bad Rose at 20% with a brighter rose (`badBright`) 11pt 700 count, the same whether active or not.
+Pill-shaped switch for "This cycle / Last cycle", "Spending / Earning" and the Transactions "All / Uncategorised" tabs. A Night Card container (14pt radius, 3pt inset, hairline border) holds segments with an 11pt radius, each at least 44pt tall. Inactive text is Ink Dim 600; the active segment takes a tint fill passed by the caller and bolds to 700. Neutral switches (the cycle switch, Insights' Spending side) use a Periwinkle Wash tint (`tint(C.accentAlt, 0.16)`); rose is never used for a normal state. A segment can carry a count bubble after its label: Bad Rose at 20% with a brighter rose (`badBright`) 11pt 700 count, the same whether active or not.
 
 ### Cards / Containers
 - **Corner style:** 18pt (detail cards), 20pt (budget and insight rows), 14pt (list rows).
@@ -267,6 +267,7 @@ Pill-shaped switch for "This cycle / Last cycle", "Spending / Earning" and the T
 - **Border:** 1pt Hairline.
 - **Internal padding:** 16pt (18pt on budget detail). Budget rows are 16pt top / 14pt bottom; a short "nothing spent yet" row keeps the same padding and is short only because it has no bar.
 - **Budget rows:** name + spent meta on the left, a 20pt amount and label on the right, then the bar and an optional note left-aligned under it. No row has a pace line (WHIT-744); pending appears only as the bar's faded segment. At large text (1.5×+) the row stacks instead of squeezing (WHIT-743).
+- **Insight rows:** the same row header as Budgets (one shared layout), with the amount on the right and the share of the cycle's spend as the meta line ("42% of spend · $X pending"). They stack the same way from 1.5× text (ABU-63). The donut's hole shows the biggest category's share at rest, not the total again. On the earned-vs-spent card the Spent bar is neutral ink, and rose only when spending beat income.
 
 ### Hero card (signature)
 The one bright surface per screen. A 150° gradient (Tokyo Blue → Dusk Indigo → Dusk Lilac) clipped to a 26pt radius, with two translucent white circles overflowing the top-right corner. Content is Night ink: a muted eyebrow (13pt, ~62% ink), the hero number (44pt Inter Tight 800), and a bottom row with a small translucent ink pill (12pt radius). On Budgets the card instead has two equal 44pt numbers (days left, money left or over) over a full-width row of three equal-width labelled values at 17pt: Spent · Budget · Next payday (WHIT-731). From 1.5× text the numbers and values stack into one column. Its amounts show cents only when they have them. Used on Budgets, Insights, Mortgage and Milestones.

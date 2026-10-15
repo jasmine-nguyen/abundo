@@ -210,7 +210,7 @@ describe('SpendingDonut — hostile values', () => {
 
     expect(paintedOrder()).toEqual(['a']);
     expect(screen.getByTestId('donut-band-a').props.d).toBeUndefined(); // full Circle, no arc ends
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100'); // −50 not netted off
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('100%'); // −50 not netted off (netted it would read 200%)
     expect(labelOf('donut-neg')).toContain('a 100 percent');
     expect(labelOf('donut-neg')).not.toContain('refund');  // nothing painted is never announced
     expect(labelOf('donut-neg')).not.toContain('zero');

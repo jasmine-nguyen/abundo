@@ -1,8 +1,9 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { C, FONT, fmt } from '../theme';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 // WHIT-312/324: an "earned vs spent" read for the selected pay cycle — two horizontal bars
-// (earned in the app's positive teal, spent in the overspend coral) on ONE shared ruler, so the
+// (earned in the app's positive teal, spent in neutral ink — rose only for a deficit) on ONE shared ruler, so the
 // bigger amount fills the bar and the smaller is proportional. Below them, a single line states the
 // cycle's surplus or deficit. WHIT-324 removed the earlier budgeted overlay: this card's one job is
 // the surplus/deficit read; budget-vs-actual lives in the per-category bars lower on the screen.
@@ -70,8 +71,8 @@ function Bar({ label, amount, share, color, testID }: {
   return (
     <View style={styles.barBlock}>
       <View style={styles.barHead}>
-        <Text style={styles.barLabel}>{label}</Text>
-        <Text style={[styles.barAmount, { color }]}>{fmt(amount)}</Text>
+        <Text style={styles.barLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{label}</Text>
+        <Text style={[styles.barAmount, { color }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmt(amount)}</Text>
       </View>
       <View style={styles.track}>
         <View testID={testID} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${pct}%`, backgroundColor: color, borderRadius: 5 }} />
@@ -89,14 +90,14 @@ export function EarnedVsSpent({ earned, spent, cycle, testID }: {
   const spentAmount = num(spent);
   if (earnedAmount <= 0 && spentAmount <= 0) return null;
 
-  const { earnedShare, spentShare, amountLabel, message, tone } = earnedVsSpent(earnedAmount, spentAmount, cycle);
+  const { earnedShare, spentShare, amountLabel, message, tone, overspent } =earnedVsSpent(earnedAmount, spentAmount, cycle);
   const label = `Earned ${fmt(earnedAmount)}, spent ${fmt(spentAmount)}. ${amountLabel} — ${message}`;
   return (
     <View style={styles.card} testID={testID} accessibilityLabel={label}>
       <Bar label="Earned" amount={earnedAmount} share={earnedShare} color={C.good} testID="earned-bar" />
-      <Bar label="Spent" amount={spentAmount} share={spentShare} color={C.bad} testID="spent-bar" />
+      <Bar label="Spent" amount={spentAmount} share={spentShare} color={overspent ? C.bad : C.textMid} testID="spent-bar" />
       <View style={styles.summary}>
-        <Text style={styles.summaryLine}>
+        <Text style={styles.summaryLine} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>
           <Text testID="earned-vs-spent-amount" style={[styles.summaryAmount, { color: TONE_COLOR[tone] }]}>{amountLabel}</Text>
           <Text testID="earned-vs-spent-message" style={styles.summaryMessage}>{` — ${message}`}</Text>
         </Text>
@@ -111,7 +112,7 @@ const styles = StyleSheet.create({
   barHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
   barLabel: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
   barAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', letterSpacing: -0.4 },
-  track: { height: 10, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
+  track: { height: 10, backgroundColor: C.progressTrack, borderRadius: 5, overflow: 'hidden' },
   summary: { marginTop: 4, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.hairline },
   summaryLine: { textAlign: 'left' },
   summaryAmount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
