@@ -83,10 +83,9 @@ the card number for card builds) and check where it is:
    blockers.
 
    Check whether all its blockers ("blocked by" relations) have Status
-   'Done' and their PR merged (a card goes to Done when its PR opens,
-   before it merges: `gh pr list --search <card ID> --state merged`). If
-   not, warn the user, list the unfinished blockers, and ask whether to
-   continue anyway.
+   'Done' (Linear moves a card to Done when its PR merges). If not, warn
+   the user, list the unfinished blockers, and ask whether to continue
+   anyway.
 
    **b) Plain-text request** — `$ARGUMENTS` is not a card number. First
    search the team for an open card that already asks for this
@@ -110,7 +109,7 @@ the card number for card builds) and check where it is:
       pattern.
    3. Walk the list in order. Fetch each card's blockers (`get_issue`
       with `includeRelations`). A card is ready only when every blocker is
-      Done and its PR merged (see 1a). No blockers = ready. Pick the first
+      Done. No blockers = ready. Pick the first
       ready card.
    4. If any card has Status 'In Progress', mention it and ask whether to
       resume that instead.
@@ -423,7 +422,6 @@ the card number for card builds) and check where it is:
    - If it printed **TECH DEBT CARDS TO FILE**, create each one in the
      AGENTS.md team (Status 'Todo', label `Tech debt`), and tell the user
      they were filed.
-   - Once the PR is open (by the script or by you), update the card's Status to 'Done'.
    - If a replan printed a backup branch (🗄), tell the user it's still on
      their machine, and offer to delete it once the ticket is done:
      `python3 build_graph.py --thread <id> --clean-backups`. It deletes only
