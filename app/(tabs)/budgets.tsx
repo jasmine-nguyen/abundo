@@ -233,8 +233,6 @@ const styles = StyleSheet.create({
   heroAdd: { marginTop: 12, alignSelf: 'flex-start', backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
   heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
 
-  // Same uppercase muted label as the budget detail screen's section headings.
-
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, marginBottom: 12 },
   slimNote: { marginTop: 6 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
