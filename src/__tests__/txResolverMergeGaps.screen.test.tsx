@@ -13,7 +13,7 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../types';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -30,7 +30,7 @@ const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true, ...over,
 });
 const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
-const emptyFeed = () => server.seed('/transactions/feed', { transactions: [], nextCursor: null });
+const emptyFeed = () => seedFeedPage(server, '/transactions/feed', []);
 
 beforeEach(() => {
   resetAuth();
