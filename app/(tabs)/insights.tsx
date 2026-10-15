@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
-import { Icon } from '../../src/icons';
+import { Icon, Glyph } from '../../src/icons';
 import { categoryBreakdown, incomeBreakdown } from '../../src/context';
 import { useAiInsights } from '../../src/hooks/useAiInsights';
 import { useInsightsScreenData } from '../../src/queries';
@@ -130,7 +130,7 @@ export default function Insights() {
             Shows whenever there's income OR spend, so an income-only cycle still gets the comparison.
             WHIT-324: surplus vs deficit only (no budget), so it hides when there was neither. */}
         {!showSpinner && !showError && (earned > 0 || rows.length > 0) && (
-          <EarnedVsSpent earned={earned} spent={total} testID="insights-earned-spent" />
+          <EarnedVsSpent earned={earned} spent={total} cycle={cycle} testID="insights-earned-spent" />
         )}
 
         {/* WHIT-373: one list, a switch — Spending shows the category breakdown, Earning shows the
@@ -216,7 +216,7 @@ export default function Insights() {
                   <Text style={styles.rowName} numberOfLines={1}>{r.name}</Text>
                   <Text style={styles.rowSub}>{r.spentLabel}</Text>
                 </View>
-                {r.hasChildren && <Icon name={open ? 'chevronDown' : 'chevron'} size={18} color={C.textDim} />}
+                {r.hasChildren && <Glyph name={open ? 'chevronDown' : 'chevron'} size={18} color={C.textDim} />}
                 <Text style={styles.rowAmount}>{fmt(r.spent)}</Text>
               </Pressable>
               <View style={styles.track}>

@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, fmt } from '../../src/theme';
+import { C, FONT, fmtExact } from '../../src/theme';
 import { categoryTransactions } from '../../src/context';
 import { useCategoryTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
@@ -66,8 +66,8 @@ export default function CategoryDetail() {
             <>
               <View testID="category-total" style={styles.totalCard}>
                 <Text style={styles.totalLabel}>{verb} {periodLabel}</Text>
-                <Text style={styles.totalAmount}>{fmt(detail.total)}</Text>
-                {detail.pending > 0 && <Text style={styles.totalPending}>{fmt(detail.pending)} pending</Text>}
+                <Text style={styles.totalAmount}>{fmtExact(detail.total)}</Text>
+                {detail.pending > 0 && <Text style={styles.totalPending}>{fmtExact(detail.pending)} pending</Text>}
               </View>
               <Text style={styles.count}>{detail.count} {detail.count === 1 ? 'transaction' : 'transactions'}</Text>
               {detail.groups.map((g) => (

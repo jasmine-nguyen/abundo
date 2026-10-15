@@ -21,6 +21,8 @@ import {
 } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
 import { styleOf } from './support/layout';
+import { GLYPH, ICON } from '../icons';
+import { C } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
@@ -489,6 +491,17 @@ describe('earned-vs-spent chart — screen gaps (WHIT-312)', () => {
   });
 });
 
+// ABU-61: on "Last cycle" the Earned vs Spent card must not still say "this cycle".
+it('the earned-vs-spent message says "last cycle" after switching to Last cycle', async () => {
+  seedBreakdown({ spend: TWO_ROWS, earned: 3000 });
+  await renderInsights();
+  expect(screen.getByTestId('earned-vs-spent-message').props.children).toContain('this cycle');
+  await showLastCycle();
+  const message = screen.getByTestId('earned-vs-spent-message').props.children;
+  expect(message).toContain('last cycle');
+  expect(message).not.toContain('this cycle');
+});
+
 // Car with two subs, used by the refund-line and remainder suites below.
 const CAR_CATS = [
   { id: 'car', name: 'Car', icon: 'car', bucket: 'Living', parent: null },
@@ -523,6 +536,29 @@ describe('Insights refund line (WHIT-349)', () => {
     // A tap on the refund line drills into the refunded sub's transactions.
     fireEvent.press(screen.getByText('Tolls'));
     expect(routerSpies.push).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
+  });
+});
+
+// ABU-61: a parent row's open/close arrow is drawn from the GLYPH set, never the grey "?" that
+// Icon falls back to for a name it doesn't know.
+describe('Insights parent row arrow', () => {
+  beforeEach(seedCarRefund);
+
+  const xmlsIn = (node: ReactTestInstance) =>
+    node.findAll((n) => typeof n.props.xml === 'string').map((n) => n.props.xml as string);
+  const parentRow = () => screen.getByRole('button', { name: /Car/ });
+  const drawn = (inner: string) => `<svg viewBox="0 0 24 24">${inner.replace(/currentColor/g, C.textDim)}</svg>`;
+
+  it('shows the right arrow when closed and the down arrow when open, never "?"', async () => {
+    await renderInsights();
+    let xmls = xmlsIn(parentRow());
+    expect(xmls).toContain(drawn(GLYPH.chevron));
+    expect(xmls).not.toContain(drawn(ICON.q));
+
+    fireEvent.press(screen.getByText('Car'));
+    xmls = xmlsIn(parentRow());
+    expect(xmls).toContain(drawn(GLYPH.chevronDown));
+    expect(xmls).not.toContain(drawn(ICON.q));
   });
 });
 

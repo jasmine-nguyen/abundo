@@ -6,7 +6,7 @@
 // (WHIT-309's clamp). ../context is partially mocked only for the rows' useAppContext.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -112,7 +112,8 @@ it('renders the category name, the total card, and the grouped transactions', as
   await renderWithQueries(<CategoryDetail />);
   expect(screen.getAllByText('Cafes & Coffee')).toHaveLength(2); // header + the row's category
   expect(screen.getByTestId('category-total')).toBeTruthy();
-  expect(screen.getByText('$9')).toBeTruthy();                   // 8.5 rounds
+  // ABU-61: the header total shows cents, matching the row under it (was "$9").
+  expect(within(screen.getByTestId('category-total')).getByText('$8.50')).toBeTruthy();
   expect(screen.getByText('1 transaction')).toBeTruthy();
   expect(screen.getByText('Wed 1 Jul')).toBeTruthy();           // date group
   expect(screen.getByText('ST Ali')).toBeTruthy();              // the row
@@ -126,6 +127,17 @@ it('shows the pending line only when there is pending spend', async () => {
   await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('$20')).toBeTruthy();
   expect(screen.getByText('$8 pending')).toBeTruthy();
+});
+
+// ABU-61: the total and the pending line keep their cents.
+it('shows cents on the total and pending line when they have them', async () => {
+  server.seed(COFFEE_ROWS, [
+    { ...ROW, amount: -12 },
+    { ...ROW, transaction_id: 't2', amount: -8.4, status: 'pending' },
+  ]);
+  await renderWithQueries(<CategoryDetail />);
+  expect(within(screen.getByTestId('category-total')).getByText('$20.40')).toBeTruthy();
+  expect(screen.getByText('$8.40 pending')).toBeTruthy();
 });
 
 it('shows the empty state when nothing matches this category/cycle', async () => {
@@ -167,7 +179,7 @@ it('Retry after a failed first read shows the detail once the server answers', a
   fireEvent.press(screen.getByTestId('category-retry'));
   await waitFor(() => expect(screen.getByTestId('category-total')).toBeTruthy());
   expect(screen.queryByTestId('category-error')).toBeNull();
-  expect(screen.getByText('$9')).toBeTruthy();
+  expect(screen.getByText('$8.50')).toBeTruthy();
 });
 
 // [A3] (P0) Retry after the taxonomy failed re-reads /categories and the detail then renders.
@@ -187,7 +199,7 @@ it('Retry after the category list failed shows the detail once the list loads', 
 // cached cycle-0 rows answer for cycle 1.
 it('switching to last cycle re-reads ?cycle=1 and shows that cycle\'s total, not the cached one', async () => {
   const view = await renderWithQueries(<CategoryDetail />);
-  expect(screen.getByText('$9')).toBeTruthy();
+  expect(screen.getByText('$8.50')).toBeTruthy();
 
   server.once('GET', COFFEE_ROWS, { status: 200, body: [{ ...ROW, transaction_id: 't9', amount: -42 }] });
   setParams({ id: 'coffee', cycle: '1' });
@@ -195,7 +207,7 @@ it('switching to last cycle re-reads ?cycle=1 and shows that cycle\'s total, not
   await waitFor(() => expect(screen.getByText('$42')).toBeTruthy());
   expect(server.sent('GET', `${COFFEE_ROWS}?cycle=1`)).toHaveLength(1);
   expect(screen.getByText('Spent last cycle')).toBeTruthy();
-  expect(screen.queryByText('$9')).toBeNull();
+  expect(screen.queryByText('$8.50')).toBeNull();
 });
 
 // [A6] (P1) A row filed under a category the taxonomy doesn't know still counts and lists.

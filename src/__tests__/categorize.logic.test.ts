@@ -74,7 +74,7 @@ describe('transactionView', () => {
   });
 
   it('formats the amount with sign and 2 decimals', () => {
-    expect(transactionView(state(), txn({ amount: -12.5 })).amountLabel).toBe('-$12.50');
+    expect(transactionView(state(), txn({ amount: -12.5 })).amountLabel).toBe('−\u2060$12.50');
     expect(transactionView(state(), txn({ amount: 2500 })).amountLabel).toBe('+$2,500.00');
   });
 

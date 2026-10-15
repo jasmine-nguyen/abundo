@@ -137,11 +137,12 @@ describe('fmtSignedExact', () => {
 });
 
 describe('fmt2', () => {
+  // ABU-61: a negative transaction amount uses the real minus, like the rest of the app.
   it('shows sign and two decimals', () => {
-    expect(fmt2(-12.5)).toBe('-$12.50');
+    expect(fmt2(-12.5)).toBe(`${MINUS}$12.50`);
     expect(fmt2(2500)).toBe('+$2,500.00');
     expect(fmt2(0)).toBe('+$0.00');
-    expect(fmt2(-1234.5)).toBe('-$1,234.50');
+    expect(fmt2(-1234.5)).toBe(`${MINUS}$1,234.50`);
   });
 });
 

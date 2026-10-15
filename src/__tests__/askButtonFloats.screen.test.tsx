@@ -35,7 +35,7 @@ describe('WHIT-737 the Ask button floats', () => {
   // list row pads the right side more than the left, so cards run full width (no right-hand lane).
   const TABS: [string, () => void, React.ReactElement, string][] = [
     ['Budgets', () => seedBudgetsTab(server, { groceries: { target: 100, posted: 30, pending: 0 } }, [GROCERIES]), <Budgets />, 'Groceries'],
-    ['Transactions', () => server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: null }), <Transactions />, '-$42.00'],
+    ['Transactions', () => server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: null }), <Transactions />, '−\u2060$42.00'],
     ['Accounts', () => server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: null }), <Accounts />, 'ANZ'],
     ['Insights', () => {
       server.seed('/breakdown', { coffee: { posted: 40, pending: 0 } });

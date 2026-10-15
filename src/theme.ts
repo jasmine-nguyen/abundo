@@ -179,13 +179,13 @@ export const ADJUSTMENT_ROW = {
 } as const;
 
 export function fmt2(n: number): string {
-  return (n < 0 ? '-' : '+') + '$' +
+  return (n < 0 ? MINUS : '+') + '$' +
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // An account balance label (WHIT-212): "-$596,642.43" / "$96,270.59". The sign shows only
 // for a negative balance (money owed) — a positive balance is bare, with colour (green vs
-// red) carrying "in credit vs owing". Distinct from fmt2, which always prefixes +/−.
+// red) carrying "in credit vs owing". Distinct from fmt2, which always prefixes + or a real minus (MINUS); this keeps the hyphen.
 export function fmtBalance(n: number): string {
   return (n < 0 ? '-' : '') + '$' +
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

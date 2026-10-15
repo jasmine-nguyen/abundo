@@ -76,15 +76,15 @@ describe('what the list shows', () => {
     await draw();
     type('steven');
     await pauseTyping();
-    expect(await screen.findByText('-$77.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
   });
 
   it('narrows instantly from the loaded rows before the server answers', async () => {
     await draw();
     type('steven');
-    expect(screen.getByText('-$11.00')).toBeTruthy();
-    expect(screen.queryByText('-$12.50')).toBeNull();
+    expect(screen.getByText('−\u2060$11.00')).toBeTruthy();
+    expect(screen.queryByText('−\u2060$12.50')).toBeNull();
     expect(screen.getByTestId('transactions-searching')).toBeTruthy();
   });
 
@@ -94,10 +94,10 @@ describe('what the list shows', () => {
     await draw();
     type('ste');
     await pauseTyping();
-    expect(await screen.findByText('-$5.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$5.00')).toBeTruthy();
     type('steven');
-    expect(screen.queryByText('-$5.00')).toBeNull();
-    expect(screen.getByText('-$77.00')).toBeTruthy();
+    expect(screen.queryByText('−\u2060$5.00')).toBeNull();
+    expect(screen.getByText('−\u2060$77.00')).toBeTruthy();
   });
 
   it('never shows "No matches" while the server is still searching', async () => {
@@ -139,7 +139,7 @@ describe('match summary', () => {
     await draw();
 
     type('steven');
-    expect(screen.getByText('-$11.00')).toBeTruthy();
+    expect(screen.getByText('−\u2060$11.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
 
     await pauseTyping();
@@ -194,7 +194,7 @@ describe('match summary', () => {
     await draw();
     type('steven');
     await pauseTyping();
-    await waitFor(() => expect(screen.getByText('-$77.00')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('−\u2060$77.00')).toBeTruthy());
     if (expected === null) {
       expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
       expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
@@ -226,7 +226,7 @@ describe('when the server search fails', () => {
     type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-error')).toBeTruthy();
-    expect(screen.getByText('-$11.00')).toBeTruthy();
+    expect(screen.getByText('−\u2060$11.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
   });
 
@@ -254,7 +254,7 @@ describe('search transitions', () => {
     await draw();
     type('steven');
     await pauseTyping();
-    expect(await screen.findByText('-$77.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
 
     type('stevenx'); // the screen still holds the "steven" answer until typing pauses
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
@@ -271,8 +271,8 @@ describe('search transitions', () => {
     expect(screen.queryByTestId('transactions-load-more')).toBeNull();
 
     fireEvent.press(screen.getByLabelText('Clear search'));
-    expect(screen.getByText('-$12.50')).toBeTruthy();
-    expect(screen.queryByText('-$77.00')).toBeNull();
+    expect(screen.getByText('−\u2060$12.50')).toBeTruthy();
+    expect(screen.queryByText('−\u2060$77.00')).toBeNull();
     expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
     expect(screen.queryByTestId('transactions-searching')).toBeNull();
     expect(screen.queryByTestId('transactions-search-truncated')).toBeNull();
@@ -290,9 +290,9 @@ describe('search transitions', () => {
     fireEvent.press(screen.getByTestId('tab-uncategorized'));
     type('steven');
     await pauseTyping();
-    expect(await screen.findByText('-$77.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
     expect(searches()).toEqual(['/transactions/search?tab=uncategorized&q=steven']);
-    expect(screen.queryByText('-$33.00')).toBeNull();
+    expect(screen.queryByText('−\u2060$33.00')).toBeNull();
   });
 
   it('[A4] pull-to-refresh spins when only the search result has rows', async () => {
@@ -301,7 +301,7 @@ describe('search transitions', () => {
     await draw();
     type('steven');
     await pauseTyping();
-    expect(await screen.findByText('-$77.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
 
     const held = server.hold('/accounts/balances/refresh'); // the pull stays in flight
     await act(async () => { refreshControl().props.onRefresh(); });
