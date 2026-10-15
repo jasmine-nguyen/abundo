@@ -22,5 +22,16 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "impeccable@impeccable": true
+  },
+  "extraKnownMarketplaces": {
+    "impeccable": {
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable"
+      }
+    }
   }
 }
