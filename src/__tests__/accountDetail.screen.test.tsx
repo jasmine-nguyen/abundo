@@ -6,12 +6,12 @@
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react-native';
 import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { setParams, resetRouter } from './support/routerMock';
+import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
 import { styleOf } from './support/layout';
@@ -99,6 +99,28 @@ it('shows the balance for an account with a saved balance but no loaded transact
   expect(screen.getByText('-$500,000.00')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
   expect(screen.getByText('No recent transactions')).toBeTruthy();
+});
+
+// ABU-64: only the home loan (account_type 'mortgage') gets the "See payoff progress" row, which
+// opens the Home loan screen. Every account's balance age shows as the shared freshness tag, in
+// the readable card tone (textMid), instead of the plain "as of" line.
+it.each([
+  ['mortgage', true],
+  ['checking', false],
+])('a %s account: payoff link shown = %s, and the freshness tag replaces "as of"', async (accountType, isLoan) => {
+  server.seed('/accounts/balances', [bal({ amount: -500000, available_balance: 0, account_type: accountType })]);
+  await renderWithQueries(<AccountDetail />);
+  const pill = screen.getByTestId('balance-freshness');
+  expect(styleOf(within(pill).getByText(/^As of/)).color).toBe(C.textMid);
+  expect(screen.queryByText(/^as of/)).toBeNull();
+  if (!isLoan) {
+    expect(screen.queryByTestId('account-payoff-link')).toBeNull();
+    return;
+  }
+  const link = screen.getByTestId('account-payoff-link');
+  expect(within(link).getByText('See payoff progress')).toBeTruthy();
+  fireEvent.press(link);
+  expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
 });
 
 // [A2] an account with BOTH loaded transactions and a balance keeps the bank's name in the
