@@ -16,6 +16,8 @@ import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
 import { styleOf } from './support/layout';
+import { accountBalance } from './support/accountBalance';
+import type { AccountBalance } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 const mockShowToast = jest.fn();
@@ -34,9 +36,8 @@ const ROW = {
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-const bal = (over: Record<string, unknown> = {}) => ({
-  account_id: 'a1', amount: -6492.26, available_balance: 8171.88, currency: 'AUD',
-  as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
+const bal = (over: Partial<AccountBalance> = {}) => accountBalance({
+  amount: -6492.26, available_balance: 8171.88, as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
 
 beforeEach(() => {
@@ -46,10 +47,11 @@ beforeEach(() => {
   server.seed('/transactions', [ROW]);
 });
 
-it('shows a negative balance in red and the credit-card "available" line (owe, but credit left)', async () => {
+it('shows an owed balance in bright neutral text with "owed", and the credit-card "available" line', async () => {
   server.seed('/accounts/balances', [bal({ amount: -6492.26, available_balance: 8171.88 })]);
   await renderWithQueries(<AccountDetail />);
-  expect(styleOf(screen.getByText('-$6,492.26')).color).toBe(C.bad);
+  expect(styleOf(screen.getByText('$6,492.26')).color).toBe(C.textBright);
+  expect(screen.getByText('owed')).toBeTruthy();
   expect(screen.getByText('$8,172 available')).toBeTruthy(); // fmt() rounds
 });
 
@@ -63,7 +65,7 @@ it('shows a positive balance in green and NO available line (spending account)',
 it('hides the available line for a loan (you owe, but there is no credit to draw — available 0)', async () => {
   server.seed('/accounts/balances', [bal({ amount: -596642.43, available_balance: 0, account_type: 'mortgage' })]);
   await renderWithQueries(<AccountDetail />);
-  expect(screen.getByText('-$596,642.43')).toBeTruthy();
+  expect(screen.getByText('$596,642.43')).toBeTruthy();
   expect(screen.queryByText(/available/)).toBeNull();
 });
 
@@ -98,7 +100,7 @@ it('shows the balance for an account with a saved balance but no loaded transact
   server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -500000, available_balance: 0, account_type: 'mortgage' })]);
   await renderWithQueries(<AccountDetail />);
   expect(screen.getByTestId('account-balance')).toBeTruthy();
-  expect(screen.getByText('-$500,000.00')).toBeTruthy();
+  expect(screen.getByText('$500,000.00')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
   expect(screen.getByText('No recent transactions')).toBeTruthy();
 });
@@ -141,7 +143,7 @@ it('pull refreshes the list and live balances, headings show the day total, bala
   await renderWithQueries(<AccountDetail />);
   expect(screen.getByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
 
-  const amount = screen.getByText('-$592,994.43');
+  const amount = screen.getByText('$592,994.43');
   expect(amount.props.numberOfLines).toBe(1);
   expect(amount.props.adjustsFontSizeToFit).toBe(true);
   expect(amount.props.maxFontSizeMultiplier).toBe(2);
@@ -161,10 +163,10 @@ it('a pull whose live balance call succeeds shows the live balance and confirms 
   server.seed('/accounts/balances', [bal({ amount: -100, available_balance: 0 })]);
   server.once('POST', '/accounts/balances/refresh', { body: [bal({ amount: -250, available_balance: 0 })] });
   await renderWithQueries(<AccountDetail />);
-  expect(screen.getByText('-$100.00')).toBeTruthy();
+  expect(screen.getByText('$100.00')).toBeTruthy();
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
   await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
-  expect(await screen.findByText('-$250.00')).toBeTruthy();
+  expect(await screen.findByText('$250.00')).toBeTruthy();
   expect(mockShowToast).toHaveBeenCalledTimes(1);
 });
 

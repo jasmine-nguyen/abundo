@@ -11,6 +11,7 @@ import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
+import { accountBalance as bal } from './support/accountBalance';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -27,10 +28,6 @@ const ROW = {
   description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
-const bal = (over: Record<string, unknown> = {}) => ({
-  account_id: 'a1', amount: 100, available_balance: 100, currency: 'AUD',
-  as_of: '2026-07-08T09:32:02.405Z', account_type: 'checking', ...over,
-});
 const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', { transactions, nextCursor: null });
 
 beforeEach(() => {

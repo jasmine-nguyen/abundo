@@ -1,6 +1,6 @@
 // WHIT-215 — the Accounts tab + per-account detail derive ENTIRELY from the transaction
 // list (no separate accounts feed). These lock the two pure selectors: accountSummaries
-// (one row per account_id, one canonical name, busiest-first) and accountDetail (this
+// (one row per account_id, one canonical name, name order, last money-out date) and accountDetail (this
 // account's transactions, grouped; null for an unknown id).
 import { describe, it, expect } from '@jest/globals';
 import { accountSummaries, accountDetail, accountNameFromId } from '../context';
@@ -18,8 +18,8 @@ describe('accountSummaries', () => {
       ],
     });
     expect(out).toEqual([
-      { id: 'a1', name: 'ANZ', count: 2 },
-      { id: 'a2', name: 'Up Homeloan', count: 1 },
+      { id: 'a1', name: 'ANZ', count: 2, lastSpendDate: '2026-07-01' },
+      { id: 'a2', name: 'Up Homeloan', count: 1, lastSpendDate: '2026-07-01' },
     ]);
   });
 
@@ -42,18 +42,32 @@ describe('accountSummaries', () => {
         txn({ transaction_id: 't2', account_id: 'a9', account_name: '' }),
       ],
     });
-    expect(out[0]).toEqual({ id: 'a9', name: 'a9', count: 2 });
+    expect(out[0]).toEqual({ id: 'a9', name: 'a9', count: 2, lastSpendDate: '2026-07-01' });
   });
 
-  it('sorts busiest account first', () => {
+  // ABU-65: by name, not busiest-first, so the order never shifts as transaction counts change.
+  it('sorts by name, not by transaction count', () => {
     const out = accountSummaries({
       transactions: [
-        txn({ transaction_id: 't1', account_id: 'small', account_name: 'Small' }),
-        txn({ transaction_id: 't2', account_id: 'big', account_name: 'Big' }),
-        txn({ transaction_id: 't3', account_id: 'big', account_name: 'Big' }),
+        txn({ transaction_id: 't1', account_id: 'a', account_name: 'Alpha' }),
+        txn({ transaction_id: 't2', account_id: 'z', account_name: 'Zulu' }),
+        txn({ transaction_id: 't3', account_id: 'z', account_name: 'Zulu' }),
       ],
     });
-    expect(out.map((a) => a.id)).toEqual(['big', 'small']);
+    expect(out.map((a) => a.id)).toEqual(['a', 'z']);
+  });
+
+  // ABU-65: the newest money-out row's date (whatever the feed order), ignoring money in.
+  it('takes lastSpendDate from the newest money-out row, or null when there is none', () => {
+    const out = accountSummaries({
+      transactions: [
+        txn({ transaction_id: 't1', account_id: 'a1', account_name: 'ANZ', amount: -5, date: '2026-07-03' }),
+        txn({ transaction_id: 't2', account_id: 'a1', account_name: 'ANZ', amount: 900, date: '2026-07-09' }),
+        txn({ transaction_id: 't3', account_id: 'a1', account_name: 'ANZ', amount: -8, date: '2026-07-06' }),
+        txn({ transaction_id: 't4', account_id: 'a2', account_name: 'Pay', amount: 900, date: '2026-07-09' }),
+      ],
+    });
+    expect(out.map((a) => a.lastSpendDate)).toEqual(['2026-07-06', null]);
   });
 
   it('adds extra (balance-only) ids after the transaction-derived accounts, without duplicates', () => {
@@ -62,8 +76,8 @@ describe('accountSummaries', () => {
       ['a1', 'up-homeloan'],
     );
     expect(out).toEqual([
-      { id: 'a1', name: 'ANZ', count: 1 },
-      { id: 'up-homeloan', name: 'Up Homeloan', count: 0 },
+      { id: 'a1', name: 'ANZ', count: 1, lastSpendDate: '2026-07-01' },
+      { id: 'up-homeloan', name: 'Up Homeloan', count: 0, lastSpendDate: null },
     ]);
   });
 });
@@ -95,15 +109,3 @@ describe('accountDetail', () => {
   });
 });
 
-describe('accountSummaries extraIds ordering (WHIT-643 QA)', () => {
-  // [A1] a balance-only id whose name sorts alphabetically first must still come after every
-  // transaction-derived account, so existing cards keep their index (and accent colour).
-  it('sorts a balance-only account last even when its name sorts first', () => {
-    const out = accountSummaries(
-      { transactions: [txn({ transaction_id: 't1', account_id: 'z1', account_name: 'Zeta' })] },
-      new Map([['aaa-loan', 1], ['z1', 2]]).keys(),
-    );
-    expect(out.map((a) => a.id)).toEqual(['z1', 'aaa-loan']);
-    expect(out[1]).toEqual({ id: 'aaa-loan', name: 'Aaa Loan', count: 0 });
-  });
-});

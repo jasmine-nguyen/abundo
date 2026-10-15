@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { C, FONT, tint, fmtBalance, ACCOUNT_ACCENTS, PRESSED } from '../../src/theme';
+import { C, FONT, tint, PRESSED } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData, useHomeLoanProgress } from '../../src/queries';
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
+import { orderAccounts, accountAccent, accountKind, accountSubtitle, balanceDisplay, ACCOUNT_KIND_ICON } from '../../src/accountDisplay';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
@@ -26,8 +27,9 @@ export default function Accounts() {
 
   // WHIT-215: derived from the transactions themselves (one card per account_id), not a
   // hardcoded list — so names always match what's in the data. WHIT-643: plus every account
-  // with a saved balance, so a quiet account (the home loan) still gets a card.
-  const accounts = accountSummaries({ transactions }, balances.keys());
+  // with a saved balance, so a quiet account (the home loan) still gets a card. ABU-65: a fixed
+  // order by account type (cards → everyday → home loan), so a busy day never reshuffles them.
+  const accounts = orderAccounts(accountSummaries({ transactions }, balances.keys()), balances);
   const loanLine = useHomeLoanProgress([...balances.values()].some(isHomeLoanAccount));
 
   const showError = isError && transactions.length === 0;
@@ -70,16 +72,15 @@ export default function Accounts() {
 
       {!showSpinner && !showError && accounts.length > 0 && (
         <View style={{ marginTop: 14 }}>
-          {accounts.map((a, i) => {
-            const color = ACCOUNT_ACCENTS[i % ACCOUNT_ACCENTS.length];
-            // WHIT-212: signed live balance from the poller-fed query — green when in credit,
-            // red when owing. Absent until the account's first poll → a dim "—".
+          {accounts.map((a) => {
+            const color = accountAccent(a.id);
+            // WHIT-212: the live balance from the poller-fed query. Absent until the account's
+            // first poll → a dim "—".
             const bal = balances.get(a.id);
-            let subtitle = `${a.count} ${a.count === 1 ? 'transaction' : 'transactions'}`;
-            if (a.count === 0) subtitle = 'No recent transactions';
-            if (isHomeLoanAccount(bal)) subtitle = loanLine ?? 'Home loan · payoff inside';
+            const subtitle = accountSubtitle({ summary: a, bal, loanLine });
+            const display = bal ? balanceDisplay(bal.amount) : null;
             let balanceLabel = 'balance not loaded yet';
-            if (bal) balanceLabel = fmtBalance(bal.amount);
+            if (display) balanceLabel = `${display.text}${display.owed ? ' owed' : ''}`;
             return (
               <Pressable
                 key={a.id}
@@ -88,13 +89,16 @@ export default function Accounts() {
                 onPress={() => router.push(`/account/${a.id}`)}
                 style={({ pressed }) => [styles.acct, pressed && PRESSED]}
               >
-                <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
+                <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name={ACCOUNT_KIND_ICON[accountKind(bal)]} size={22} color={color} /></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.acctName} numberOfLines={2} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{a.name}</Text>
                   <Text style={styles.acctSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{subtitle}</Text>
                 </View>
-                {bal ? (
-                  <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmtBalance(bal.amount)}</Text>
+                {display ? (
+                  <View style={styles.acctBalCol}>
+                    <Text style={[styles.acctBal, { color: display.color }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{display.text}</Text>
+                    {display.owed && <Text style={styles.acctOwed} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>owed</Text>}
+                  </View>
                 ) : (
                   <Text style={styles.acctBalPending} accessibilityLabel="Balance not loaded yet" maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>—</Text>
                 )}
@@ -113,6 +117,8 @@ const styles = StyleSheet.create({
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   // Capped so a big balance shrinks instead of squeezing the name (large text).
-  acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3, maxWidth: '45%' },
+  acctBalCol: { alignItems: 'flex-end', maxWidth: '45%' },
+  acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
+  acctOwed: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, marginTop: 1 },
   acctBalPending: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', color: C.textFaint },
 });

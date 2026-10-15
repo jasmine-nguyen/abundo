@@ -18,6 +18,7 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { txn } from './factory';
+import { accountBalance } from './support/accountBalance';
 import { queryClient } from '../queryClient';
 
 // WHIT-257/264 — override the global fixed-past picker mock (jest.setup fires 20 Jun 2026, which
@@ -53,9 +54,8 @@ const RAINY_DAY: GoalRecord = {
   account_id: 'acc-1', manual_balance: null, manual_as_of: null,
 };
 
-const balance = (account_id: string, amount: number): AccountBalance => ({
-  account_id, amount, available_balance: null, currency: 'AUD', as_of: '2026-07-01', account_type: 'savings',
-});
+const balance = (account_id: string, amount: number) =>
+  accountBalance({ account_id, amount, available_balance: null, as_of: '2026-07-01', account_type: 'savings' });
 
 // Fill the target-date field: it starts unset (a "Set date" affordance, testID date-open), so
 // reveal the picker first, then tap it — the mock picker emits a fixed date. The target field
