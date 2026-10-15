@@ -42,7 +42,7 @@ it('renders merchant, amount and category for a categorized row', () => {
   mockState = stateWith();
   render(<TransactionRow t={txn({ merchant_name: 'Woolworths', amount: -12.5, category: 'coffee' })} category={mockState.category} />);
   expect(screen.getByText('Woolworths')).toBeTruthy();
-  expect(screen.getByText('-$12.50')).toBeTruthy();
+  expect(screen.getByText('−\u2060$12.50')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
 });
 
@@ -115,7 +115,7 @@ describe('large text never lets the amount overlap the Pending tag (WHIT-845)', 
       merchant: screen.getByText('Woolworths'),
       category: screen.getByText('Cafes & Coffee'),
       pending: screen.getByText('Pending'),
-      amount: screen.getByText('-$279.40'),
+      amount: screen.getByText('−\u2060$279.40'),
     };
   };
 
@@ -145,7 +145,7 @@ describe('large text never lets the amount overlap the Pending tag (WHIT-845)', 
     expect(sharedHost(merchant, pending)).toBe(column);
     expect(sharedHost(merchant, amount)).toBe(column);
     const order = screen.root.findAll((n) => n === merchant || n === pending || n === amount);
-    expect(order.map((n) => n.props.children)).toEqual(['Woolworths', 'Pending', '-$279.40']);
+    expect(order.map((n) => n.props.children)).toEqual(['Woolworths', 'Pending', '−\u2060$279.40']);
     expect(merchant.props.numberOfLines).toBe(2);
   });
 });

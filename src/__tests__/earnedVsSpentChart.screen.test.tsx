@@ -55,9 +55,30 @@ describe('earnedVsSpent (pure)', () => {
   });
 });
 
+// ABU-61: the message names the selected cycle (0 = this, 1 = last) in every outcome, and the
+// overspend line is capitalised without "a little".
+describe('earnedVsSpent message names the selected cycle', () => {
+  it.each([
+    [3000, 1000, 0, 'Nice, you earned more than you spent this cycle. 🎉'],
+    [3000, 1000, 1, 'Nice, you earned more than you spent last cycle. 🎉'],
+    [1000, 1500, 0, "Oops, over this cycle. You've got the next one to balance it out. 💪"],
+    [1000, 1500, 1, "Oops, over last cycle. You've got the next one to balance it out. 💪"],
+    [1200, 1200, 0, 'You broke even this cycle.'],
+    [1200, 1200, 1, 'You broke even last cycle.'],
+  ])('earned %d, spent %d, cycle %d → %s', (earned, spent, cycle, message) => {
+    expect(earnedVsSpent(earned, spent, cycle).message).toBe(message);
+  });
+
+  it('the rendered card passes the cycle through to its message', () => {
+    render(<EarnedVsSpent earned={3000} spent={1000} cycle={1} testID="evs" />);
+    expect(screen.getByTestId('earned-vs-spent-message').props.children)
+      .toBe(' — Nice, you earned more than you spent last cycle. 🎉');
+  });
+});
+
 describe('EarnedVsSpent (render)', () => {
   it('draws both bars and the surplus headline', () => {
-    render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
+    render(<EarnedVsSpent earned={6389} spent={1723} cycle={0} testID="evs" />);
     expect(screen.getByText('$6,389')).toBeTruthy();
     expect(screen.getByText('$1,723')).toBeTruthy();
     expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');            // larger → full
@@ -66,20 +87,20 @@ describe('EarnedVsSpent (render)', () => {
   });
 
   it('a tiny spend against a large income floors to a visible nub, not a hairline', () => {
-    render(<EarnedVsSpent earned={6389} spent={30} testID="evs" />);
+    render(<EarnedVsSpent earned={6389} spent={30} cycle={0} testID="evs" />);
     // 30/6389 ≈ 0.47% would be near-invisible → floored to the 3% minimum.
     expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('3%');
     expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');
   });
 
   it('a zero-spend bar stays empty (the floor never fills a $0 bar)', () => {
-    render(<EarnedVsSpent earned={2975} spent={0} testID="evs" />);
+    render(<EarnedVsSpent earned={2975} spent={0} cycle={0} testID="evs" />);
     expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('0%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$2,975 surplus');
   });
 
   it('renders nothing when there was neither income nor spend', () => {
-    render(<EarnedVsSpent earned={0} spent={0} testID="evs" />);
+    render(<EarnedVsSpent earned={0} spent={0} cycle={0} testID="evs" />);
     expect(screen.queryByTestId('evs')).toBeNull();
     expect(screen.queryByTestId('earned-bar')).toBeNull();
   });

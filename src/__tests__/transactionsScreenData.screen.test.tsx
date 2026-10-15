@@ -328,7 +328,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
   it('a transient 5xx retries and self-heals — no error shown', async () => {
     server.once('GET', FEED, { status: 503 });
     renderTransactions(makeClient({ retry: 2 }));
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-error')).toBeNull();
     expect(feedReads()).toHaveLength(2);
   });
@@ -342,7 +342,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
     server.once('GET', FEED, { body: { transactions: TXNS, nextCursor: null } }); // ahead of the failure
     fireEvent.press(screen.getByTestId('transactions-retry'));
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   });
 
   it('does not fetch before login, then fires on auth flip to authed', async () => {
@@ -353,7 +353,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     await act(async () => {
       setAuthStatus('authed');
     });
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
     expect(feedReads().length).toBeGreaterThan(0);
   });
 });

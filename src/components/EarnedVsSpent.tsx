@@ -20,8 +20,9 @@ const num = (v: number): number => (Number.isFinite(v) ? v : 0);
 // The earned-vs-spent read, pure + exported so a test pins every branch without rendering. `share`
 // is each amount over the larger of the two (the shared ruler). `amountLabel` is the bold signed
 // headline ("+$4,666 surplus" / "−$500 deficit" / "$0"), `message` the sentence beside it, and
-// `tone` the amount's colour. A unicode minus (−) keeps the deficit reading clean.
-export function earnedVsSpent(earned: number, spent: number): {
+// `tone` the amount's colour. A unicode minus (−) keeps the deficit reading clean. `cycle`
+// (0 = this, 1 = last) picks "this cycle" / "last cycle" in the message.
+export function earnedVsSpent(earned: number, spent: number, cycle = 0): {
   leftover: number; overspent: boolean; even: boolean;
   earnedShare: number; spentShare: number;
   amountLabel: string; message: string; tone: keyof typeof TONE_COLOR;
@@ -39,18 +40,19 @@ export function earnedVsSpent(earned: number, spent: number): {
   const earnedShare = max > 0 ? earnedAmount / max : 0;
   const spentShare = max > 0 ? spentAmount / max : 0;
 
+  const period = cycle === 0 ? 'this cycle' : 'last cycle';
   let amountLabel: string, message: string, tone: keyof typeof TONE_COLOR;
   if (even) {
     amountLabel = fmt(0);
-    message = 'You broke even this cycle.';
+    message = `You broke even ${period}.`;
     tone = 'neutral';
   } else if (overspent) {
     amountLabel = `−${fmt(rounded)} deficit`;
-    message = "oops, a little over this cycle. You've got the next one to balance it out. 💪";
+    message = `Oops, over ${period}. You've got the next one to balance it out. 💪`;
     tone = 'bad';
   } else {
     amountLabel = `+${fmt(rounded)} surplus`;
-    message = 'Nice, you earned more than you spent this cycle. 🎉';
+    message = `Nice, you earned more than you spent ${period}. 🎉`;
     tone = 'good';
   }
 
@@ -80,14 +82,14 @@ function Bar({ label, amount, share, color, testID }: {
 
 // The earned-vs-spent card: two bars on the shared ruler + a surplus/deficit line. Renders nothing
 // when there was neither income nor spend — the screen shows its own empty state instead.
-export function EarnedVsSpent({ earned, spent, testID }: {
-  earned: number; spent: number; testID?: string;
+export function EarnedVsSpent({ earned, spent, cycle, testID }: {
+  earned: number; spent: number; cycle: number; testID?: string;
 }) {
   const earnedAmount = num(earned);
   const spentAmount = num(spent);
   if (earnedAmount <= 0 && spentAmount <= 0) return null;
 
-  const { earnedShare, spentShare, amountLabel, message, tone } = earnedVsSpent(earnedAmount, spentAmount);
+  const { earnedShare, spentShare, amountLabel, message, tone } = earnedVsSpent(earnedAmount, spentAmount, cycle);
   const label = `Earned ${fmt(earnedAmount)}, spent ${fmt(spentAmount)}. ${amountLabel} — ${message}`;
   return (
     <View style={styles.card} testID={testID} accessibilityLabel={label}>

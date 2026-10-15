@@ -85,7 +85,7 @@ describe('Categorize picker (WHIT-158)', () => {
 
   it.each([
     [5000, 'ACME PAYROLL', '+$5,000.00'],
-    [-52.5, 'WOOLWORTHS', '-$52.50'],
+    [-52.5, 'WOOLWORTHS', '−\u2060$52.50'],
   ])('shows a %d amount as %s (income +$, not a hardcoded -$)', async (amount, description, shown) => {
     await openPicker({ transaction_id: 't1', amount, description }, sheetFns);
     expect(screen.getByText(shown)).toBeTruthy();

@@ -54,7 +54,7 @@ it('[A1] Uncategorized tab, empty + feed error: inline Retry re-reads the UNCATE
   await renderWithQueries(<Transactions />);
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByTestId('transactions-error', {}, { timeout: 10000 })).toBeTruthy();
-  expect(screen.queryByText('-$42.00')).toBeNull(); // the All tab's row never leaks onto this tab
+  expect(screen.queryByText('−\u2060$42.00')).toBeNull(); // the All tab's row never leaks onto this tab
   const uncategorizedBefore = gets(UNCATEGORIZED_FEED);
   const allBefore = gets(FEED);
   fireEvent.press(screen.getByTestId('transactions-retry'));
@@ -68,7 +68,7 @@ it('[A2] a pull on the Uncategorized tab re-reads the uncategorized feed and lea
   server.seed(COUNT, { count: 1 });
   await renderWithQueries(<Transactions />);
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
-  expect(await screen.findByText('-$9.00')).toBeTruthy();
+  expect(await screen.findByText('−\u2060$9.00')).toBeTruthy();
   await settle();
   const before = { uncategorized: gets(UNCATEGORIZED_FEED), all: gets(FEED) };
   await pull();
@@ -84,12 +84,12 @@ it('[A3] a pull after Load More snaps the list back to the newest page (older ro
   await renderWithQueries(<Transactions />);
   server.once('GET', FEED, { body: { transactions: [row('t2', -7)], nextCursor: null } });
   fireEvent.press(screen.getByTestId('transactions-load-more'));
-  expect(await screen.findByText('-$7.00')).toBeTruthy();
+  expect(await screen.findByText('−\u2060$7.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull();
 
   await pull();
-  await waitFor(() => expect(screen.queryByText('-$7.00')).toBeNull());
-  expect(screen.getByText('-$42.00')).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText('−\u2060$7.00')).toBeNull());
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
   expect(await screen.findByTestId('transactions-load-more')).toBeTruthy();
   expect(cursorGets(FEED)).toBe(1); // the pull re-read page 1 only, not the older page
   await waitFor(() => expect(refreshControl().props.refreshing).toBe(false));
@@ -101,11 +101,11 @@ it('[A6] Uncategorized tab: a failed background refresh over loaded rows keeps t
   server.seed(COUNT, { count: 1 });
   await renderWithQueries(<Transactions />);
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
-  expect(await screen.findByText('-$9.00')).toBeTruthy();
+  expect(await screen.findByText('−\u2060$9.00')).toBeTruthy();
   await settle();
   server.fail(UNCATEGORIZED_FEED, 500);
   await refreshInAct(() => queryClient.refetchQueries({ queryKey: uncategorizedFeedKey }));
   await waitFor(() => expect(queryClient.getQueryState(uncategorizedFeedKey)?.status).toBe('error'), { timeout: 10000 });
-  expect(screen.getByText('-$9.00')).toBeTruthy();
+  expect(screen.getByText('−\u2060$9.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-error')).toBeNull();
 });

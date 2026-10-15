@@ -75,7 +75,7 @@ beforeEach(() => {
 it('renders the transaction fields (merchant, amount, date, account, category, status)', async () => {
   await draw();
   expect(screen.getByText('Woolworths')).toBeTruthy();
-  expect(screen.getByText('-$12.50')).toBeTruthy();
+  expect(screen.getByText('−\u2060$12.50')).toBeTruthy();
   expect(screen.getByText('1 Jul 2026')).toBeTruthy();
   expect(screen.getByText('Everyday')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
@@ -87,7 +87,7 @@ it('renders the transaction fields (merchant, amount, date, account, category, s
 it('the hero amount fits one line and the tag "×" is not clipped by a fixed line height', async () => {
   seedFeed([txn({ transaction_id: 't1', category: 'coffee', tags: ['work'] })]);
   await draw();
-  const amount = screen.getByText('-$12.50');
+  const amount = screen.getByText('−\u2060$12.50');
   expect(amount.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: LARGE_TEXT_MAX_SCALE });
   expect(styleOf(screen.getByText('×')).lineHeight).toBeUndefined();
 });

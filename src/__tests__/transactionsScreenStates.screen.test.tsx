@@ -82,7 +82,7 @@ it('error WITH cached rows keeps the rows and shows NO inline error (cache-first
   server.once('GET', FEED, { status: 500 });
   await refreshInAct(() => queryClient.refetchQueries({ queryKey: transactionsKey }));
   expect(queryClient.getQueryState(transactionsKey)?.status).toBe('error');
-  expect(screen.getByText('-$42.00')).toBeTruthy();
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-error')).toBeNull();
 });
 
@@ -90,7 +90,7 @@ it('a background load (isLoading) with cached rows does NOT blank the list', asy
   seedFeed([ROW]);
   const held = server.hold(CATEGORIES); // the taxonomy is still loading while the rows are in
   render(<WithQueries><Transactions /></WithQueries>);
-  expect(await screen.findByText('-$42.00')).toBeTruthy();
+  expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-loading')).toBeNull();
   held.release();
   await settle();
@@ -192,9 +192,9 @@ it('shows Load More when there is more history, and tapping it pages older rows 
   await draw();
   server.once('GET', FEED, { body: { transactions: [{ ...row('t2'), amount: -7 }], nextCursor: null } });
   fireEvent.press(screen.getByTestId('transactions-load-more'));
-  expect(await screen.findByText('-$7.00')).toBeTruthy();
+  expect(await screen.findByText('−\u2060$7.00')).toBeTruthy();
   expect(server.sent('GET', '/transactions/feed?cursor=c1')).toHaveLength(1);
-  expect(screen.getByText('-$42.00')).toBeTruthy();
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // end of history now
 });
 
@@ -216,7 +216,7 @@ it('keeps Load More on the uncategorized tab when there ARE uncategorized rows',
   server.seed(COUNT, { count: 1 });
   await draw();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
-  expect(await screen.findByText('-$42.00')).toBeTruthy();
+  expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByText('All caught up')).toBeNull();
   expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
   // WHIT-845: the badge number caps at 2× text, like the rest of the row.
@@ -277,7 +277,7 @@ it('[E1] a pull whose live balance call ERRORS still clears the spinner (and toa
   held.fail('POST', { status: 502 }); // live call fails, list ok
   await waitFor(() => expect(isSpinning()).toBe(false)); // cleared, not stuck on error
   expect(mockShowToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
-  expect(screen.getByText('-$42.00')).toBeTruthy();
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
 });
 
 // [E3] A pull DURING the cold-load window (empty list still loading) must NOT double-spin with
@@ -361,28 +361,28 @@ const type = (q: string) => fireEvent.changeText(screen.getByPlaceholderText('Se
 
 it('typing filters the list to matching rows', async () => {
   await draw();
-  expect(screen.getByText('-$42.00')).toBeTruthy();
-  expect(screen.getByText('-$8.50')).toBeTruthy();
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
+  expect(screen.getByText('−\u2060$8.50')).toBeTruthy();
 
   type('wool');
-  expect(screen.getByText('-$42.00')).toBeTruthy();   // Woolworths matches
-  expect(screen.queryByText('-$8.50')).toBeNull();    // coffee filtered out
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();   // Woolworths matches
+  expect(screen.queryByText('−\u2060$8.50')).toBeNull();    // coffee filtered out
 });
 
 it('the ✕ clears the search and restores the full list', async () => {
   await draw();
   type('wool');
-  expect(screen.queryByText('-$8.50')).toBeNull();
+  expect(screen.queryByText('−\u2060$8.50')).toBeNull();
 
   fireEvent.press(screen.getByLabelText('Clear search'));
-  expect(screen.getByText('-$42.00')).toBeTruthy();
-  expect(screen.getByText('-$8.50')).toBeTruthy();
+  expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
+  expect(screen.getByText('−\u2060$8.50')).toBeTruthy();
 });
 
 it('entering selection mode clears an active search (the box hides, so no secret filter)', async () => {
   await draw();
   type('wool');
-  expect(screen.queryByText('-$8.50')).toBeNull();
+  expect(screen.queryByText('−\u2060$8.50')).toBeNull();
 
   fireEvent.press(screen.getByText('Select'));
   // The search box is gone in selection mode, and the list is back to the full set. In selection
@@ -481,7 +481,7 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
     server.seed(COUNT, { count: 1 });
     await draw();
     fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
+    expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
     type('zzzzz');
     await act(async () => { jest.advanceTimersByTime(300); });
     expect(await screen.findByTestId('transactions-no-results')).toBeTruthy();
