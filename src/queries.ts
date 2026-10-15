@@ -458,15 +458,16 @@ export interface PayCycleData {
   isError: boolean;
   payCycleReady: boolean; // the pay cycle has loaded (or is cached), so days left is real, not the default
 }
+// The pay cycle every reader shows: the default until the real one loads (payCycleReady says which).
+function readPayCycle(data: PayCycle | undefined) {
+  const payCycle = data ?? DEFAULT_PAY_CYCLE;
+  return { payCycle, ...cycleClockView(payCycle), payCycleReady: data !== undefined };
+}
 export function usePayCycle(): PayCycleData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
-  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen, daysLeft } = cycleClockView(payCycle);
-  return {
-    payCycle, cycleLen, daysLeft, cycleName: cycleName(cycleLen),
-    isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError, payCycleReady: payCycleQuery.data !== undefined,
-  };
+  const view = readPayCycle(payCycleQuery.data);
+  return { ...view, cycleName: cycleName(view.cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
 }
 
 // --- shared screen-composite status plumbing (WHIT-204) ----------------------
@@ -564,8 +565,7 @@ export interface BudgetsScreenData {
 export function useBudgetsScreenData(): BudgetsScreenData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
-  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen, daysLeft } = cycleClockView(payCycle);
+  const { payCycle, cycleLen, daysLeft, payCycleReady } = readPayCycle(payCycleQuery.data);
   const nextPaydayDate = nextPayday(payCycle);
 
   const budgetsQuery = useBudgetsQuery(authed);
@@ -583,7 +583,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     daysLeft,
     nextPayday: nextPaydayDate,
     payCycleError,
-    payCycleReady: payCycleQuery.data !== undefined,
+    payCycleReady,
     ...status,
   };
 }
@@ -607,8 +607,7 @@ export interface BudgetDetailScreenData {
 export function useBudgetDetailScreenData(categoryId: string): BudgetDetailScreenData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
-  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen, daysLeft } = cycleClockView(payCycle);
+  const { cycleLen, daysLeft } = readPayCycle(payCycleQuery.data);
 
   const budgetsQuery = useBudgetsQuery(authed); // parallel fetch, flat key (WHIT-72)
   // The list is the whole cycle's subtree, computed server-side from the SAME window as

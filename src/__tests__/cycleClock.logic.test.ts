@@ -120,7 +120,8 @@ describe('dayOfCycle', () => {
   it.each([
     ['payday (all days left) is day 1', 14, 14, 1],
     ['mid-cycle is length − daysLeft + 1', 14, 9, 6],
-    ['the last day (0 left) is the final day', 14, 0, 14],
+    ['the last day before payday (1 left) is the final day', 14, 1, 14],
+    ['an out-of-range 0 left is capped at the final day', 14, 0, 14],
   ])('%s', (_label, cycleLen, daysLeft, day) => {
     expect(dayOfCycle({ cycleLen, daysLeft })).toBe(day);
   });
