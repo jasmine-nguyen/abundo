@@ -21,6 +21,8 @@ import {
 } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
 import { styleOf } from './support/layout';
+import { pullAndSettle } from './support/pull';
+import { pinToday } from './support/clock';
 import { GLYPH, ICON } from '../icons';
 import { C } from '../theme';
 
@@ -144,6 +146,47 @@ it('renders the hero total', async () => {
   expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
 });
 
+// --- ABU-62: the header line, pull to refresh and the day of the pay cycle ---
+
+describe('Insights header line, pull to refresh and day of cycle', () => {
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('shows "Updated <time>" and "day 6 of 14" on This cycle; a failed pull re-reads spending and says "Couldn\'t refresh"', async () => {
+    pinToday(new Date('2026-09-18T09:40:00+10:00'));
+    seedInsights(server, {
+      breakdown: breakdownWire({ spend: TWO_ROWS }),
+      categories: CATS,
+      payCycle: { length: 14, last_pay_date: '2026-09-13', days_left: 9 },
+    });
+    await renderInsights();
+    const header = () => within(screen.getByTestId('screen-header'));
+
+    expect(screen.getByTestId('insights-hero-sub')).toHaveTextContent('spent across 2 categories · day 6 of 14');
+    expect(header().getByTestId('insights-updated')).toHaveTextContent('Updated 9:40am');
+
+    jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00'));
+    server.once('GET', '/breakdown', { status: 503 });
+    const before = breakdownReads();
+    await pullAndSettle();
+
+    expect(breakdownReads()).toBeGreaterThan(before);
+    await waitFor(() => expect(header().getByTestId('insights-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+    expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
+
+    await showLastCycle();
+    expect(screen.getByTestId('insights-hero-sub')).not.toHaveTextContent(/day/);
+  });
+
+  it('the pay cycle fails to load → spending still shows, with no day of the cycle', async () => {
+    seedBreakdown({ spend: TWO_ROWS });
+    server.fail('/paycycle', 500);
+    await renderInsights();
+    expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
+    expect(screen.getByTestId('insights-hero-sub')).toHaveTextContent('spent across 2 categories');
+    expect(screen.getByTestId('insights-hero-sub')).not.toHaveTextContent(/day/);
+  });
+});
+
 // --- the hero states, pinned apart (WHIT-189): only a load/error hides the number ---
 
 describe('hero states (no false $0)', () => {
@@ -173,6 +216,7 @@ describe('hero states (no false $0)', () => {
     expect(screen.getByText('—')).toBeTruthy();
     expect(screen.getByText("Couldn't load")).toBeTruthy();
     expect(screen.queryByText('$0')).toBeNull();
+    expect(within(screen.getByTestId('insights-error')).getByText('Our server had a problem. Try again in a moment.')).toBeTruthy();
   });
 
   // [A5] breakdown is in, categories still on the way → spinner, not "$0 across 0 categories".

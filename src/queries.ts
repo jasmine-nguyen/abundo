@@ -456,13 +456,17 @@ export interface PayCycleData {
   cycleName: string;
   isLoading: boolean;
   isError: boolean;
+  payCycleReady: boolean; // the pay cycle has loaded (or is cached), so days left is real, not the default
 }
 export function usePayCycle(): PayCycleData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClockView(payCycle);
-  return { payCycle, cycleLen, daysLeft, cycleName: cycleName(cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
+  return {
+    payCycle, cycleLen, daysLeft, cycleName: cycleName(cycleLen),
+    isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError, payCycleReady: payCycleQuery.data !== undefined,
+  };
 }
 
 // --- shared screen-composite status plumbing (WHIT-204) ----------------------
@@ -650,7 +654,10 @@ export interface InsightsScreenData {
   // keeps this false, and the cached rows keep rendering (cache-first preserved) — the same
   // firstLoadError data-guard the goal reads use, so a cached last-good value always wins.
   categoriesError: boolean;
-  refetch: () => void; // force a refresh (the inline Retry button)
+  error: unknown; // the failed read's error → the error card's offline-vs-server reason (WHIT-713)
+  refreshError: unknown; // a refresh failed over spending already showing → the quiet stale line
+  updatedAt: number; // when the showing data loaded (oldest of the reads), 0 if never
+  refetch: () => Promise<unknown>; // force a refresh (the inline Retry button, and the pull)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
 }
 
