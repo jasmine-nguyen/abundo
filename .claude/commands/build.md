@@ -163,18 +163,19 @@ the card number for card builds) and check where it is:
    While it runs, keep the user posted. The script prints one plain-English
    line when each step starts (⌛) and one when it ends (✅ done, ❌ or ↩️ sent
    back, ❓ or ⏸ waiting for them). Relay those lines as they come, as written.
+   Don't add commentary of your own, and don't go silent.
 
    If you have the `mcp__savvy-progress__progress` tool, also mirror the build
-   on its progress bar. Leave out `tasks`: the build's agents run inside the
+   on its progress bar. Send `title` "<card ID>: <card title>" (a few words)
+   with every call: after a finished run or in a new session, a call without it
+   starts an unnamed bar. Leave out `tasks`: the build's agents run inside the
    script, so the bar's agents panel can't see them.
-   - At start: `title` "<card ID>: <card title>" (a few words), `phase` "plan",
-     `total` 1, `done` 0.
+   - At start: `phase` "plan", `total` 1, `done` 0.
    - When the implementer, test writer or reproducer starts: `phase` "delegate".
      When the code review, ponytail or QA starts: `phase` "review".
    - "starting slice N of M": `total` M, `done` N-1.
    - When the script ends (step 5): `finished` true, plus `done` equal to
      `total` only if the build passed.
-   Don't add commentary of your own, and don't go silent.
 
    **PLAN APPROVED AUTOMATICALLY** — the planners rated the card routine, so
    the build goes on without a sign-off. The script prints this block between
