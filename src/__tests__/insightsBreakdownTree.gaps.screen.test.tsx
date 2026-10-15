@@ -115,10 +115,7 @@ it('[A12] the hero shows the TOP-LEVEL count, not the flat row count', async () 
   // expanding must NOT change the headline count
   fireEvent.press(screen.getByText('Food'));
   await screen.findByText('Groceries');
-  const heroSub = screen.getByTestId('insights-hero-sub');
-  expect(heroSub).toHaveTextContent(/^spent across 2 categories\b/);
-  expect(heroSub).not.toHaveTextContent(/spent across 3 categories/);
-  expect(heroSub).not.toHaveTextContent(/spent across 4 categories/);
+  expect(screen.getByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 2 categories\b/);
 });
 
 it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => {
