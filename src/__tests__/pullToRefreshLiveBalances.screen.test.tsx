@@ -61,11 +61,11 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G1] a successful live pull updates the rendered Accounts card old→new', async () => {
     server.once('POST', REFRESH, { body: LIVE });
     renderScreen();
-    expect(await screen.findByText('-$100.00')).toBeTruthy();    // card loaded, stored balance shown
+    expect(await screen.findByText('$100.00')).toBeTruthy();    // card loaded, stored balance shown
 
     await pull();
-    expect(await screen.findByText('-$250.00')).toBeTruthy();    // card now shows the live number
-    expect(screen.queryByText('-$100.00')).toBeNull();           // old number gone
+    expect(await screen.findByText('$250.00')).toBeTruthy();    // card now shows the live number
+    expect(screen.queryByText('$100.00')).toBeNull();           // old number gone
   });
 
   // [G2] A SUCCESSFUL live pull confirms itself with the "Balances up to date" toast. The pull often
@@ -77,7 +77,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G2] a successful live pull toasts "Balances up to date"', async () => {
     server.once('POST', REFRESH, { body: LIVE });
     renderScreen();
-    expect(await screen.findByText('-$100.00')).toBeTruthy();
+    expect(await screen.findByText('$100.00')).toBeTruthy();
     await pull();
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
     expect(mockShowToast).not.toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
@@ -90,11 +90,11 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G3] an offline live pull keeps the exact prior card number and toasts', async () => {
     server.once('POST', REFRESH, 'dropped');
     renderScreen();
-    expect(await screen.findByText('-$100.00')).toBeTruthy();
+    expect(await screen.findByText('$100.00')).toBeTruthy();
 
     await pull();
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.'));
-    expect(screen.getByText('-$100.00')).toBeTruthy();           // unchanged, not blanked
+    expect(screen.getByText('$100.00')).toBeTruthy();           // unchanged, not blanked
     expect(screen.queryByText('—')).toBeNull();                  // never fell back to the pending dash
   });
 
@@ -105,7 +105,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G4] the list still refetches when the live balance call fails', async () => {
     server.fail(REFRESH, 502);
     renderScreen();
-    expect(await screen.findByText('-$100.00')).toBeTruthy();
+    expect(await screen.findByText('$100.00')).toBeTruthy();
     const feedCallsBefore = server.sentUnder('GET', '/transactions/feed').length;
 
     await pull();
@@ -118,7 +118,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // → the 2nd pull's spinner never comes up / never clears → the mid-pull `true` or final `false` reddens.
   it('[G5] a second pull after a FAILED first re-fires the live call and clears the spinner', async () => {
     renderScreen();
-    expect(await screen.findByText('-$100.00')).toBeTruthy();
+    expect(await screen.findByText('$100.00')).toBeTruthy();
 
     // First pull: live call rejects.
     const live1 = server.hold(REFRESH);
@@ -134,7 +134,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     await act(async () => { rc().props.onRefresh(); });
     expect(rc().props.refreshing).toBe(true);                    // proves the flag reset
     await act(async () => { live2.release(); });
-    expect(await screen.findByText('-$250.00')).toBeTruthy();    // 2nd pull's live number reached the card
+    expect(await screen.findByText('$250.00')).toBeTruthy();    // 2nd pull's live number reached the card
     await waitFor(() => expect(rc().props.refreshing).toBe(false));
     expect(server.sent('POST', REFRESH)).toHaveLength(2);
   });
@@ -157,12 +157,12 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     expect(await screen.findByText('—')).toBeTruthy();
 
     await pull();                                                  // live POST seeds -250, cancels the GET
-    expect(await screen.findByText('-$250.00')).toBeTruthy();
+    expect(await screen.findByText('$250.00')).toBeTruthy();
 
     // The stale stored GET finally lands with the OLD number — it must be ignored (query was cancelled).
     // Flush with a real macrotask so react-query fully commits the resolved fetch if it were going to.
     await act(async () => { storedGet.release(); await new Promise((r) => setTimeout(r, 0)); });
-    expect(screen.getByText('-$250.00')).toBeTruthy();            // still the live value, not clobbered
-    expect(screen.queryByText('-$100.00')).toBeNull();
+    expect(screen.getByText('$250.00')).toBeTruthy();            // still the live value, not clobbered
+    expect(screen.queryByText('$100.00')).toBeNull();
   });
 });

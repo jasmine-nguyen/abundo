@@ -13,7 +13,8 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 import { C } from '../theme';
-import { Icon } from '../icons';
+import { Icon, ICON, GLYPH } from '../icons';
+import { ACCOUNT_KIND_ICON } from '../accountDisplay';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
@@ -22,6 +23,7 @@ import { queryClient } from '../queryClient';
 import { styleOf } from './support/layout';
 import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
+import { pinToday } from './support/clock';
 
 const bal = (over: Record<string, unknown> = {}) => ({
   account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
@@ -142,7 +144,8 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
   await renderWithQueries(<Accounts />);
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
-  expect(styleOf(screen.getByText('-$500,000.00')).color).toBe(C.bad);
+  expect(styleOf(screen.getByText('$500,000.00')).color).toBe(C.textBright);
+  expect(screen.getByText('owed')).toBeTruthy();
   // ABU-64: with no payoff plan set up, the loan card points inside instead of "No recent transactions".
   expect(screen.getByText('Home loan · payoff inside')).toBeTruthy();
   fireEvent.press(screen.getByText('Up Homeloan'));
@@ -150,9 +153,9 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
 });
 
 // ABU-64: the home loan's card (spotted by account_type 'mortgage') shows its payoff progress, from
-// the same next-milestone maths as the Home loan screen, while other cards keep their count line.
+// the same next-milestone maths as the Home loan screen, while other cards keep their own line.
 // Balance $250,000 against the saved plan's next target ($200,000) → $50,000 to go.
-it('the home loan card shows the next payoff milestone; other cards keep their transaction count', async () => {
+it('the home loan card shows the next payoff milestone; other cards keep their own subtitle', async () => {
   seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   server.seed('/accounts/balances', [
     bal({ account_id: 'a1', amount: 96270.59 }),
@@ -161,8 +164,8 @@ it('the home loan card shows the next payoff milestone; other cards keep their t
   seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:00:00Z' } });
   await renderWithQueries(<Accounts />);
   expect(await screen.findByText('Next milestone: $50,000 to go')).toBeTruthy();
-  expect(screen.getByText('1 transaction')).toBeTruthy();
-  expect(screen.queryByText('No recent transactions')).toBeNull();
+  expect(screen.getByText(/^Last spend /)).toBeTruthy();
+  expect(screen.queryByText('No recent spending')).toBeNull();
   fireEvent.press(screen.getByText('Up Homeloan'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
 });
@@ -173,7 +176,7 @@ it('does not read the home-loan data when no balance is a mortgage', async () =>
   seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   server.seed('/accounts/balances', [bal({ account_id: 'a1' })]);
   await renderWithQueries(<Accounts />);
-  expect(screen.getByText('1 transaction')).toBeTruthy();
+  expect(screen.getByText('ANZ')).toBeTruthy();
   for (const path of ['/homeloan', '/loanfacts', '/milestones']) expect(server.sentUnder('GET', path)).toHaveLength(0);
 });
 
@@ -198,13 +201,18 @@ it('with no loaded transactions but a saved balance, shows the card, not "No acc
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
 });
 
-// WHIT-490 (folded in from westpacAccountsTab) — the one behaviour a FOURTH account newly
-// requires: the chip colour is ACCOUNT_ACCENTS[i % length], so shrink the palette to three and
-// card 4 wears card 1's colour, and the two read as the same account at a glance.
-it('gives the fourth account its own accent colour instead of reusing the first', async () => {
+// ABU-65 (reworks WHIT-490): the four real accounts keep a fixed place, icon and colour. Order is by
+// type (cards → everyday → home loan, then name), the icon follows the type, and the colour follows
+// the account id, so a busier day never reshuffles or recolours them. Owing money reads as bright
+// neutral text plus "owed", never alarm rose; money in stays C.good. Subtitles are useful facts.
+it('shows the four accounts in a fixed order, icon and colour, with owed balances and useful subtitles', async () => {
+  pinToday(new Date(2026, 6, 8, 12, 0, 0));
   const row = (over: Record<string, unknown>) => ({ ...ROW, ...over });
-  seedFeed([
-    row({ transaction_id: 's1', account_id: 'up-spending', account_name: 'Up Spending' }),
+  const spending = (n: number, date: string) =>
+    row({ transaction_id: `s${n}`, account_id: 'up-spending', account_name: 'Up Spending', date, authorized_date: date });
+  const feed = [
+    spending(1, '2026-07-05'),
+    spending(2, '2026-07-08'),
     row({ transaction_id: 'a1', account_id: 'anz-rewards-black-visa', account_name: 'ANZ Rewards Black Visa' }),
     row({ transaction_id: 'h1', account_id: 'up-homeloan', account_name: 'Up Homeloan' }),
     row({
@@ -212,20 +220,55 @@ it('gives the fourth account its own accent colour instead of reusing the first'
       account_name: 'Altitude Qantas Black Card', merchant_name: 'UNIFLEXREMEDIALMASSAGE',
       description: 'UNIFLEXREMEDIALMASSAGE ALTONA NORT AUS', amount: -155, category: 'health',
     }),
-  ]);
+  ];
+  seedFeed(feed);
   server.seed('/accounts/balances', [
     bal({ account_id: 'up-spending', amount: 96270.59 }),
-    bal({ account_id: 'anz-rewards-black-visa', amount: -6492.26 }),
-    bal({ account_id: 'up-homeloan', amount: -596642.43 }),
-    bal({ account_id: 'westpac-altitude-qantas-black', amount: -230, available_balance: 5770 }),
+    bal({ account_id: 'anz-rewards-black-visa', amount: -6492.26, available_balance: 4549, account_type: 'unknown' }),
+    bal({ account_id: 'up-homeloan', amount: -596642.43, available_balance: 0, account_type: 'mortgage' }),
+    bal({ account_id: 'westpac-altitude-qantas-black', amount: -230, available_balance: 5770, account_type: 'unknown' }),
   ]);
-  await renderWithQueries(<Accounts />);
+  try {
+    await renderWithQueries(<Accounts />);
 
-  // Filtered by name: the account chip is the only "bank" Icon today, but any future
-  // chrome icon would otherwise break this with a baffling message.
-  const chips = screen.UNSAFE_getAllByType(Icon).filter((i) => (i.props as { name: string }).name === 'bank');
-  expect(chips).toHaveLength(4);
-  expect(new Set(chips.map((i) => (i.props as { color: string }).color)).size).toBe(4);
+    const names = ['Altitude Qantas Black Card', 'ANZ Rewards Black Visa', 'Up Spending', 'Up Homeloan'];
+    const cardOrder = () => screen.getAllByRole('button')
+      .map((b) => b.props.accessibilityLabel as string | undefined)
+      .map((label) => names.find((name) => label?.startsWith(`${name},`)))
+      .filter(Boolean);
+    expect(cardOrder()).toEqual(names);
+
+    const chips = () => screen.UNSAFE_getAllByType(Icon)
+      .map((i) => i.props as { name: string; color: string })
+      .filter((p) => ['card', 'wallet', 'home', 'bank'].includes(p.name));
+    expect(chips().map((p) => p.name)).toEqual(['card', 'card', 'wallet', 'home']);
+    const colours = chips().map((p) => p.color);
+    expect(new Set(colours).size).toBe(4);
+    for (const colour of colours) expect([C.good, C.bad, C.surplus]).not.toContain(colour);
+
+    expect(styleOf(screen.getByText('$6,492.26')).color).toBe(C.textBright);
+    expect(styleOf(screen.getByText('$596,642.43')).color).toBe(C.textBright);
+    expect(styleOf(screen.getByText('$96,270.59')).color).toBe(C.good);
+    expect(screen.getAllByText('owed')).toHaveLength(3);
+
+    expect(screen.getByText('$4,549 available')).toBeTruthy();
+    expect(screen.getByText('$5,770 available')).toBeTruthy();
+    expect(screen.getByText('Last spend today')).toBeTruthy();
+    expect(screen.getByText('Home loan · payoff inside')).toBeTruthy();
+
+    // A busier day for the home loan (now the most rows) changes neither the order nor the colours.
+    seedFeed([...feed, ...[2, 3, 4].map((n) => row({ transaction_id: `h${n}`, account_id: 'up-homeloan', account_name: 'Up Homeloan' }))]);
+    await refreshInAct(() => queryClient.refetchQueries());
+    expect(cardOrder()).toEqual(names);
+    expect(chips().map((p) => p.color)).toEqual(colours);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+// ABU-65: Icon looks a name up in ICON then GLYPH; a name in neither silently draws the "?" fallback.
+it('every account-type chip icon is a real drawing', () => {
+  for (const name of Object.values(ACCOUNT_KIND_ICON)) expect(ICON[name] ?? GLYPH[name]).toBeDefined();
 });
 
 // ABU-66: the header shows "Updated … · Bank synced …" like Transactions, and each account card is

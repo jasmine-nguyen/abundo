@@ -122,10 +122,10 @@ export const C = {
   heroGradTo: '#bb9af7',
 } as const;
 
-// WHIT-215: account cards carry no server-side colour, so each gets a stable cosmetic accent by
-// index — purely visual, no meaning attached to the colour. Lives here (a palette home) so the
-// Accounts tab reads a token instead of hand-writing the hex.
-export const ACCOUNT_ACCENTS = ['#7FD49B', '#8AB4F8', '#F0B67F', '#C9B3F5', '#F08C8C'] as const;
+// WHIT-215 / ABU-65: account cards carry no server-side colour, so each account gets a stable
+// cosmetic accent picked from its id (accountAccent) — purely visual. No green, cyan or rose, so a
+// chip never reads like the balance's money colours.
+export const ACCOUNT_ACCENTS = [C.accent, C.purple, C.warn, C.accentAlt] as const;
 
 export const FONT = {
   // 'Inter Tight' / 'Inter' in the mockup. On web these resolve via the Google Fonts

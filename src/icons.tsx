@@ -62,6 +62,7 @@ export const GLYPH: Record<string, string> = {
   refresh: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 4 21 9.5 15.5 9.5"/><path d="M19.4 14.5A8 8 0 1 1 17.8 6.2L21 9.5"/></g>',
   trash: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16M9 6.5V4.5h6v2M6.5 6.5 7.5 20a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5-1.4l1-13.5"/></g>',
   wallet: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H18a1.5 1.5 0 0 1 1.5 1.5V9M4 8.5V18a2 2 0 0 0 2 2h12a1.5 1.5 0 0 0 1.5-1.5V13M19.5 9H16a2 2 0 0 0 0 4h3.5z"/></g>',
+  card: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M6.5 14.5h3"/></g>',
   target: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></g>',
   // Ask Abundo (card 609): the pill's chat bubble with a four-point sparkle, the highlighted
   // prompt's sparkle, and the sheet's close / send / stop controls.
@@ -85,7 +86,7 @@ function wrap(inner: string, color: string): string {
 }
 
 export function Icon({ name, size = 22, color = '#fff' }: { name: string; size?: number; color?: string }) {
-  const inner = ICON[name] || ICON.q;
+  const inner = ICON[name] || GLYPH[name] || ICON.q;
   return <SvgXml xml={wrap(inner, color)} width={size} height={size} />;
 }
 

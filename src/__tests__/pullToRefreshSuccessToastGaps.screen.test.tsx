@@ -55,11 +55,11 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
   it('[N2] an UNCHANGED balance still toasts "Balances up to date"', async () => {
     server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -100 }] }); // same as stored
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
-    expect(await screen.findByText('-$100.00')).toBeTruthy();
+    expect(await screen.findByText('$100.00')).toBeTruthy();
 
     await pull();
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
-    expect(screen.getByText('-$100.00')).toBeTruthy();  // number genuinely unchanged — this is the whole point
+    expect(screen.getByText('$100.00')).toBeTruthy();  // number genuinely unchanged — this is the whole point
     expect(mockShowToast).not.toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
   });
 });

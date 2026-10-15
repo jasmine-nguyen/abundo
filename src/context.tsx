@@ -458,7 +458,7 @@ function monthsUntil(from: Date, isoDate: string): number | null {
   return (year - from.getFullYear()) * MONTHS_PER_YEAR + (month - (from.getMonth() + 1));
 }
 
-function dateLabel(isoDate: string): string {
+export function dateLabel(isoDate: string): string {
   const diffDays = wholeDaysBetween(isoToUtcDayMs(isoDate), dateToUtcDayMs(new Date()));
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
@@ -2681,6 +2681,7 @@ export interface AccountSummary {
   id: string;
   name: string;
   count: number; // how many transactions belong to this account
+  lastSpendDate: string | null; // newest money-out row's date among the loaded transactions
 }
 
 // The single display name for an account: the `account_name` seen on the most of its
@@ -2704,21 +2705,31 @@ export function accountNameFromId(id: string): string {
   return id.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
-// One row per distinct account_id, busiest first (a stable name tie-break keeps the order
-// deterministic across renders). Feeds the Accounts tab. WHIT-643: `extraIds` (the saved
-// balances' ids) adds a count-0 row for any account with no loaded transactions, so a quiet
-// account like the home loan still gets a card; count 0 sorts those rows last.
+// The newest date among an account's money-out rows (amount < 0), or null — "last money out",
+// which includes repayments, transfers and budget-excluded rows.
+function lastSpendDate(transactions: Transaction[]): string | null {
+  let newest: string | null = null;
+  for (const t of transactions) {
+    if (t.amount < 0 && (newest === null || t.date > newest)) newest = t.date;
+  }
+  return newest;
+}
+
+// One row per distinct account_id, sorted by name so the order never shifts as transaction
+// counts change (ABU-65: the Accounts tab then orders by account type). WHIT-643: `extraIds`
+// (the saved balances' ids) adds a count-0 row for any account with no loaded transactions, so a
+// quiet account like the home loan still gets a card.
 export function accountSummaries(s: Pick<TransactionListInput, 'transactions'>, extraIds: Iterable<string> = []): AccountSummary[] {
   const byId = new Map<string, Transaction[]>();
   for (const t of s.transactions) {
     if (!byId.has(t.account_id)) byId.set(t.account_id, []);
     byId.get(t.account_id)!.push(t);
   }
-  const out = [...byId].map(([id, txns]) => ({ id, name: canonicalAccountName(txns, id), count: txns.length }));
+  const out = [...byId].map(([id, txns]) => ({ id, name: canonicalAccountName(txns, id), count: txns.length, lastSpendDate: lastSpendDate(txns) }));
   for (const id of extraIds) {
-    if (!byId.has(id)) out.push({ id, name: accountNameFromId(id), count: 0 });
+    if (!byId.has(id)) out.push({ id, name: accountNameFromId(id), count: 0, lastSpendDate: null });
   }
-  out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
 

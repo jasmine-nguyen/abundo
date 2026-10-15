@@ -1,7 +1,8 @@
 import { View, Text, Pressable, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, fmtBalance, fmt, PRESSED } from '../../src/theme';
+import { C, FONT, fmt, PRESSED } from '../../src/theme';
+import { availableCredit, balanceDisplay } from '../../src/accountDisplay';
 import { Glyph } from '../../src/icons';
 import { accountDetail, accountNameFromId, useAppContext } from '../../src/context';
 import { useRecentTransactionsScreenData, useRefreshLiveBalances } from '../../src/queries';
@@ -32,10 +33,8 @@ export default function AccountDetail() {
   const { pulling, onRefresh } = usePullToRefresh(refetch, refreshLiveBalances, showToast, 'Balances up to date');
   const detail = accountDetail({ transactions, category }, id);
   const bal = balances.get(id);
-  // Show "available credit" only for a credit card: you OWE (amount < 0) yet have credit
-  // left (available > 0). This excludes the loan (available 0) and spending (positive
-  // amount) without relying on account_type, which the feed reports as "unknown" for cards.
-  const showAvailable = bal != null && bal.amount < 0 && bal.available_balance != null && bal.available_balance > 0;
+  const credit = availableCredit(bal);
+  const display = bal ? balanceDisplay(bal.amount) : null;
   // WHIT-643: a balance-only account (no loaded transactions) is named from its id.
   let title = 'Account';
   if (bal) title = accountNameFromId(id);
@@ -59,19 +58,20 @@ export default function AccountDetail() {
           retryLabel="Retry loading this account"
           onRetry={refetch}
         >
-          {bal && (
+          {bal && display && (
             <View testID="account-balance" style={styles.balCard}>
               <Text style={styles.balLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Current balance</Text>
               <Text
-                style={[styles.balAmount, { color: bal.amount < 0 ? C.bad : C.good }]}
+                style={[styles.balAmount, { color: display.color }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}
               >
-                {fmtBalance(bal.amount)}
+                {display.text}
               </Text>
-              {showAvailable && (
-                <Text style={styles.balAvailable} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmt(bal.available_balance!)} available</Text>
+              {display.owed && <Text style={styles.balOwed} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>owed</Text>}
+              {credit !== null && (
+                <Text style={styles.balAvailable} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmt(credit)} available</Text>
               )}
               <BalanceFreshnessPill asOf={bal.as_of} tone="card" />
             </View>
@@ -115,6 +115,7 @@ const styles = StyleSheet.create({
   balCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 18, marginTop: 6 },
   balLabel: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.textMid, letterSpacing: 0.2 },
   balAmount: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', letterSpacing: -0.6, marginTop: 4 },
+  balOwed: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   balAvailable: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 6 },
   payoffLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginTop: 10 },
   payoffText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
