@@ -167,6 +167,30 @@ it('the home loan card shows the next payoff milestone; other cards keep their t
   expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
 });
 
+// [A1] ABU-64: the payoff reads fire only when a balance is the home loan, so the tab costs nothing
+// extra without one. Fail-on-revert: drop the `enabled` gate → the reads fire.
+it('does not read the home-loan data when no balance is a mortgage', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  server.seed('/accounts/balances', [bal({ account_id: 'a1' })]);
+  await renderWithQueries(<Accounts />);
+  expect(screen.getByText('1 transaction')).toBeTruthy();
+  for (const path of ['/homeloan', '/loanfacts', '/milestones']) expect(server.sentUnder('GET', path)).toHaveLength(0);
+});
+
+// [A2] ABU-64: the payoff line is secondary: a failed home-loan read keeps the loan card's fallback
+// subtitle and never surfaces the tab's error state.
+it('a failed home-loan read keeps the loan card with its fallback subtitle', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -250000, account_type: 'mortgage' })]);
+  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:00:00Z' } });
+  server.fail('/homeloan', 500);
+  await renderWithQueries(<Accounts />);
+  await waitFor(() => expect(server.sentUnder('GET', '/homeloan').length).toBeGreaterThan(0));
+  await settle();
+  expect(screen.getByText('Home loan · payoff inside')).toBeTruthy();
+  expect(screen.getByText('ANZ')).toBeTruthy();
+});
+
 it('with no loaded transactions but a saved balance, shows the card, not "No accounts yet"', async () => {
   server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -500000 })]);
   await renderWithQueries(<Accounts />);
