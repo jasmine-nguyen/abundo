@@ -12,6 +12,7 @@ import type { Category, Transaction } from './types';
 import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey, aiInsightsKey } from './queryKeys';
 import { getStatus, subscribe } from './auth';
 import { accountSummaries } from './context';
+import { homeLoanProgressLine } from './homeLoanAccount';
 
 // --- auth gating -------------------------------------------------------------
 // Queries must NOT fire before login (the reads throw "Not signed in") and MUST fire
@@ -1127,6 +1128,20 @@ const EMPTY_REPAYMENT: Repayment = { amount: null, date: null, principal: null, 
 // identity across renders while the query is cold (the WHIT-244 trap). An empty list means
 // "no saved plan" — milestoneView yields an empty view (hasPlan:false); there is no default.
 const EMPTY_MILESTONES: MilestoneRecord[] = [];
+
+// ABU-64: the home loan's payoff line for its Accounts card. Secondary data: loading or a failed
+// read just gives null (the card shows its fallback).
+export function useHomeLoanProgress(enabled: boolean): string | null {
+  const on = useIsAuthed() && enabled;
+  const homeLoanQuery = useHomeLoanQuery(on);
+  const loanFactsQuery = useLoanFactsQuery(on);
+  const milestonesQuery = useMilestonesQuery(on);
+  return homeLoanProgressLine({
+    loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
+    homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
+    milestones: milestonesQuery.data ?? EMPTY_MILESTONES,
+  });
+}
 
 export interface GoalScreenData {
   loanFacts: LoanFacts;

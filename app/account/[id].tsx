@@ -1,13 +1,16 @@
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, fmtBalance, fmt, agoLabel } from '../../src/theme';
+import { C, FONT, fmtBalance, fmt, PRESSED } from '../../src/theme';
+import { Glyph } from '../../src/icons';
 import { accountDetail, accountNameFromId } from '../../src/context';
 import { useRecentTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
+import { BalanceFreshnessPill } from '../../src/components/BalanceFreshnessPill';
+import { isHomeLoanAccount } from '../../src/homeLoanAccount';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
 // route is the account_id. Transactions come from the recent query — a seam that reads the
@@ -17,6 +20,7 @@ import { EmptyState } from '../../src/components/EmptyState';
 // (poller-fed), keyed by the same account_id.
 export default function AccountDetail() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { transactions, category, balances, isLoading, isError, refetch } = useRecentTransactionsScreenData();
   const detail = accountDetail({ transactions, category }, id);
@@ -53,8 +57,20 @@ export default function AccountDetail() {
               {showAvailable && (
                 <Text style={styles.balAvailable}>{fmt(bal.available_balance!)} available</Text>
               )}
-              {!!agoLabel(bal.as_of) && <Text style={styles.balAsOf}>as of {agoLabel(bal.as_of)}</Text>}
+              <BalanceFreshnessPill asOf={bal.as_of} tone="card" />
             </View>
+          )}
+          {/* ABU-64: the home loan opens into its payoff progress on the Home loan screen. */}
+          {isHomeLoanAccount(bal) && (
+            <Pressable
+              testID="account-payoff-link"
+              accessibilityRole="button"
+              onPress={() => router.push('/mortgage')}
+              style={({ pressed }) => [styles.payoffLink, pressed && PRESSED]}
+            >
+              <Text style={styles.payoffText}>See payoff progress</Text>
+              <Glyph name="chevron" size={16} color={C.textFaint} />
+            </Pressable>
           )}
           {detail && (
             <>
@@ -84,7 +100,8 @@ const styles = StyleSheet.create({
   balLabel: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.textMid, letterSpacing: 0.2 },
   balAmount: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', letterSpacing: -0.6, marginTop: 4 },
   balAvailable: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 6 },
-  balAsOf: { fontFamily: FONT.body, fontSize: 12, color: C.textFaint, marginTop: 2 },
+  payoffLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginTop: 10 },
+  payoffText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
 
   count: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },

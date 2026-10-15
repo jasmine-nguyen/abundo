@@ -4,7 +4,8 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint, fmtBalance, ACCOUNT_ACCENTS, PRESSED } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { accountSummaries, useAppContext } from '../../src/context';
-import { useTransactionsScreenData } from '../../src/queries';
+import { useTransactionsScreenData, useHomeLoanProgress } from '../../src/queries';
+import { isHomeLoanAccount } from '../../src/homeLoanAccount';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
@@ -26,6 +27,7 @@ export default function Accounts() {
   // hardcoded list — so names always match what's in the data. WHIT-643: plus every account
   // with a saved balance, so a quiet account (the home loan) still gets a card.
   const accounts = accountSummaries({ transactions }, balances.keys());
+  const loanLine = useHomeLoanProgress([...balances.values()].some(isHomeLoanAccount));
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
@@ -74,6 +76,7 @@ export default function Accounts() {
             const bal = balances.get(a.id);
             let subtitle = `${a.count} ${a.count === 1 ? 'transaction' : 'transactions'}`;
             if (a.count === 0) subtitle = 'No recent transactions';
+            if (isHomeLoanAccount(bal)) subtitle = loanLine ?? 'Home loan · payoff inside';
             return (
               <Pressable
                 key={a.id}

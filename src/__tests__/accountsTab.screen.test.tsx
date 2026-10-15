@@ -20,6 +20,8 @@ import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settl
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 import { styleOf } from './support/layout';
+import { seedGoal } from './support/goalsScreen';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 
 const bal = (over: Record<string, unknown> = {}) => ({
   account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
@@ -141,7 +143,26 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
   expect(styleOf(screen.getByText('-$500,000.00')).color).toBe(C.bad);
-  expect(screen.getByText('No recent transactions')).toBeTruthy();
+  // ABU-64: with no payoff plan set up, the loan card points inside instead of "No recent transactions".
+  expect(screen.getByText('Home loan · payoff inside')).toBeTruthy();
+  fireEvent.press(screen.getByText('Up Homeloan'));
+  expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
+});
+
+// ABU-64: the home loan's card (spotted by account_type 'mortgage') shows its payoff progress, from
+// the same next-milestone maths as the Home loan screen, while other cards keep their count line.
+// Balance $250,000 against the saved plan's next target ($200,000) → $50,000 to go.
+it('the home loan card shows the next payoff milestone; other cards keep their transaction count', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  server.seed('/accounts/balances', [
+    bal({ account_id: 'a1', amount: 96270.59 }),
+    bal({ account_id: 'up-homeloan', amount: -250000, available_balance: 0, account_type: 'mortgage' }),
+  ]);
+  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:00:00Z' } });
+  await renderWithQueries(<Accounts />);
+  expect(await screen.findByText('Next milestone: $50,000 to go')).toBeTruthy();
+  expect(screen.getByText('1 transaction')).toBeTruthy();
+  expect(screen.queryByText('No recent transactions')).toBeNull();
   fireEvent.press(screen.getByText('Up Homeloan'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
 });
