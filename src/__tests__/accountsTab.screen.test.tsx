@@ -227,3 +227,24 @@ it('gives the fourth account its own accent colour instead of reusing the first'
   expect(chips).toHaveLength(4);
   expect(new Set(chips.map((i) => (i.props as { color: string }).color)).size).toBe(4);
 });
+
+// ABU-66: the header shows "Updated … · Bank synced …" like Transactions, and each account card is
+// a labelled button: name and balance, or "balance not loaded yet" before the first poll.
+it('shows the Updated + Bank synced line, and each card is a button labelled with name and balance', async () => {
+  server.seed('/transactions/feed', {
+    transactions: [
+      { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' },
+      { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Spending' },
+    ],
+    nextCursor: null,
+    bankSyncedAt: { a1: new Date('2026-07-08T09:12:00+10:00').getTime() },
+  });
+  server.seed('/accounts/balances', [bal({ account_id: 'a1', amount: 96270.59 })]);
+  await renderWithQueries(<Accounts />);
+  await waitFor(() => expect(screen.getByTestId('accounts-updated')).toBeTruthy());
+  expect(screen.getByTestId('accounts-bank-synced-a1')).toBeTruthy();
+
+  const labels = screen.getAllByRole('button').map((b) => b.props.accessibilityLabel as string | undefined);
+  expect(labels.find((label) => label?.startsWith('ANZ'))).toContain('$96,270.59');
+  expect(labels.find((label) => label?.startsWith('Up Spending'))).toContain('balance not loaded yet');
+});

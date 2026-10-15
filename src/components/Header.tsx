@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { C, FONT } from '../theme';
 import { HeaderIconButton } from './ui';
+import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
 
 export function Header({
   title, right,
@@ -17,7 +18,7 @@ export function Header({
         <View style={styles.side}>
           <HeaderIconButton icon="back" accessibilityLabel="Back" onPress={() => router.back()} />
         </View>
-        <Text style={styles.title} numberOfLines={1}>{title}</Text>
+        <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{title}</Text>
         <View style={[styles.side, { alignItems: 'flex-end' }]}>{right}</View>
       </View>
     </View>

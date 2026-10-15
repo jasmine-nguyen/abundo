@@ -6,8 +6,9 @@
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react-native';
-import { C } from '../theme';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
+import { RefreshControl } from 'react-native';
+import { C, MINUS } from '../theme';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -17,7 +18,7 @@ import { transactionsRecentKey } from '../queryKeys';
 import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined, showToast: jest.fn() })));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import AccountDetail from '../../app/account/[id]';
@@ -129,5 +130,25 @@ it('uses the transaction account name for the header when the account also has a
   server.seed('/accounts/balances', [bal()]);
   await renderWithQueries(<AccountDetail />);
   expect(screen.UNSAFE_getByType(Header).props.title).toBe('ANZ');
+});
+
+// ABU-66: the account page matches Transactions. A pull re-reads the list and fetches live
+// balances (spinner clears after), each day heading carries its total, and the big balance
+// stays on one line, shrinking to fit under the large-text cap.
+it('pull refreshes the list and live balances, headings show the day total, balance shrinks to fit', async () => {
+  server.seed('/accounts/balances', [bal({ amount: -592994.43, available_balance: 0 })]);
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
+
+  const amount = screen.getByText('-$592,994.43');
+  expect(amount.props.numberOfLines).toBe(1);
+  expect(amount.props.adjustsFontSizeToFit).toBe(true);
+  expect(amount.props.maxFontSizeMultiplier).toBe(2);
+
+  const listReads = server.sent('GET', '/transactions').length;
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
+  await waitFor(() => expect(server.sent('GET', '/transactions').length).toBeGreaterThan(listReads));
+  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
 });
 

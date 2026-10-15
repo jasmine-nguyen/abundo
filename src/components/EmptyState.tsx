@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { C, FONT, tint } from '../theme';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 // WHIT-772: the shared "nothing here yet" block — an optional icon tile, a bold title and a grey sub.
 export function EmptyState({ title, sub, icon, iconBackground, testID }: {
@@ -13,8 +14,8 @@ export function EmptyState({ title, sub, icon, iconBackground, testID }: {
   return (
     <View testID={testID} style={styles.empty}>
       {icon != null && <View style={[styles.icon, iconBackground != null && { backgroundColor: iconBackground }]}>{icon}</View>}
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.sub}>{sub}</Text>
+      <Text style={styles.title} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{title}</Text>
+      <Text style={styles.sub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{sub}</Text>
     </View>
   );
 }

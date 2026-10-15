@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { C, FONT, tint } from '../theme';
 import { balanceFreshness } from '../dateutil';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 // WHIT-822: "As of <day>" for the home-loan balance on a hero card; the dot turns amber once
 // the balance is more than a few days old. Shared by /mortgage and /milestone. ABU-64: the
@@ -15,7 +16,7 @@ export function BalanceFreshnessPill({ asOf, tone = 'hero' }: { asOf: string | n
         style={[styles.dot, { backgroundColor: freshness.stale ? C.warn : C.goodBright }]}
         testID={freshness.stale ? 'balance-freshness-stale' : undefined}
       />
-      <Text style={[styles.text, onCard && styles.textCard]}>{freshness.label}</Text>
+      <Text style={[styles.text, onCard && styles.textCard]} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{freshness.label}</Text>
     </View>
   );
 }
