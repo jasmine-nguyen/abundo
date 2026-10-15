@@ -9,7 +9,9 @@ export function bucketSections<R extends { depth: number }>(rows: R[], bucketOf:
   let current: R[] = [];
   for (const row of rows) {
     if (row.depth === 0) {
-      const bucket = bucketOf(row);
+      // A bucket outside BUCKETS (old saved data) joins Uncategorised rather than vanishing.
+      const named = bucketOf(row);
+      const bucket = named && BUCKETS.includes(named) ? named : null;
       current = byBucket.get(bucket) ?? [];
       byBucket.set(bucket, current);
     }
