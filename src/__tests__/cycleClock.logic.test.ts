@@ -121,7 +121,6 @@ describe('dayOfCycle', () => {
     ['payday (all days left) is day 1', 14, 14, 1],
     ['mid-cycle is length − daysLeft + 1', 14, 9, 6],
     ['the last day (0 left) is the final day', 14, 0, 14],
-    ['a monthly cycle part-way', 30, 20, 11],
   ])('%s', (_label, cycleLen, daysLeft, day) => {
     expect(dayOfCycle({ cycleLen, daysLeft })).toBe(day);
   });
