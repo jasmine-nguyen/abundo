@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
@@ -10,7 +10,7 @@ import { useAiInsights } from '../../src/hooks/useAiInsights';
 import { useInsightsScreenData, usePayCycle } from '../../src/queries';
 import { dayOfCycle } from '../../src/payCycle';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { HeroGradientFill, HeroBlobs } from '../../src/components/ui';
+import { HeroGradientFill, HeroBlobs, SectionLabel } from '../../src/components/ui';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ExportButton } from '../../src/components/ExportButton';
@@ -19,6 +19,7 @@ import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { toggleIn, visibleTreeRows } from '../../src/setutil';
+import { bucketSections } from '../../src/breakdownSections';
 
 // One header for every Insights row (spending, refund/"Other", earning); stacks at large text (ABU-63).
 function RowHeader({ row, nameColor = C.textBright, sub, amount, amountColor = C.textBright, chevron }: {
@@ -113,6 +114,63 @@ export default function Insights() {
   let heroSub = `spent across ${topLevelCount} ${topLevelCount === 1 ? 'category' : 'categories'}`;
   if (cycle === 0 && payCycleReady) heroSub += ` · day ${dayOfCycle({ cycleLen, daysLeft })} of ${cycleLen}`;
 
+  // ABU-68: the spending cards grouped under LIVING / LIFESTYLE / UNCATEGORISED headings.
+  const sections = bucketSections(visibleRows, (r) => category(r.id)?.bucket ?? null);
+  const renderSpendRow = (r: (typeof visibleRows)[number]) => {
+    // WHIT-349/357: a muted display-only line under an expanded parent — no bar. A refund
+    // line shows a credit in green and taps into that sub's charges. A WHIT-357 "Other" line
+    // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
+    // (it isn't a real category, so there is nothing to drill into).
+    if (r.isRefund || r.isRemainder) {
+      // WHIT-375: the refund/"Other" amount + colours come from the one shared convention
+      // (see breakdownLineStyle) so this can't drift from the breakdown screen again.
+      const { amountText, amountColor, nameColor } = breakdownLineStyle(r);
+      const body = <RowHeader row={r} nameColor={nameColor} sub={r.spentLabel} amount={amountText} amountColor={amountColor} />;
+      return (
+        <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
+          {r.isRefund ? (
+            <Pressable
+              onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+              accessibilityRole="button"
+            >
+              {body}
+            </Pressable>
+          ) : body}
+        </View>
+      );
+    }
+    // Bar width is the row's share of the cycle total; within it, split posted
+    // vs pending so the pending portion reads distinctly.
+    // Clamp the bar at 100% so it can never overflow its track (a corrupt parent
+    // cycle can inflate pct past 100 — unreachable via the app, but cheap to guard).
+    const barPct = Math.min(100, r.pct);
+    const postedW = r.spent > 0 ? barPct * (r.posted / r.spent) : 0;
+    const pendingW = Math.max(0, barPct - postedW);
+    const open = expanded.has(r.id);
+    return (
+      <View key={r.id} style={[styles.row, r.depth > 0 && { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
+        <Pressable
+          // WHIT-308: a parent row still expands its subs; a leaf / "Directly in X" /
+          // Uncategorized row drills into its transactions for the selected cycle.
+          onPress={r.hasChildren ? () => toggle(r.id) : () => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+          accessibilityRole="button"
+          accessibilityState={r.hasChildren ? { expanded: open } : undefined}
+        >
+          <RowHeader
+            row={r} sub={r.spentLabel} amount={fmt(r.spent)}
+            chevron={r.hasChildren ? (open ? 'chevronDown' : 'chevron') : undefined}
+          />
+        </Pressable>
+        <View style={styles.track}>
+          <View style={{ width: `${postedW}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
+          {pendingW > 0 && (
+            <View style={{ width: `${pendingW}%`, backgroundColor: tint(r.color, 0.45), height: '100%', borderRadius: 5 }} />
+          )}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <ScrollChromeHeader
       title="Insights"
@@ -198,60 +256,12 @@ export default function Insights() {
 
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
             taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
-        {!showError && side === 'spending' && visibleRows.map((r) => {
-          // WHIT-349/357: a muted display-only line under an expanded parent — no bar. A refund
-          // line shows a credit in green and taps into that sub's charges. A WHIT-357 "Other" line
-          // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
-          // (it isn't a real category, so there is nothing to drill into).
-          if (r.isRefund || r.isRemainder) {
-            // WHIT-375: the refund/"Other" amount + colours come from the one shared convention
-            // (see breakdownLineStyle) so this can't drift from the breakdown screen again.
-            const { amountText, amountColor, nameColor } = breakdownLineStyle(r);
-            const body = <RowHeader row={r} nameColor={nameColor} sub={r.spentLabel} amount={amountText} amountColor={amountColor} />;
-            return (
-              <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
-                {r.isRefund ? (
-                  <Pressable
-                    onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
-                    accessibilityRole="button"
-                  >
-                    {body}
-                  </Pressable>
-                ) : body}
-              </View>
-            );
-          }
-          // Bar width is the row's share of the cycle total; within it, split posted
-          // vs pending so the pending portion reads distinctly.
-          // Clamp the bar at 100% so it can never overflow its track (a corrupt parent
-          // cycle can inflate pct past 100 — unreachable via the app, but cheap to guard).
-          const barPct = Math.min(100, r.pct);
-          const postedW = r.spent > 0 ? barPct * (r.posted / r.spent) : 0;
-          const pendingW = Math.max(0, barPct - postedW);
-          const open = expanded.has(r.id);
-          return (
-            <View key={r.id} style={[styles.row, r.depth > 0 && { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
-              <Pressable
-                // WHIT-308: a parent row still expands its subs; a leaf / "Directly in X" /
-                // Uncategorized row drills into its transactions for the selected cycle.
-                onPress={r.hasChildren ? () => toggle(r.id) : () => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
-                accessibilityRole="button"
-                accessibilityState={r.hasChildren ? { expanded: open } : undefined}
-              >
-                <RowHeader
-                  row={r} sub={r.spentLabel} amount={fmt(r.spent)}
-                  chevron={r.hasChildren ? (open ? 'chevronDown' : 'chevron') : undefined}
-                />
-              </Pressable>
-              <View style={styles.track}>
-                <View style={{ width: `${postedW}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
-                {pendingW > 0 && (
-                  <View style={{ width: `${pendingW}%`, backgroundColor: tint(r.color, 0.45), height: '100%', borderRadius: 5 }} />
-                )}
-              </View>
-            </View>
-          );
-        })}
+        {!showError && side === 'spending' && sections.map((s) => (
+          <Fragment key={s.key}>
+            <SectionLabel testID={`insights-section-${s.key}`} style={{ marginTop: 18 }}>{s.heading}</SectionLabel>
+            {s.rows.map(renderSpendRow)}
+          </Fragment>
+        ))}
 
         {/* Earning side: one row per income source, biggest first, each with a green bar for its
             share of total income. WHIT-373 folds in the retired /breakdown earned view. */}

@@ -3,6 +3,7 @@ import { ActivityIndicator, View, Text, Pressable, StyleSheet, ViewStyle, TextSt
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { C, FONT, tint } from '../theme';
 import { Glyph } from '../icons';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 // WHIT-615 — a full-bleed gradient layer. iOS react-native-svg saves a shape's `%` sizes from
 // its first draw and never updates them on resize, so the Rect is sized in a 0-1 viewBox that
@@ -162,8 +163,12 @@ export function Bar({ pct, color, track = C.progressTrack, height = 10, markers 
   );
 }
 
-export function SectionLabel({ children, style }: { children: React.ReactNode; style?: TextStyle }) {
-  return <Text style={[styles.sectionLabel, style]}>{children}</Text>;
+export function SectionLabel({ children, style, testID }: { children: React.ReactNode; style?: TextStyle; testID?: string }) {
+  return (
+    <Text testID={testID} style={[styles.sectionLabel, style]} accessibilityRole="header" maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>
+      {children}
+    </Text>
+  );
 }
 
 // WHIT-711: the tinted square icon button in a header (the "+" buttons, the Settings gear).

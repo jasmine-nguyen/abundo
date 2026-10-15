@@ -7,7 +7,7 @@ import { budgetViews, type BudgetView } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { urgentFirst } from '../../src/budgetOrder';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { BudgetBar, RetryButton, HeroGradientFill, HeroBlobs, HeaderIconButton } from '../../src/components/ui';
+import { BudgetBar, RetryButton, HeroGradientFill, HeroBlobs, HeaderIconButton, SectionLabel } from '../../src/components/ui';
 import { StackingRowHeader, rowTextStyles } from '../../src/components/StackingRowHeader';
 import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
@@ -198,7 +198,7 @@ export default function Budgets() {
           if (sectionRows.length === 0) return null;
           return (
             <React.Fragment key={section}>
-              <Text style={styles.sectionLabel}>{heading}</Text>
+              <SectionLabel style={{ marginTop: 18 }}>{heading}</SectionLabel>
               {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
             </React.Fragment>
           );
@@ -234,7 +234,6 @@ const styles = StyleSheet.create({
   heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
 
   // Same uppercase muted label as the budget detail screen's section headings.
-  sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 4 },
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, marginBottom: 12 },
   slimNote: { marginTop: 6 },

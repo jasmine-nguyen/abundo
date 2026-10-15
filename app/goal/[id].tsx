@@ -8,6 +8,7 @@ import { useGoalsScreenData } from '../../src/queries';
 import { checkpointProgress, type CheckpointProgressRow } from '../../src/checkpoints';
 import { Header } from '../../src/components/Header';
 import { DetailStates } from '../../src/components/DetailStates';
+import { SectionLabel } from '../../src/components/ui';
 import { EmptyState } from '../../src/components/EmptyState';
 import { GoalHead, GoalProgress, GoalBalanceRow } from '../../src/components/GoalProgress';
 import type { GoalRecord } from '../../src/api';
@@ -64,7 +65,7 @@ function GoalBody({ goal, view, onEdit }: { goal: GoalRecord; view: BalanceGoalV
 
       {rows.length > 0 && (
         <>
-          <Text style={styles.sectionLabel}>MILESTONES</Text>
+          <SectionLabel style={{ marginTop: 22 }}>MILESTONES</SectionLabel>
           <View style={styles.card}>
             {rows.map(({ checkpoint: cp, reached, toGo }, i) => (
               <View key={cp.id} testID={`goal-milestone-${cp.id}`} style={[styles.milestone, i > 0 && styles.milestoneDivider]}>
@@ -103,7 +104,6 @@ const styles = StyleSheet.create({
   edit: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft, paddingHorizontal: 4 },
   next: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.textBright, marginBottom: 12, marginHorizontal: 4 },
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 18 },
-  sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 8, marginHorizontal: 4 },
   milestone: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
   milestoneDivider: { borderTopWidth: 1, borderTopColor: C.hairline },
   tick: { width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: C.textDim, alignItems: 'center', justifyContent: 'center' },
