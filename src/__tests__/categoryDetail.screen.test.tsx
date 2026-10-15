@@ -21,6 +21,7 @@ jest.mock('../context', () =>
 
 import CategoryDetail from '../../app/category/[id]';
 import { COFFEE_RECORD } from './support/categories';
+import { HERO_BIG_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -138,6 +139,15 @@ it('shows cents on the total and pending line when they have them', async () => 
   await renderWithQueries(<CategoryDetail />);
   expect(within(screen.getByTestId('category-total')).getByText('$20.40')).toBeTruthy();
   expect(screen.getByText('$8.40 pending')).toBeTruthy();
+});
+
+// [A6] ABU-63: the big total stays on one line and stops growing at the hero cap.
+it('caps the total to one line at the hero text-size limit', async () => {
+  server.seed(COFFEE_ROWS, [{ ...ROW, amount: -12 }]);
+  await renderWithQueries(<CategoryDetail />);
+  const total = within(screen.getByTestId('category-total')).getByText('$12');
+  expect(total.props.numberOfLines).toBe(1);
+  expect(total.props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
 });
 
 it('shows the empty state when nothing matches this category/cycle', async () => {

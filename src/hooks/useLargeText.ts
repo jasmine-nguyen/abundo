@@ -7,6 +7,8 @@ export const LARGE_TEXT_MAX_SCALE = 2;
 // The screen header's title and the line under it (WHIT-863). The title sits in HEADER_BODY_HEIGHT
 // minus 18px of padding (40px); 19px × 1.5 still fits, so it can't grow over the first card.
 export const TITLE_MAX_SCALE = 1.5;
+// Big hero numbers grow with the user's text size up to the same cap, so they stay one size (WHIT-741).
+export const HERO_BIG_MAX_SCALE = 1.4;
 
 export function useLargeText() {
   return useWindowDimensions().fontScale >= LARGE_TEXT_SCALE;

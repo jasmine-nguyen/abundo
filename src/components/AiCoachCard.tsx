@@ -132,6 +132,7 @@ export function AiCoachCard() {
             onPress={() => openChat({ seed: ai!.summary || ai!.suggestions.join('\n') })}
             accessibilityRole="button"
             hitSlop={8}
+            style={styles.aiFollowUpTarget}
           >
             <Text style={styles.aiFollowUp}>Ask a follow-up →</Text>
           </Pressable>
@@ -156,14 +157,15 @@ const styles = StyleSheet.create({
   aiStampErr: { fontFamily: FONT.body, fontSize: 12, color: C.bad },
   aiSummary: { fontFamily: FONT.body, fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 12 },
   aiTipRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
-  aiDiamond: { width: 6, height: 6, backgroundColor: C.accent, transform: [{ rotate: '45deg' }], marginTop: 7 },
+  aiDiamond: { width: 6, height: 6, backgroundColor: C.accentAlt, transform: [{ rotate: '45deg' }], marginTop: 7 },
   aiTip: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textMid, lineHeight: 20 },
   aiIdle: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, lineHeight: 20, marginBottom: 12 },
   aiError: { fontFamily: FONT.body, fontSize: 14, color: C.bad, lineHeight: 20, marginBottom: 12 },
   aiBtn: { backgroundColor: C.accent, borderRadius: 14, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   aiBtnBusy: { opacity: 0.7 },
   aiBtnText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.heroInk },
-  aiNote: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, lineHeight: 16, marginTop: 10 },
-  aiFooter: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 },
+  aiNote: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, lineHeight: 18, marginTop: 10 },
+  aiFooter: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 },
+  aiFollowUpTarget: { minHeight: 44, justifyContent: 'center' },
   aiFollowUp: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.purple },
 });

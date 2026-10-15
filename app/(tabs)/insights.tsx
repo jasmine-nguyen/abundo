@@ -2,13 +2,15 @@ import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
-import { Icon, Glyph } from '../../src/icons';
+import { Glyph } from '../../src/icons';
+import { useLargeText, LARGE_TEXT_MAX_SCALE, HERO_BIG_MAX_SCALE } from '../../src/hooks/useLargeText';
+import { StackingRowHeader, rowTextStyles } from '../../src/components/StackingRowHeader';
 import { categoryBreakdown, incomeBreakdown } from '../../src/context';
 import { useAiInsights } from '../../src/hooks/useAiInsights';
 import { useInsightsScreenData, usePayCycle } from '../../src/queries';
 import { dayOfCycle } from '../../src/payCycle';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { HeroGradientFill } from '../../src/components/ui';
+import { HeroGradientFill, HeroBlobs } from '../../src/components/ui';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ExportButton } from '../../src/components/ExportButton';
@@ -17,6 +19,30 @@ import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { toggleIn, visibleTreeRows } from '../../src/setutil';
+
+// One header for every Insights row (spending, refund/"Other", earning); stacks at large text (ABU-63).
+function RowHeader({ row, nameColor = C.textBright, sub, amount, amountColor = C.textBright, chevron }: {
+  row: { icon: string; color: string; chipBg: string; name: string };
+  nameColor?: string; sub?: string; amount: string; amountColor?: string; chevron?: string;
+}) {
+  const large = useLargeText();
+  const amountText = (
+    <Text style={[styles.rowAmount, { color: amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{amount}</Text>
+  );
+  return (
+    <StackingRowHeader
+      icon={row.icon} color={row.color} chipBg={row.chipBg}
+      name={<Text style={[rowTextStyles.name, { color: nameColor }]} numberOfLines={large ? 2 : 1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{row.name}</Text>}
+      sub={sub ? <Text style={rowTextStyles.sub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{sub}</Text> : undefined}
+      right={chevron ? (
+        <View style={styles.amountWithChevron}>
+          <Glyph name={chevron} size={18} color={C.textDim} />
+          {amountText}
+        </View>
+      ) : amountText}
+    />
+  );
+}
 
 export default function Insights() {
   const { refresh: refreshAiInsights } = useAiInsights();
@@ -57,7 +83,7 @@ export default function Insights() {
   const topLevelCount = topLevelRows.length;  // hero "N categories"
   // Donut slices: one per top-level category (its combined spend), painted in its own colour
   // so the ring and the rows below read as one legend. Sums to the hero total (every txn rolls
-  // up to exactly one top-level row), so the total sits in the centre.
+  // up to exactly one top-level row), so each slice's share matches its row's "% of spend".
   const donutSlices = topLevelRows.map((r) => ({ id: r.id, name: r.name, color: r.color, value: r.spent }));
 
   // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via its
@@ -110,20 +136,20 @@ export default function Insights() {
         {/* hero: where the money went in the selected cycle */}
         <View style={styles.hero}>
           <HeroGradientFill />
-          <View style={styles.heroBlob} />
-          <Text style={styles.heroEyebrow}>{cycle === 0 ? 'THIS PAY CYCLE' : 'LAST PAY CYCLE'}</Text>
+          <HeroBlobs />
+          <Text style={styles.heroEyebrow} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{cycle === 0 ? 'THIS PAY CYCLE' : 'LAST PAY CYCLE'}</Text>
           {/* Never show a confident "$0" over a load/error — the total reads breakdown,
               which isn't ready yet. A legit zero-spend cycle (loaded, no rows) still
               shows $0. WHIT-189. */}
           {showSpinner || showError ? (
             <>
-              <Text style={styles.heroTotal}>—</Text>
-              <Text style={styles.heroSub}>{showError ? "Couldn't load" : 'Loading…'}</Text>
+              <Text style={styles.heroTotal} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>—</Text>
+              <Text style={styles.heroSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{showError ? "Couldn't load" : 'Loading…'}</Text>
             </>
           ) : (
             <>
-              <Text testID="insights-hero-total" style={styles.heroTotal}>{fmt(total)}</Text>
-              <Text testID="insights-hero-sub" style={styles.heroSub}>{heroSub}</Text>
+              <Text testID="insights-hero-total" style={styles.heroTotal} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{fmt(total)}</Text>
+              <Text testID="insights-hero-sub" style={styles.heroSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{heroSub}</Text>
             </>
           )}
         </View>
@@ -158,21 +184,14 @@ export default function Insights() {
             value={side}
             onChange={setSideChoice}
             options={[
-              { value: 'spending', label: 'Spending', testID: 'insights-side-spending', activeTint: tint(C.bad, 0.16), activeTextColor: C.bad },
+              { value: 'spending', label: 'Spending', testID: 'insights-side-spending', activeTint: tint(C.accentAlt, 0.16), activeTextColor: C.accentSoft },
               { value: 'earning', label: 'Earning', testID: 'insights-side-earning', activeTint: tint(C.good, 0.16), activeTextColor: C.good },
             ]}
           />
         )}
 
-        {/* Spending side: each row's bar is its share of total spend this cycle (matches the donut) —
-            NOT spend-vs-budget. Caption it so the short bars aren't read as "budget barely used". */}
-        {!showSpinner && !showError && side === 'spending' && rows.length > 0 && (
-          <Text testID="insights-bars-caption" style={styles.barsCaption}>
-            Each bar shows the category's share of total spend — not its budget.
-          </Text>
-        )}
         {!showSpinner && !showError && side === 'spending' && rows.length === 0 && (
-          <Text style={styles.empty}>
+          <Text style={styles.empty} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>
             {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
           </Text>
         )}
@@ -188,16 +207,7 @@ export default function Insights() {
             // WHIT-375: the refund/"Other" amount + colours come from the one shared convention
             // (see breakdownLineStyle) so this can't drift from the breakdown screen again.
             const { amountText, amountColor, nameColor } = breakdownLineStyle(r);
-            const body = (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
-                <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
-                  <Text style={styles.rowSub}>{r.spentLabel}</Text>
-                </View>
-                <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
-              </View>
-            );
+            const body = <RowHeader row={r} nameColor={nameColor} sub={r.spentLabel} amount={amountText} amountColor={amountColor} />;
             return (
               <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
                 {r.isRefund ? (
@@ -227,15 +237,11 @@ export default function Insights() {
                 onPress={r.hasChildren ? () => toggle(r.id) : () => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
                 accessibilityRole="button"
                 accessibilityState={r.hasChildren ? { expanded: open } : undefined}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
               >
-                <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.rowName} numberOfLines={1}>{r.name}</Text>
-                  <Text style={styles.rowSub}>{r.spentLabel}</Text>
-                </View>
-                {r.hasChildren && <Glyph name={open ? 'chevronDown' : 'chevron'} size={18} color={C.textDim} />}
-                <Text style={styles.rowAmount}>{fmt(r.spent)}</Text>
+                <RowHeader
+                  row={r} sub={r.spentLabel} amount={fmt(r.spent)}
+                  chevron={r.hasChildren ? (open ? 'chevronDown' : 'chevron') : undefined}
+                />
               </Pressable>
               <View style={styles.track}>
                 <View style={{ width: `${postedW}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
@@ -250,12 +256,12 @@ export default function Insights() {
         {/* Earning side: one row per income source, biggest first, each with a green bar for its
             share of total income. WHIT-373 folds in the retired /breakdown earned view. */}
         {!showSpinner && !showError && side === 'earning' && incomeRows.length > 0 && (
-          <Text testID="insights-income-caption" style={styles.barsCaption}>
+          <Text testID="insights-income-caption" style={styles.barsCaption} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>
             Each bar shows the source's share of total income.
           </Text>
         )}
         {!showSpinner && !showError && side === 'earning' && incomeRows.length === 0 && (
-          <Text style={styles.empty}>
+          <Text style={styles.empty} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>
             {cycle === 0 ? 'No income yet this pay cycle.' : 'No income in that pay cycle.'}
           </Text>
         )}
@@ -268,14 +274,10 @@ export default function Insights() {
           // Each source's bar is its own chart-palette colour, so the Earning list matches the pie
           // and the spending rows (one colour per source), not a single flat green (WHIT chart palette).
           const body = (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
-              <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
-                {r.pending > 0 && <Text style={styles.rowSub}>{fmt(r.pending)} pending</Text>}
-              </View>
-              <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
-            </View>
+            <RowHeader
+              row={r} nameColor={nameColor} amount={amountText} amountColor={amountColor}
+              sub={r.pending > 0 ? `${fmt(r.pending)} pending` : undefined}
+            />
           );
           return (
             <View key={r.id} style={styles.row}>
@@ -301,17 +303,14 @@ export default function Insights() {
 
 const styles = StyleSheet.create({
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
-  heroBlob: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft, letterSpacing: 0.2 },
-  heroTotal: { fontFamily: FONT.display, fontSize: 40, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5, marginTop: 4 },
+  heroTotal: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5, marginTop: 4 },
   heroSub: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.heroInk2, marginTop: 2 },
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, paddingBottom: 14, marginBottom: 12 },
-  chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
-  rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
-  rowAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, letterSpacing: -0.4 },
-  track: { flexDirection: 'row', gap: 2, height: 8, marginTop: 14, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
+  rowAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', letterSpacing: -0.4 },
+  amountWithChevron: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  track: { flexDirection: 'row', gap: 2, height: 8, marginTop: 14, backgroundColor: C.progressTrack, borderRadius: 5, overflow: 'hidden' },
 
   barsCaption: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, textAlign: 'center', marginTop: -6, marginBottom: 16 },
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },

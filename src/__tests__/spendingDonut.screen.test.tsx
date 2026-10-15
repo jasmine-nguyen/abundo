@@ -5,7 +5,9 @@
 import { describe, it, expect } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
+import './support/donut';
 import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/SpendingDonut';
+import { HERO_BIG_MAX_SCALE } from '../hooks/useLargeText';
 
 const s = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
 
@@ -44,10 +46,12 @@ describe('SpendingDonut', () => {
     expect(toJSON()).toBeNull();
   });
 
-  it('shows the total spent in the hole by default', () => {
-    render(<SpendingDonut slices={[{ id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 }, { id: 'c', name: 'Coffee', color: '#E8A87C', value: 25 }]} />);
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100'); // 75 + 25
-    expect(screen.getByText('total spent')).toBeTruthy();
+  it('shows the biggest category and its share in the hole at rest, not the total again (ABU-63)', () => {
+    render(<SpendingDonut slices={[{ id: 'c', name: 'Coffee', color: '#E8A87C', value: 25 }, { id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 }]} />);
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%');
+    expect(screen.getByText('Groceries')).toBeTruthy();
+    expect(screen.queryByText('$100')).toBeNull();
+    expect(screen.queryByText('total spent')).toBeNull();
   });
 
   it('gives the chart an accessible summary of each slice', () => {
@@ -64,14 +68,14 @@ describe('SpendingDonut', () => {
 
   it('tapping a wedge shows that category name + total in the hole', () => {
     render(<SpendingDonut slices={TWO} />);
-    // Default: total spent, no category amount.
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
+    // Default: the biggest share, no category amount.
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%');
     expect(screen.queryByTestId('donut-center-amount')).toBeNull();
 
     fireEvent.press(screen.getByTestId('donut-slice-c')); // tap the smaller (non-leading) wedge
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25');
     expect(screen.getByText('Coffee')).toBeTruthy();
-    expect(screen.queryByTestId('donut-center-total')).toBeNull(); // default readout is replaced
+    expect(screen.queryByTestId('donut-center-top-share')).toBeNull(); // default readout is replaced
   });
 
   it('tapping the selected wedge again clears back to the default readout', () => {
@@ -81,19 +85,31 @@ describe('SpendingDonut', () => {
 
     fireEvent.press(screen.getByTestId('donut-slice-g')); // same wedge → toggle off
     expect(screen.queryByTestId('donut-center-amount')).toBeNull();
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
-    expect(screen.getByText('total spent')).toBeTruthy();
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%');
   });
 
-  it('tapping the centre resets a selection back to the total-spent readout', () => {
+  // [A5] ABU-63: the hole is a fixed size, so its readout (at rest and tapped) is one line and
+  // stops growing at the hero cap.
+  it('caps the centre readout so large text cannot overflow the hole', () => {
+    render(<SpendingDonut slices={TWO} />);
+    const capped = (node: { props: { numberOfLines?: number; maxFontSizeMultiplier?: number } }) =>
+      expect([node.props.numberOfLines, node.props.maxFontSizeMultiplier]).toEqual([1, HERO_BIG_MAX_SCALE]);
+    capped(screen.getByTestId('donut-center-top-share'));
+    expect(screen.getByText('Groceries').props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
+    fireEvent.press(screen.getByTestId('donut-slice-c'));
+    capped(screen.getByTestId('donut-center-amount'));
+    expect(screen.getByText('Coffee').props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
+  });
+
+  it('tapping the centre resets a selection back to the biggest-share readout', () => {
     render(<SpendingDonut slices={TWO} />);
     fireEvent.press(screen.getByTestId('donut-slice-c'));
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25');
 
     fireEvent.press(screen.getByTestId('donut-center-reset')); // tap the hole → clear
     expect(screen.queryByTestId('donut-center-amount')).toBeNull();
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
-    expect(screen.getByText('total spent')).toBeTruthy();
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%');
+    expect(screen.getByText('Groceries')).toBeTruthy();
   });
 
   // (The on-top overlay's structure + tap behaviour are pinned in the "overlay uniqueness" gaps
@@ -134,7 +150,7 @@ describe('SpendingDonut — overlay uniqueness & base interactivity (gaps)', () 
     fireEvent.press(screen.getByTestId('donut-top')); // tap the popped overlay (now over c)
     expect(screen.queryByTestId('donut-center-amount')).toBeNull(); // cleared, NOT re-showing $75
     expect(screen.queryByTestId('donut-top')).toBeNull();
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100'); // back to the default total-spent readout
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%'); // back to the default biggest-share readout
   });
 });
 
@@ -148,8 +164,8 @@ describe('SpendingDonut — single 100% slice (gaps)', () => {
   it('[A-G3] renders donut-slice-<id>, selecting overlays + reads it, tapping again clears', () => {
     render(<SpendingDonut slices={SOLO} />);
     expect(screen.getByTestId('donut-slice-solo')).toBeTruthy();
-    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
-    expect(screen.getByText('total spent')).toBeTruthy();
+    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('100%');
+    expect(screen.getByText('Rent')).toBeTruthy();
     expect(screen.queryByTestId('donut-top')).toBeNull();
 
     fireEvent.press(screen.getByTestId('donut-slice-solo'));

@@ -120,6 +120,7 @@ describe('categoryBreakdown — WHIT-349 refund GAPs', () => {
     expect(byId['car__remainder']).toMatchObject({
       spent: 30, isRemainder: true, parentId: 'car', depth: 1, pct: 0, name: 'Pending/refund adjustment',
     });
+    expect(byId['car__remainder'].spentLabel).not.toMatch(/of spend/); // [A2] the ABU-63 share-of-spend label skips this line
     // Full reconciliation: petrol (100) + refund (-30) + Other (+30) == car node (100).
     expect(byId['petrol'].spent + byId['tolls__refund'].spent + byId['car__remainder'].spent).toBe(100);
     expect(total).toBe(100);                             // remainder is depth 1 -> never in the hero

@@ -2196,6 +2196,15 @@ export function incomeBreakdown(s: IncomeBreakdownInput): { rows: IncomeBreakdow
   return { rows };
 }
 
+// ABU-63: a spend row's subtitle is its share of the cycle's spend (its amount is already on the right).
+function shareLabel(pct: number, pending: number): string {
+  let share = `${Math.round(pct)}%`;
+  if (pct > 0 && pct < 0.5) share = '<1%';
+  const label = `${share} of spend`;
+  if (pending > 0) return `${label} · ${fmt(pending)} pending`;
+  return label;
+}
+
 export interface CategoryBreakdownRow {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spent: number; posted: number; pending: number;
@@ -2300,8 +2309,7 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
               hasChildren: boolean, uncat: boolean, drillId: string): CategoryBreakdownRow => {
     const spent = posted + pending;
     return { id, name, color, icon, chipBg, spent, posted, pending,
-      spentLabel: pending > 0 ? `${fmt(spent)} · ${fmt(pending)} pending` : fmt(spent),
-      pct: 0, uncategorized: uncat, depth, parentId, hasChildren, drillId };
+      spentLabel: '', pct: 0, uncategorized: uncat, depth, parentId, hasChildren, drillId };
   };
 
   // Build every row (a parent carries its netted server node total; an absent node -> ZERO ->
@@ -2404,7 +2412,11 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
   // a depth-0 row, so it's counted here. pct is each (non-refund, non-remainder) row's share of the total.
   let total = 0;
   for (const row of rowById.values()) if (row.depth === 0 && !row.isRefund) total += row.spent;
-  for (const row of rowById.values()) row.pct = total > 0 && !row.isRefund && !row.isRemainder ? (row.spent / total) * 100 : 0;
+  for (const row of rowById.values()) {
+    if (row.isRefund || row.isRemainder) continue;
+    row.pct = total > 0 ? (row.spent / total) * 100 : 0;
+    row.spentLabel = shareLabel(row.pct, row.pending);
+  }
 
   // Emit depth-first, siblings sorted by spent desc; an emitted-guard + trailing sweep
   // keep a corrupt cycle from dropping or duplicating a row.

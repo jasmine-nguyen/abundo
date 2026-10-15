@@ -20,11 +20,12 @@ import {
   refreshAiInsights, generateAiInsights,
 } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
-import { styleOf } from './support/layout';
+import { styleOf, sharedHost } from './support/layout';
 import { pullAndSettle } from './support/pull';
 import { pinToday } from './support/clock';
 import { GLYPH, ICON } from '../icons';
-import { C } from '../theme';
+import { C, tint } from '../theme';
+import { HERO_BIG_MAX_SCALE, LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
@@ -32,6 +33,9 @@ jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').us
 // The focus callback runs once on mount; fireFocus() fires a later focus by hand. routerSpies.push
 // is the spy the category-row drills call.
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
+let mockLarge = false;
+jest.mock('../hooks/useLargeText', () =>
+  require('./support/largeTextMock').largeTextMockModule(() => mockLarge));
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -60,6 +64,7 @@ async function showLastCycle() {
 }
 
 beforeEach(() => {
+  mockLarge = false;
   resetRouter();
   resetAuth();
   resetAi();
@@ -67,6 +72,30 @@ beforeEach(() => {
 });
 
 // --- breakdown (WHIT-23 / WHIT-189) ------------------------------------------
+
+// ABU-63 — at very large text a row stacks (amount below the name) and the hero total stays one capped line.
+it('at very large text a spending row stacks and the hero total is capped to one line', async () => {
+  mockLarge = true;
+  seedBreakdown({ spend: TWO_ROWS });
+  await renderInsights();
+  const name = screen.getByText('Cafes & Coffee');
+  const amount = screen.getByText('$25');
+  expect(styleOf(sharedHost(name, amount)).flexDirection).not.toBe('row');
+  const hero = screen.getByTestId('insights-hero-total');
+  expect(hero.props.numberOfLines).toBe(1);
+  expect(hero.props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
+});
+
+// [A4] ABU-63: a row's amount stays on one line and stops growing at the shared cap.
+it('caps each row amount to one line at the shared large-text limit', async () => {
+  seedBreakdown({ spend: TWO_ROWS });
+  await renderInsights();
+  for (const text of ['$25', '$80']) {
+    const amount = screen.getByText(text);
+    expect(amount.props.numberOfLines).toBe(1);
+    expect(amount.props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+  }
+});
 
 it('renders a row per spent category with the pending portion visible', async () => {
   seedBreakdown({ spend: TWO_ROWS });
@@ -606,6 +635,15 @@ describe('Insights parent row arrow', () => {
     expect(xmls).toContain(drawn(GLYPH.chevronDown));
     expect(xmls).not.toContain(drawn(ICON.q));
   });
+
+  // [A3] ABU-63: the shared row header's right block is a column, so the arrow needs its own row
+  // to sit beside the amount rather than above it.
+  it('puts the arrow beside the amount, not above it', async () => {
+    await renderInsights();
+    const arrow = parentRow().find((n) => n.props.xml === drawn(GLYPH.chevron));
+    const amount = within(parentRow()).getByText('$30');
+    expect(styleOf(sharedHost(arrow, amount)).flexDirection).toBe('row');
+  });
 });
 
 describe('Insights refund line gaps (WHIT-349)', () => {
@@ -717,12 +755,15 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
   };
 
   describe('Spending / Earning toggle (WHIT-373)', () => {
-    it('defaults to Spending: category rows + spend caption show, income does not', async () => {
+    it('defaults to Spending in a neutral tint: category rows show, income does not', async () => {
       seedSides(BOTH);
       await renderInsights();
-      expect(screen.getByTestId('insights-side-spending')).toBeTruthy();
-      expect(screen.getByTestId('insights-bars-caption')).toBeTruthy();           // spend caption
+      // ABU-63: rose means "over budget", so the active Spending switch is neutral, like the cycle switch.
+      expect(styleOf(screen.getByTestId('insights-side-spending')).backgroundColor).toBe(tint(C.accentAlt, 0.16));
+      // ABU-63: each row now says its share of spend, so the bar caption is gone.
+      expect(screen.queryByTestId('insights-bars-caption')).toBeNull();
       expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+      expect(screen.getByText('80% of spend')).toBeTruthy();
       expect(screen.queryByText('Salary')).toBeNull();                            // income hidden
       expect(screen.queryByTestId('insights-income-caption')).toBeNull();
     });
