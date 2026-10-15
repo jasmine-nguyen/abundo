@@ -217,6 +217,8 @@ describe('hero states (no false $0)', () => {
     expect(screen.getByText("Couldn't load")).toBeTruthy();
     expect(screen.queryByText('$0')).toBeNull();
     expect(within(screen.getByTestId('insights-error')).getByText('Our server had a problem. Try again in a moment.')).toBeTruthy();
+    // [A1] categories loaded but spending didn't → no "Updated <time>" over the error card
+    expect(within(screen.getByTestId('screen-header')).queryByTestId('insights-updated')).toBeNull();
   });
 
   // [A5] breakdown is in, categories still on the way → spinner, not "$0 across 0 categories".
