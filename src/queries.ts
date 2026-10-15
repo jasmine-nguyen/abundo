@@ -944,7 +944,7 @@ export function useRecentTransactionsScreenData(): RecentTransactionsScreenData 
   };
 }
 
-export type AccountTransactionsScreenData = RecentTransactionsScreenData
+export type AccountTransactionsScreenData = Omit<RecentTransactionsScreenData, 'isFetching' | 'refetchStale'>
   & Pick<TransactionsScreenData, 'hasMore' | 'loadMore' | 'isLoadingMore'>;
 
 /** The account page (ABU-67): this account's own paged history (newest page first, Load More for
@@ -960,8 +960,7 @@ export function useAccountTransactionsScreenData(accountId: string): AccountTran
     () => (feedQuery.data ? feedQuery.data.pages.flatMap((p) => p.transactions) : EMPTY_TX),
     [feedQuery.data],
   );
-  const { isLoading, isError, refetchStale } = useCombineScreenQueries([feedQuery, categoriesQuery]);
-  const isFetching = (feedQuery.isFetching && !feedQuery.isFetchingNextPage) || categoriesQuery.isFetching;
+  const { isLoading, isError } = useCombineScreenQueries([feedQuery, categoriesQuery]);
 
   const loadMore = useCallback(() => {
     if (feedQuery.hasNextPage && !feedQuery.isFetchingNextPage) feedQuery.fetchNextPage();
@@ -976,7 +975,7 @@ export function useAccountTransactionsScreenData(accountId: string): AccountTran
   }, [queryClient, accountId, feedQuery, categoriesQuery]);
 
   return {
-    transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale,
+    transactions, category, balances, isLoading, isError, refetch,
     hasMore: feedQuery.hasNextPage, loadMore, isLoadingMore: feedQuery.isFetchingNextPage,
   };
 }
