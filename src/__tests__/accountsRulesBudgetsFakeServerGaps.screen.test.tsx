@@ -72,22 +72,23 @@ describe('Accounts tab', () => {
 });
 
 describe('Account detail', () => {
-  // [A5] The real recent list holds every account's rows; the screen keeps only this account's.
-  // Fail-on-revert: stop filtering by account_id → "2 transactions".
-  it('[A5] shows only the opened account\'s rows from the shared recent list', async () => {
+  // [A5] The screen keeps only this account's rows, even if the list holds another account's.
+  // Fail-on-revert: stop filtering by account_id → the other account's row shows.
+  it('[A5] shows only the opened account\'s rows', async () => {
     setParams({ id: 'a1' });
-    server.seed('/transactions', [ROW, { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up' }]);
+    seedFeed([ROW, { ...ROW, transaction_id: 't2', merchant_name: 'Other shop', account_id: 'a2', account_name: 'Up' }]);
     await renderWithApp(<AccountDetail />);
-    expect(screen.getByText('1 transaction')).toBeTruthy();
+    expect(screen.getByText('Woolworths')).toBeTruthy();
+    expect(screen.queryByText('Other shop')).toBeNull();
   });
 
   // [A6] A balances outage keeps the list and shows no hero and no error.
   it('[A6] a failed balances read keeps the list, with no balance hero and no error', async () => {
     setParams({ id: 'a1' });
-    server.seed('/transactions', [ROW]);
+    seedFeed([ROW]);
     server.fail('/accounts/balances', 500);
     await renderWithApp(<AccountDetail />);
-    expect(screen.getByText('1 transaction')).toBeTruthy();
+    expect(screen.getByText('Woolworths')).toBeTruthy();
     expect(screen.queryByTestId('account-balance')).toBeNull();
     expect(screen.queryByTestId('account-error')).toBeNull();
   });
@@ -95,12 +96,12 @@ describe('Account detail', () => {
   // [A7] Retry after a cold failure draws the list once the server answers.
   it('[A7] Retry after a cold failure draws the list once the server answers', async () => {
     setParams({ id: 'a1' });
-    server.fail('/transactions', 500);
+    server.fail('/transactions/feed', 500);
     await renderWithApp(<AccountDetail />);
     expect(screen.getByTestId('account-error')).toBeTruthy();
-    server.once('GET', '/transactions', { body: [ROW] });
+    server.once('GET', '/transactions/feed', { body: { transactions: [ROW], nextCursor: null } });
     fireEvent.press(screen.getByTestId('account-retry'));
-    expect(await screen.findByText('1 transaction')).toBeTruthy();
+    expect(await screen.findByText('Woolworths')).toBeTruthy();
     expect(screen.queryByTestId('account-error')).toBeNull();
     await settle();
   });

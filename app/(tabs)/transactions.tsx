@@ -13,6 +13,7 @@ import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { DayHeading } from '../../src/components/DayHeading';
+import { LoadMoreButton } from '../../src/components/LoadMoreButton';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { SearchField } from '../../src/components/SearchField';
 import { useFirstFilingSeen } from '../../src/hooks/useFirstFilingSeen';
@@ -339,21 +340,12 @@ export default function Transactions() {
             batch shows first; each tap appends the next, older batch. Hidden during a search
             (WHIT-576): the server already searched all history. */}
         {!showSpinner && !showError && hasMore && !allCaughtUp && !searchingServer && (
-          isLoadingMore ? (
-            <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
-              <ActivityIndicator color={C.accent} />
-            </View>
-          ) : (
-            <Pressable
-              testID="transactions-load-more"
-              onPress={loadMore}
-              accessibilityRole="button"
-              accessibilityLabel="Load older transactions"
-              style={({ pressed }) => [styles.loadMore, pressed && PRESSED]}
-            >
-              <Text style={styles.loadMoreText}>Load More</Text>
-            </Pressable>
-          )
+          <LoadMoreButton
+            testID="transactions-load-more"
+            onPress={loadMore}
+            loading={isLoadingMore}
+            accessibilityLabel="Load older transactions"
+          />
         )}
 
     </ScrollChromeHeader>
@@ -392,12 +384,6 @@ const styles = StyleSheet.create({
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
   hintBold: { color: C.textBright, fontWeight: '700' },
 
-
-  // Load More: same treatment as the budget-detail reveal button (app/budget/[id]), plus a
-  // matched-height spinner slot so the list doesn't jump when it swaps in while a page loads.
-  loadMore: { marginTop: 18, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
-  loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
-  loadMoreState: { marginTop: 18, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
 
   // WHIT-576: the full-history search's status line (searching / failed / cut off).
   searchStatus: { flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 18, paddingVertical: 8 },

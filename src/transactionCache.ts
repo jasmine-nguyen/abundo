@@ -1,12 +1,13 @@
-// WHIT-627: the one place that knows every saved copy of a charge. A charge can sit in up to six
+// WHIT-627: the one place that knows every saved copy of a charge. A charge can sit in up to seven
 // query caches at once:
 //   ['transactions']            the Transactions tab feed (InfiniteData, the "Load More" history)
 //   ['uncategorizedFeed']       the Uncategorized tab's own paged feed
-//   ['transactionsRecent']      the bounded recent window (tab-bar dot, account-detail, goal-edit)
+//   ['accountFeed', *]          each account page's own paged history (ABU-67)
+//   ['transactionsRecent']      the bounded recent window (tab-bar dot, goal-edit)
 //   ['transactionsSearch', *]   the Transactions-tab search results (WHIT-576)
 //   ['budgetTransactions', *]   budget-detail cycle lists
 //   ['categoryTransactions', *] Insights category drill-in lists
-// The first four are the "main" copies. The last two are "scoped" lists, keyed per category and
+// The first five are the "main" copies. The last two are "scoped" lists, keyed per category and
 // cycle: a re-file never reads or stamps them (WHIT-524 — a stale cycle-keyed row must not join a
 // re-file sweep); it drops rows from the old budget's list and lets the refresh rebuild them.
 // Lookups (a tapped charge that lives only in a budget list) do read them.
@@ -17,7 +18,7 @@ import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query'
 import { queryClient } from './queryClient';
 import type { TransactionFeedPage, TransactionSearchResult } from './api';
 import type { Transaction, Category } from './types';
-import { breakdownKey, budgetTransactionsKey, budgetsKey, categoriesKey, categoryTransactionsKey, filingSuggestionsKey, rulesKey, transactionsKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedFeedKey, uncategorizedMerchantsKey } from './queryKeys';
+import { accountFeedKey, breakdownKey, budgetTransactionsKey, budgetsKey, categoriesKey, categoryTransactionsKey, filingSuggestionsKey, rulesKey, transactionsKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedFeedKey, uncategorizedMerchantsKey } from './queryKeys';
 
 // Concatenate transaction lists, keeping the FIRST copy of each id — so callers list their
 // freshest source first.
@@ -34,9 +35,9 @@ export function unionById(lists: Transaction[][]): Transaction[] {
   return merged;
 }
 
-function readFeedRows(client: QueryClient, key: QueryKey): Transaction[] {
-  const data = client.getQueryData<InfiniteData<TransactionFeedPage>>(key);
-  return data ? data.pages.flatMap((p) => p.transactions) : [];
+function readFeedRows(client: QueryClient, prefix: QueryKey): Transaction[] {
+  return client.getQueriesData<InfiniteData<TransactionFeedPage>>({ queryKey: prefix })
+    .flatMap(([, data]) => (data ? data.pages.flatMap((p) => p.transactions) : []));
 }
 
 function readScopedRows(client: QueryClient, prefix: QueryKey): Transaction[][] {
@@ -44,7 +45,7 @@ function readScopedRows(client: QueryClient, prefix: QueryKey): Transaction[][] 
 }
 
 // Every copy of every charge, de-duped by id. Freshest first so it wins the de-dup: feed →
-// uncategorized feed → recent → search, then (only when asked) budget → category lists.
+// uncategorized feed → account feeds → recent → search, then (only when asked) budget → category lists.
 // Writers pass includeScopedLists: false; lookups pass true (WHIT-524, see the header).
 export function readTransactionCopies(
   client: QueryClient, { includeScopedLists }: { includeScopedLists: boolean },
@@ -52,6 +53,7 @@ export function readTransactionCopies(
   const lists = [
     readFeedRows(client, transactionsKey),
     readFeedRows(client, uncategorizedFeedKey),
+    readFeedRows(client, accountFeedKey),
     client.getQueryData<Transaction[]>(transactionsRecentKey) ?? [],
     ...client.getQueriesData<TransactionSearchResult>({ queryKey: transactionsSearchKey })
       .map(([, result]) => result?.transactions ?? []),
@@ -66,9 +68,10 @@ export function findTransaction(id: string, opts: { includeScopedLists: boolean 
   return readTransactionCopies(queryClient, opts).find((t) => t.transaction_id === id);
 }
 
-// Map the caller's per-row transform over the feed pages, the uncategorized-feed pages (page
-// boundaries + cursors preserved) AND the flat recent array, so an optimistic edit reflects on the
-// tab list, the uncategorized tab, the dot, account-detail, and goal-edit at once.
+// Map the caller's per-row transform over the feed pages, the uncategorized-feed pages, every
+// account feed's pages (page boundaries + cursors preserved) AND the flat recent array, so an
+// optimistic edit reflects on the tab list, the uncategorized tab, the account pages, the dot and
+// goal-edit at once.
 // On the uncategorized tab this is what drops a just-filed
 // row from the list instantly: the row stays in the cached page but no longer matches the client
 // re-filter, so it disappears without a whole-history re-scan.
@@ -76,16 +79,17 @@ export function findTransaction(id: string, opts: { includeScopedLists: boolean 
 // apply-rules reconcile, which also REMOVES rows the server reported as deleted mid-run: safe
 // because page boundaries and cursors are untouched and the feeds already tolerate a sparse or
 // empty page (see useUncategorizedFeedQuery).
-function patchInfiniteFeed(key: QueryKey, fn: (prev: Transaction[]) => Transaction[]): void {
-  queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(key, (prev) =>
+function patchInfiniteFeed(prefix: QueryKey, fn: (prev: Transaction[]) => Transaction[]): void {
+  queryClient.setQueriesData<InfiniteData<TransactionFeedPage>>({ queryKey: prefix }, (prev) =>
     prev ? { ...prev, pages: prev.pages.map((pg) => ({ ...pg, transactions: fn(pg.transactions) })) } : prev);
 }
 
-// Patch the main copies (feed, uncategorized feed, recent, search). Guarded: no-ops on a cleared
+// Patch the main copies (feed, uncategorized feed, account feeds, recent, search). Guarded: no-ops on a cleared
 // cache, so a late rollback after sign-out needs no epoch gate.
 export function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): void {
   patchInfiniteFeed(transactionsKey, fn);
   patchInfiniteFeed(uncategorizedFeedKey, fn);
+  patchInfiniteFeed(accountFeedKey, fn);
   queryClient.setQueryData<Transaction[]>(transactionsRecentKey, (prev) => (prev ? fn(prev) : prev));
   queryClient.setQueriesData<TransactionSearchResult>({ queryKey: transactionsSearchKey }, (prev) =>
     prev ? { ...prev, transactions: fn(prev.transactions) } : prev);
@@ -110,7 +114,7 @@ export function patchAllCopies(mapRow: (row: Transaction) => Transaction): void 
 // patchTransactionsCache.
 export function removeFromAllCopies(txId: string): () => void {
   const prefixes: QueryKey[] = [
-    transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey,
+    transactionsKey, uncategorizedFeedKey, accountFeedKey, transactionsRecentKey, transactionsSearchKey,
     budgetTransactionsKey, categoryTransactionsKey,
   ];
   const snapshots = prefixes.flatMap((queryKey) => queryClient.getQueriesData<unknown>({ queryKey }));
@@ -128,8 +132,8 @@ export function removeFromAllCopies(txId: string): () => void {
   };
 }
 
-// What to mark for a refresh after each kind of change. The feed is never here: it is an
-// InfiniteData of loaded pages, so invalidating it would refetch every page (a storm); the
+// What to mark for a refresh after each kind of change. The feed and the account feeds are never
+// here: each is an InfiniteData of loaded pages, so invalidating it would refetch every page (a storm); the
 // optimistic patch already wrote the change into it.
 const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDeleted' | 'categoryDeleted' | 'rulesApplied', QueryKey[]> = {
   // A re-file changes the totals, which budget/category list a charge belongs to, and the

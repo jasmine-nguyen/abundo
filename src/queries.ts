@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, fetchAiInsights, listRules } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchAccountFeed, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, fetchAiInsights, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
 import { cycleClockView, nextPayday, cycleName } from './payCycle';
 import { loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './model';
@@ -9,7 +9,7 @@ import { readTransactionCopies } from './transactionCache';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, HomeLoanState, Rule } from './model';
 import type { Category, Transaction } from './types';
-import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey, aiInsightsKey } from './queryKeys';
+import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, accountFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey, aiInsightsKey } from './queryKeys';
 import { getStatus, subscribe } from './auth';
 import { accountSummaries } from './context';
 import { homeLoanProgressLine } from './homeLoanAccount';
@@ -173,8 +173,17 @@ export function useTransactionsFeedQuery(enabled: boolean) {
   return useCursorFeed(transactionsKey, fetchTransactionsFeed, enabled);
 }
 
-// The bounded "recent" list (server rolling window) behind the dot, account detail, and the
-// goal-edit picker — its OWN key, so the feed's Load More can't grow or disturb it.
+// One account's own history as an infinite query (ABU-67), behind the account page's Load More.
+export function useAccountFeedQuery(accountId: string, enabled: boolean) {
+  return useCursorFeed(
+    [...accountFeedKey, accountId],
+    (cursor) => fetchAccountFeed(accountId, cursor),
+    enabled && !!accountId,
+  );
+}
+
+// The bounded "recent" list (server rolling window) behind the dot and the goal-edit picker —
+// its OWN key, so the feed's Load More can't grow or disturb it.
 export function useRecentTransactionsQuery(enabled: boolean) {
   return useQuery({ queryKey: transactionsRecentKey, queryFn: fetchTransactions, enabled });
 }
@@ -210,8 +219,8 @@ export function useUncategorizedFeedQuery(enabled: boolean) {
 
 /** Resolve a tapped transaction by id across every list cache it might live in — the
  *  all-accounts feed, the uncategorized feed (a deep-history unfiled row shown on the
- *  Uncategorized tab lives ONLY here), the bounded recent window (a row tapped on
- *  account-detail), and the search results (WHIT-576: a deep-history match lives only
+ *  Uncategorized tab lives ONLY here), the bounded recent window, each account page's own
+ *  history (ABU-67: an older row loaded there lives ONLY there), and the search results (WHIT-576: a deep-history match lives only
  *  there). One place, so the picker, confirm sheet, and detail screen can't drift on
  *  which caches they search. Only LOADED pages are in cache, but only loaded rows are ever
  *  visible/tappable, so that is exactly the set the user can act on. */
@@ -220,7 +229,7 @@ export interface TransactionResolver {
   transactions: Transaction[]; // the de-duped union, for "has anything loaded yet" checks
 }
 // A version counter that ticks ONLY when a ['budgetTransactions', *],
-// ['categoryTransactions', *] or ['transactionsSearch', *] cache's DATA changes ('updated' /
+// ['categoryTransactions', *], ['transactionsSearch', *] or ['accountFeed', *] cache's DATA changes ('updated' /
 // 'removed'). It's the reactive trigger for the resolver's
 // point-in-time getQueriesData reads below: those caches aren't observed by a useQuery here,
 // so without this a note/tag edit that patches them wouldn't re-run the merge. Observer events
@@ -238,7 +247,7 @@ function useScopedTransactionCachesVersion(queryClient: QueryClient): number {
       queryClient.getQueryCache().subscribe((event) => {
         if (event.type !== 'updated' && event.type !== 'removed') return;
         const key = event.query.queryKey[0];
-        if (key === budgetTransactionsKey[0] || key === categoryTransactionsKey[0] || key === transactionsSearchKey[0]) {
+        if (key === budgetTransactionsKey[0] || key === categoryTransactionsKey[0] || key === transactionsSearchKey[0] || key === accountFeedKey[0]) {
           versionRef.current += 1;
           onStoreChange();
         }
@@ -715,7 +724,7 @@ export function useRefreshLiveBalances(): () => Promise<void> {
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------
-// The bounded "recent" shape (tab-bar dot, account detail, goal-edit picker). No Load More.
+// The bounded "recent" shape (tab-bar dot, goal-edit picker). No Load More.
 export interface RecentTransactionsScreenData {
   transactions: Transaction[];
   category: (id: string | null) => Category | undefined;
@@ -770,6 +779,22 @@ function useBalancesMap(authed: boolean) {
   return useMemo(
     () => new Map((balancesQuery.data ?? []).map((b) => [b.account_id, b])),
     [balancesQuery.data],
+  );
+}
+
+// A pull SNAPS a paged feed back to its newest page: trim to the first page, so the refetch that
+// follows is one round trip. Keeps the list's original load time: setQueryData stamps "now"
+// otherwise, and a failed refetch would then claim the trimmed list is fresh (WHIT-713).
+function trimFeedToFirstPage(
+  queryClient: QueryClient,
+  queryKey: readonly unknown[],
+  feedQuery: { data?: InfiniteData<TransactionFeedPage>; dataUpdatedAt: number },
+): void {
+  if (!feedQuery.data || feedQuery.data.pages.length <= 1) return;
+  queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(
+    queryKey,
+    { pages: feedQuery.data.pages.slice(0, 1), pageParams: feedQuery.data.pageParams.slice(0, 1) },
+    { updatedAt: feedQuery.dataUpdatedAt },
   );
 }
 
@@ -846,15 +871,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
         queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
       ]);
     }
-    // Keep the list's original load time: setQueryData stamps "now" otherwise, and a failed
-    // refetch would then claim the trimmed list is fresh (WHIT-713).
-    if (feedQuery.data && feedQuery.data.pages.length > 1) {
-      queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(
-        activeFeedKey,
-        { pages: feedQuery.data.pages.slice(0, 1), pageParams: feedQuery.data.pageParams.slice(0, 1) },
-        { updatedAt: feedQuery.dataUpdatedAt },
-      );
-    }
+    trimFeedToFirstPage(queryClient, activeFeedKey, feedQuery);
     // WHIT-501: a pull is the user's explicit "get me the latest", so refresh the whole-history
     // uncategorized tally alongside the list. Without this the badge/dot keep a fresh-cached number
     // (5min staleTime) while the pull loads brand-new unfiled rows into the list — badge says 3, list
@@ -907,7 +924,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   return { search, transactions, category, balances, isLoading, isError, error, refreshError, updatedAt, bankSynced, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
 
-/** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed
+/** The bounded "recent" reads (tab-bar dot, goal-edit picker): a fixed
  *  server-window list on its OWN key, so it can't grow or drift as the tab's feed pages back
  *  through history. Same composite shape the tab had before it moved to the feed. */
 export function useRecentTransactionsScreenData(): RecentTransactionsScreenData {
@@ -924,6 +941,43 @@ export function useRecentTransactionsScreenData(): RecentTransactionsScreenData 
     balances,
     isFetching,
     ...status,
+  };
+}
+
+export type AccountTransactionsScreenData = RecentTransactionsScreenData
+  & Pick<TransactionsScreenData, 'hasMore' | 'loadMore' | 'isLoadingMore'>;
+
+/** The account page (ABU-67): this account's own paged history (newest page first, Load More for
+ *  older), the category lookup and the live balances. A pull snaps back to the newest page. */
+export function useAccountTransactionsScreenData(accountId: string): AccountTransactionsScreenData {
+  const authed = useIsAuthed();
+  const feedQuery = useAccountFeedQuery(accountId, authed);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
+  const balances = useBalancesMap(authed);
+  const queryClient = useQueryClient();
+
+  const transactions = useMemo(
+    () => (feedQuery.data ? feedQuery.data.pages.flatMap((p) => p.transactions) : EMPTY_TX),
+    [feedQuery.data],
+  );
+  const { isLoading, isError, refetchStale } = useCombineScreenQueries([feedQuery, categoriesQuery]);
+  const isFetching = (feedQuery.isFetching && !feedQuery.isFetchingNextPage) || categoriesQuery.isFetching;
+
+  const loadMore = useCallback(() => {
+    if (feedQuery.hasNextPage && !feedQuery.isFetchingNextPage) feedQuery.fetchNextPage();
+  }, [feedQuery]);
+  const refetch = useCallback(() => {
+    trimFeedToFirstPage(queryClient, [...accountFeedKey, accountId], feedQuery);
+    return Promise.all([
+      feedQuery.refetch(),
+      categoriesQuery.refetch(),
+      queryClient.refetchQueries({ queryKey: accountBalancesKey }),
+    ]);
+  }, [queryClient, accountId, feedQuery, categoriesQuery]);
+
+  return {
+    transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale,
+    hasMore: feedQuery.hasNextPage, loadMore, isLoadingMore: feedQuery.isFetchingNextPage,
   };
 }
 

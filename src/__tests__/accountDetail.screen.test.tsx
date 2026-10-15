@@ -1,7 +1,7 @@
 // WHIT-212 — the account detail screen's balance hero: shows the signed live balance
 // (green in credit / red owing), the credit-card "available" line ONLY when you owe yet
 // have credit left, and hides it for a loan/spending account. Runs over the fake server: the
-// real useRecentTransactionsScreenData reads the seeded GET /transactions + /accounts/balances.
+// real useAccountTransactionsScreenData reads the seeded account feed + /accounts/balances.
 // ../context is partially mocked (real selectors, stubbed useAppContext for TransactionRow);
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
@@ -14,7 +14,7 @@ import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settl
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
-import { transactionsRecentKey } from '../queryKeys';
+import { accountFeedKey } from '../queryKeys';
 import { styleOf } from './support/layout';
 import { accountBalance } from './support/accountBalance';
 import type { AccountBalance } from '../api';
@@ -36,6 +36,11 @@ const ROW = {
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
+// The account page's own list: one end-of-history page of GET /transactions/feed?account=a1.
+const FEED = '/transactions/feed';
+const FIRST_PAGE = `${FEED}?account=a1`;
+const seedFeed = (transactions: unknown[]) => server.seed(FEED, { transactions, nextCursor: null });
+
 const bal = (over: Partial<AccountBalance> = {}) => accountBalance({
   amount: -6492.26, available_balance: 8171.88, as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
@@ -44,7 +49,7 @@ beforeEach(() => {
   resetAuth();
   resetRouter();
   setParams({ id: 'a1' });
-  server.seed('/transactions', [ROW]);
+  seedFeed([ROW]);
 });
 
 it('shows an owed balance in bright neutral text with "owed", and the credit-card "available" line', async () => {
@@ -74,9 +79,9 @@ it('hides the available line for a loan (you owe, but there is no credit to draw
 // plus a failed taxonomy stacks both spinner and error, and a refetch failure over cached rows
 // keeps the LIST. [A-acct-cache] below supersedes the old "cache-first" test (dropped WHIT-459).
 it('while loading with nothing cached, shows the spinner and NOT the empty "No transactions" message', async () => {
-  const held = server.hold('/transactions');
+  const held = server.hold(FEED);
   render(<WithQueries><AccountDetail /></WithQueries>);
-  await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(1));
+  await waitFor(() => expect(server.sent('GET', FIRST_PAGE)).toHaveLength(1));
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
   held.release();
@@ -85,24 +90,25 @@ it('while loading with nothing cached, shows the spinner and NOT the empty "No t
 
 it('a background refetch failure over cached rows keeps the transaction list rendered', async () => {
   await renderWithQueries(<AccountDetail />);
-  server.fail('/transactions', 500);
+  server.fail(FEED, 500);
   await refreshInAct(() => queryClient.refetchQueries());
-  expect(queryClient.getQueryState(transactionsRecentKey)?.status).toBe('error');
+  expect(queryClient.getQueryState([...accountFeedKey, 'a1'])?.status).toBe('error');
   expect(screen.queryByTestId('account-error')).toBeNull();
-  expect(screen.getByText('1 transaction')).toBeTruthy(); // cached content still on screen
+  expect(screen.getByText('−⁠$42.00')).toBeTruthy(); // cached content still on screen
 });
 
-// WHIT-643: a balance-only account (e.g. the home loan, whose few transactions are outside the
-// loaded window) must still show its live balance, a readable title and a "No recent
-// transactions" note. Fail-on-revert: keep the balance card inside the `detail` branch → red.
-it('shows the balance for an account with a saved balance but no loaded transactions', async () => {
+// WHIT-643: a balance-only account (no transactions at all) must still show its live balance, a
+// readable title and a "No transactions yet" note. Fail-on-revert: keep the balance card inside
+// the `detail` branch → red.
+it('shows the balance for an account with a saved balance but no transactions', async () => {
   setParams({ id: 'up-homeloan' });
+  seedFeed([]);
   server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -500000, available_balance: 0, account_type: 'mortgage' })]);
   await renderWithQueries(<AccountDetail />);
   expect(screen.getByTestId('account-balance')).toBeTruthy();
   expect(screen.getByText('$500,000.00')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
-  expect(screen.getByText('No recent transactions')).toBeTruthy();
+  expect(screen.getByText('No transactions yet')).toBeTruthy();
 });
 
 // ABU-64: only the home loan (account_type 'mortgage') gets the "See payoff progress" row, which
@@ -148,10 +154,10 @@ it('pull refreshes the list and live balances, headings show the day total, bala
   expect(amount.props.adjustsFontSizeToFit).toBe(true);
   expect(amount.props.maxFontSizeMultiplier).toBe(2);
 
-  const listReads = server.sent('GET', '/transactions').length;
+  const listReads = server.sent('GET', FIRST_PAGE).length;
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
   await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
-  await waitFor(() => expect(server.sent('GET', '/transactions').length).toBeGreaterThan(listReads));
+  await waitFor(() => expect(server.sent('GET', FIRST_PAGE).length).toBeGreaterThan(listReads));
   await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
 });
 
@@ -177,10 +183,10 @@ it.each([
   ['during the cold load', true, false],
   ['on a settled empty page', false, true],
 ])('a pull %s: pull spinner shown = %s', async (_name, coldLoad, spinning) => {
-  server.seed('/transactions', []);
-  const list = coldLoad ? server.hold('/transactions') : null;
+  seedFeed([]);
+  const list = coldLoad ? server.hold(FEED) : null;
   render(<WithQueries><AccountDetail /></WithQueries>);
-  await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(1));
+  await waitFor(() => expect(server.sent('GET', FIRST_PAGE)).toHaveLength(1));
   if (!coldLoad) await waitFor(() => expect(screen.getByText('No transactions')).toBeTruthy());
   const liveRefresh = server.hold('/accounts/balances/refresh');
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
@@ -195,9 +201,46 @@ it.each([
 // [A3] a day with nothing counted to spend (income only) shows the bare day label, no " · total".
 // Fail-on-revert: always append the total in DayHeading → "… · null" shows.
 it('a day heading with no spend shows only the day label', async () => {
-  server.seed('/transactions', [{ ...ROW, amount: 500, category: 'income' }]);
+  seedFeed([{ ...ROW, amount: 500, category: 'income' }]);
   await renderWithQueries(<AccountDetail />);
-  expect(screen.getByText('1 transaction')).toBeTruthy();
+  expect(screen.getByText('Shop')).toBeTruthy();
   expect(screen.queryByText(/ · /)).toBeNull();
+});
+
+// ABU-67: the account page pages back through THIS account's whole history. It opens on the
+// newest page of GET /transactions/feed?account=<id>; Load More (shown only while nextCursor is
+// set) sends that cursor, a spinner shows while it loads, and the older rows join the list.
+// A pull snaps back to the newest page only.
+it('Load More appends this account\'s older rows, and a pull snaps back to the newest page', async () => {
+  server.seed('/transactions', []);
+  server.seed('/transactions/feed', { transactions: [ROW], nextCursor: 'c1' });
+  await renderWithQueries(<AccountDetail />);
+  const feedReads = () => server.sentUnder('GET', '/transactions/feed')
+    .map((request) => new URLSearchParams(request.path.split('?')[1] ?? ''))
+    .filter((params) => params.get('account') === 'a1');
+  expect(feedReads().map((params) => params.get('cursor'))).toEqual([null]);
+  expect(screen.getByText('−⁠$42.00')).toBeTruthy();
+
+  const older = { ...ROW, transaction_id: 't0', date: '2025-03-04', authorized_date: '2025-03-04', amount: -7 };
+  const held = server.hold('/transactions/feed');
+  server.once('GET', '/transactions/feed', { body: { transactions: [older], nextCursor: null } });
+  fireEvent.press(screen.getByTestId('account-load-more'));
+  expect(await screen.findByTestId('account-load-more-spinner')).toBeTruthy();
+  held.release();
+
+  expect(await screen.findByText('−⁠$7.00')).toBeTruthy();
+  expect(screen.getByText('−⁠$42.00')).toBeTruthy();
+  const olderPage = feedReads().at(-1)!;
+  expect(olderPage.get('account')).toBe('a1');
+  expect(olderPage.get('cursor')).toBe('c1');
+  expect(screen.queryByTestId('account-load-more')).toBeNull();
+
+  const readsBeforePull = feedReads().length;
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await waitFor(() => expect(screen.queryByText('−⁠$7.00')).toBeNull());
+  expect(screen.getByText('−⁠$42.00')).toBeTruthy();
+  expect(await screen.findByTestId('account-load-more')).toBeTruthy();
+  expect(feedReads().slice(readsBeforePull).every((params) => params.get('cursor') === null)).toBe(true);
+  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
 });
 

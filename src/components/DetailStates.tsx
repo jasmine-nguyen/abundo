@@ -2,7 +2,7 @@ import React from 'react';
 import { ListStates } from './ListStates';
 
 // WHIT-276: the cache-first loading/error/retry gate shared by the by-id detail screens
-// (transaction/[id], account/[id]). Both read one thing from the SAME cached list, so both
+// (transaction/[id], account/[id]). Both read from a cached list, so both
 // gate the spinner/error the same way: only show them when there is NOTHING cached to render
 // yet — a background refetch over cached rows keeps the content up. Each screen supplies its
 // own loaded content + its own empty state as children; the blocks themselves are ListStates.

@@ -650,6 +650,20 @@ def _shape_feed_rows(page: list[dict]) -> None:
         txn.setdefault("category", None)
 
 
+def _parse_feed_account(params: dict, resume_keys: dict) -> tuple[str | None, dict | None]:
+    """Read the feed's optional `account` param. Returns (account, error): absent or empty → None
+    (the all-accounts feed); an unknown account → 400; a cursor resuming any other account (e.g.
+    one taken from the all-accounts feed) → 400, so the two lists never mix."""
+    account = params.get("account")
+    if not account:
+        return None, None
+    if account not in ACCOUNT_ID_MAP.values():
+        return None, _json_response(400, {"error": "invalid account"})
+    if any(account_id != account for account_id in resume_keys):
+        return None, _json_response(400, {"error": "invalid cursor"})
+    return account, None
+
+
 def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
     """GET /transactions/feed — the all-accounts feed, newest-first, paged back through
     FULL history (Load More).
@@ -658,19 +672,24 @@ def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
     merges every account with NO date floor and returns a cursor so the app can walk back
     to the start of history. Returns {"transactions": [...], "nextCursor": <opaque string|null>,
     "bankSyncedAt": {account_id: epoch ms}}; nextCursor is null once every account is exhausted,
-    and bankSyncedAt (first page only) holds each account's latest bank delivery (WHIT-858). Bad input → 400.
+    and bankSyncedAt (all-accounts first page only) holds each account's latest bank delivery
+    (WHIT-858). With `?account=<id>` it pages that one account's history instead. Bad input → 400.
     """
     limit, resume_keys, error = _parse_feed_page_params(event)
     if error is not None:
         return error
+    account, error = _parse_feed_account(event.get("queryStringParameters") or {}, resume_keys)
+    if error is not None:
+        return error
 
-    page, next_resume_keys = _fetch_feed_page(repo, limit, resume_keys)
+    accounts = [account] if account else None
+    page, next_resume_keys = _fetch_feed_page(repo, limit, resume_keys, accounts)
     _shape_feed_rows(page)
 
     body = {"transactions": page, "nextCursor": _encode_feed_cursor(next_resume_keys)}
-    # First page only (the app reads it from there), and best-effort: a failed read drops the
-    # "Bank synced" line, never the list.
-    if not resume_keys:
+    # All-accounts first page only (the app reads it from there), and best-effort: a failed read
+    # drops the "Bank synced" line, never the list.
+    if not resume_keys and account is None:
         try:
             body["bankSyncedAt"] = {account_id: synced * 1000 for account_id, synced in repo.get_bank_synced_at().items()}
         except DatabaseError:
@@ -679,7 +698,7 @@ def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
 
 
 def _fetch_feed_page(
-    repo: TransactionRepository, limit: int, resume_keys: dict
+    repo: TransactionRepository, limit: int, resume_keys: dict, accounts: list[str] | None = None
 ) -> tuple[list[dict], dict]:
     """One page of the merged all-accounts feed: the globally newest `limit` rows at or
     after each account's resume position, plus the resume map for the next page.
@@ -700,10 +719,11 @@ def _fetch_feed_page(
 
     resume_keys is {} on the first page (every account from newest); otherwise it holds
     only the still-live accounts, each mapped to a date-index key or None (from newest).
+    `accounts` limits the first page to those accounts (default: every account).
     """
     first_page = not resume_keys
     if first_page:
-        live = {account_id: None for account_id in ACCOUNT_ID_MAP.values()}
+        live = {account_id: None for account_id in (accounts or ACCOUNT_ID_MAP.values())}
     else:
         live = dict(resume_keys)
 
