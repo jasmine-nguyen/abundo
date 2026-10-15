@@ -150,7 +150,7 @@ describe('focus refetch does not storm', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(server.sent('GET', '/paycycle')).toHaveLength(0);
+    expect(server.sent('GET', '/paycycle')).toHaveLength(1); // the hero's day of the cycle reads it (ABU-62)
     expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
     expect(server.sent('GET', '/categories')).toHaveLength(1);
   });

@@ -111,13 +111,11 @@ it('[A11] a grandchild stays hidden until BOTH ancestors are expanded', async ()
 it('[A12] the hero shows the TOP-LEVEL count, not the flat row count', async () => {
   renderInsights();
   // 2 top-level trees (Food, Car) — NOT the 3 leaves / 5 total rows
-  expect(await screen.findByText('spent across 2 categories')).toBeTruthy();
+  expect(await screen.findByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 2 categories\b/);
   // expanding must NOT change the headline count
   fireEvent.press(screen.getByText('Food'));
   await screen.findByText('Groceries');
-  expect(screen.getByText('spent across 2 categories')).toBeTruthy();
-  expect(screen.queryByText('spent across 3 categories')).toBeNull();
-  expect(screen.queryByText('spent across 4 categories')).toBeNull();
+  expect(screen.getByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 2 categories\b/);
 });
 
 it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => {
@@ -154,7 +152,7 @@ describe('cycle-independent hero', () => {
   it('paints the hero from the breakdown alone', async () => {
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 
-    expect(await screen.findByText('spent across 1 category')).toBeTruthy(); // hero painted from breakdown
+    expect(await screen.findByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 1 category\b/); // hero painted from breakdown
     expect(screen.queryByText('Loading…')).toBeNull();
     expect(server.sent('GET', '/breakdown')).toHaveLength(1); // current cycle (WHIT-68); server derives the window
   });

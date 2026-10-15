@@ -76,3 +76,6 @@ export function cycleClockView(
 }
 
 export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
+
+// Which day of the cycle today is, 1-based: payday (daysLeft = length) is day 1, the last day (daysLeft 0) is day length.
+export function dayOfCycle(s: { cycleLen: number; daysLeft: number }) { return Math.min(s.cycleLen, s.cycleLen - s.daysLeft + 1); }

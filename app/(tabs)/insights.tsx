@@ -5,10 +5,12 @@ import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { categoryBreakdown, incomeBreakdown } from '../../src/context';
 import { useAiInsights } from '../../src/hooks/useAiInsights';
-import { useInsightsScreenData } from '../../src/queries';
+import { useInsightsScreenData, usePayCycle } from '../../src/queries';
+import { dayOfCycle } from '../../src/payCycle';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { HeroGradientFill } from '../../src/components/ui';
-import { ListStates } from '../../src/components/ListStates';
+import { ListStates, StaleDataLine } from '../../src/components/ListStates';
+import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ExportButton } from '../../src/components/ExportButton';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
@@ -25,7 +27,14 @@ export default function Insights() {
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
   // `incomeSources = []` default: the real hook always returns an array, but the default keeps a
   // hand-mocked test harness that omits it from throwing on `.length` (WHIT-381).
-  const { breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
+  const {
+    breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError,
+    error, refreshError, updatedAt, refetch, refetchStale,
+  } = useInsightsScreenData(cycle);
+  // ABU-62: the hero's "day 6 of 14". Read apart from the Insights data so a pay-cycle failure
+  // never blanks the spending (WHIT-840); the day only shows once the real cycle has loaded.
+  const { cycleLen, daysLeft, payCycleReady } = usePayCycle();
+  const { pulling, onRefresh } = usePullToRefresh(refetch);
   const { rows, total } = categoryBreakdown({ breakdown, category });
 
   // WHIT-373: one list, a switch. "Spending" shows the category breakdown; "Earning" shows the same
@@ -75,8 +84,17 @@ export default function Insights() {
   const showToggle = !showSpinner && !showError && (hasSpend || hasIncome);
   const side = showToggle ? sideChoice : 'spending';
 
+  let heroSub = `spent across ${topLevelCount} ${topLevelCount === 1 ? 'category' : 'categories'}`;
+  if (cycle === 0 && payCycleReady) heroSub += ` · day ${dayOfCycle({ cycleLen, daysLeft })} of ${cycleLen}`;
+
   return (
-    <ScrollChromeHeader title="Insights" right={<ExportButton cycle={cycle} category={category} />}>
+    <ScrollChromeHeader
+      title="Insights"
+      subtitle={showSpinner || showError ? null : <StaleDataLine idPrefix="insights" error={refreshError} updatedAt={updatedAt} showUpdated />}
+      right={<ExportButton cycle={cycle} category={category} />}
+      refreshing={pulling && !showSpinner}
+      onRefresh={onRefresh}
+    >
         {/* WHIT-68: look back one pay cycle. "This cycle" is spend so far; "Last cycle"
             is the full prior cycle. Switching only moves the hero + rows (the AI coach
             below stays about the current cycle). */}
@@ -105,7 +123,7 @@ export default function Insights() {
           ) : (
             <>
               <Text testID="insights-hero-total" style={styles.heroTotal}>{fmt(total)}</Text>
-              <Text style={styles.heroSub}>spent across {topLevelCount} {topLevelCount === 1 ? 'category' : 'categories'}</Text>
+              <Text testID="insights-hero-sub" style={styles.heroSub}>{heroSub}</Text>
             </>
           )}
         </View>
@@ -116,7 +134,7 @@ export default function Insights() {
         {cycle === 0 && <AiCoachCard />}
 
         <ListStates
-          showSpinner={showSpinner} showError={showError} idPrefix="insights"
+          showSpinner={showSpinner} showError={showError} error={error} idPrefix="insights"
           errorText="Couldn't load your spending." retryLabel="Retry loading your insights" onRetry={refetch}
         />
         {/* Pie/donut of where the cycle's money went — one wedge per top-level category, in

@@ -1,7 +1,7 @@
 // WHIT-9: the "days until next payday" clock. Runs under TZ=Australia/Melbourne
 // (see the test script) so the daylight-saving-immunity is genuinely exercised.
 import { describe, it, expect } from '@jest/globals';
-import { cycleClock, cycleClockView, cycleName, nextPayday } from '../payCycle';
+import { cycleClock, cycleClockView, cycleName, dayOfCycle, nextPayday } from '../payCycle';
 import { isoToUtcDayMs, dateToUtcDayMs, utcDayMsToISO, MS_PER_DAY } from '../dateutil';
 
 // Build a local-calendar Date for a given Y-M-D (month is 1-based here for clarity).
@@ -113,5 +113,16 @@ describe('cycleClockView', () => {
     // A corrupt/older-cache value can't drive elapsedFrac out of [0,1] → no negative bars.
     expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: 21 }).daysLeft).toBe(14);
     expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: -3 }).daysLeft).toBe(0);
+  });
+});
+
+describe('dayOfCycle', () => {
+  it.each([
+    ['payday (all days left) is day 1', 14, 14, 1],
+    ['mid-cycle is length − daysLeft + 1', 14, 9, 6],
+    ['the last day before payday (1 left) is the final day', 14, 1, 14],
+    ['an out-of-range 0 left is capped at the final day', 14, 0, 14],
+  ])('%s', (_label, cycleLen, daysLeft, day) => {
+    expect(dayOfCycle({ cycleLen, daysLeft })).toBe(day);
   });
 });
