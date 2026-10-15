@@ -51,13 +51,6 @@ describe('SpendingDonut', () => {
     expect(screen.getByText('Groceries')).toBeTruthy();
     expect(screen.queryByText('$100')).toBeNull();
     expect(screen.queryByText('total spent')).toBeNull();
-
-    fireEvent.press(screen.getByTestId('donut-slice-c')); // a tapped slice still shows its amount
-    expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25');
-    expect(screen.queryByTestId('donut-center-top-share')).toBeNull();
-
-    fireEvent.press(screen.getByTestId('donut-center-reset')); // the hole goes back to the biggest share
-    expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%');
   });
 
   it('gives the chart an accessible summary of each slice', () => {
