@@ -25,7 +25,7 @@ import { pullAndSettle } from './support/pull';
 import { pinToday } from './support/clock';
 import { GLYPH, ICON } from '../icons';
 import { C, tint } from '../theme';
-import { HERO_BIG_MAX_SCALE } from '../hooks/useLargeText';
+import { HERO_BIG_MAX_SCALE, LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
@@ -84,6 +84,17 @@ it('at very large text a spending row stacks and the hero total is capped to one
   const hero = screen.getByTestId('insights-hero-total');
   expect(hero.props.numberOfLines).toBe(1);
   expect(hero.props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
+});
+
+// [A4] ABU-63: a row's amount stays on one line and stops growing at the shared cap.
+it('caps each row amount to one line at the shared large-text limit', async () => {
+  seedBreakdown({ spend: TWO_ROWS });
+  await renderInsights();
+  for (const text of ['$25', '$80']) {
+    const amount = screen.getByText(text);
+    expect(amount.props.numberOfLines).toBe(1);
+    expect(amount.props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+  }
 });
 
 it('renders a row per spent category with the pending portion visible', async () => {
@@ -623,6 +634,15 @@ describe('Insights parent row arrow', () => {
     xmls = xmlsIn(parentRow());
     expect(xmls).toContain(drawn(GLYPH.chevronDown));
     expect(xmls).not.toContain(drawn(ICON.q));
+  });
+
+  // [A3] ABU-63: the shared row header's right block is a column, so the arrow needs its own row
+  // to sit beside the amount rather than above it.
+  it('puts the arrow beside the amount, not above it', async () => {
+    await renderInsights();
+    const arrow = parentRow().find((n) => n.props.xml === drawn(GLYPH.chevron));
+    const amount = within(parentRow()).getByText('$30');
+    expect(styleOf(sharedHost(arrow, amount)).flexDirection).toBe('row');
   });
 });
 

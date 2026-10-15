@@ -7,6 +7,7 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import './support/donut';
 import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/SpendingDonut';
+import { HERO_BIG_MAX_SCALE } from '../hooks/useLargeText';
 
 const s = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
 
@@ -85,6 +86,19 @@ describe('SpendingDonut', () => {
     fireEvent.press(screen.getByTestId('donut-slice-g')); // same wedge → toggle off
     expect(screen.queryByTestId('donut-center-amount')).toBeNull();
     expect(screen.getByTestId('donut-center-top-share').props.children).toBe('75%');
+  });
+
+  // [A5] ABU-63: the hole is a fixed size, so its readout (at rest and tapped) is one line and
+  // stops growing at the hero cap.
+  it('caps the centre readout so large text cannot overflow the hole', () => {
+    render(<SpendingDonut slices={TWO} />);
+    const capped = (node: { props: { numberOfLines?: number; maxFontSizeMultiplier?: number } }) =>
+      expect([node.props.numberOfLines, node.props.maxFontSizeMultiplier]).toEqual([1, HERO_BIG_MAX_SCALE]);
+    capped(screen.getByTestId('donut-center-top-share'));
+    expect(screen.getByText('Groceries').props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
+    fireEvent.press(screen.getByTestId('donut-slice-c'));
+    capped(screen.getByTestId('donut-center-amount'));
+    expect(screen.getByText('Coffee').props.maxFontSizeMultiplier).toBe(HERO_BIG_MAX_SCALE);
   });
 
   it('tapping the centre resets a selection back to the biggest-share readout', () => {

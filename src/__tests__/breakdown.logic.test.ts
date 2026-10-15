@@ -124,6 +124,25 @@ describe('categoryBreakdown', () => {
       tiny: '<1% of spend',
     });
   });
+
+  // [A1] Exactly half a percent rounds to '1%' (only below it reads '<1%'), and Uncategorised gets
+  // the share wording like any other row.
+  it('labels a row at exactly 0.5% as 1% and labels Uncategorised by its share (ABU-63)', () => {
+    const s = makeState({
+      categories: cats,
+      breakdown: {
+        groceries: spend({ posted: 600, pending: 0 }),
+        coffee: spend({ posted: 395, pending: 0 }),
+        [UNCATEGORIZED_KEY]: spend({ posted: 0, pending: 5 }),
+      },
+    });
+    const labels = Object.fromEntries(categoryBreakdown(s).rows.map((r) => [r.id, r.spentLabel]));
+    expect(labels).toEqual({
+      groceries: '60% of spend',
+      coffee: '40% of spend',
+      [UNCATEGORIZED_KEY]: '1% of spend · $5 pending',
+    });
+  });
 });
 
 // --- sub-category drill-down tree (WHIT-226) --------------------------------
