@@ -31,7 +31,6 @@ def ok_payload(amount, account_type):
 LIVE_PAYLOADS = {
     "3zVQJ8Btz_IRmqp78VrQnQ": ok_payload("96270.59", "checking"),                       # up-spending
     "T6d8ppsYssBDFCwl1qEb0w": ok_payload("-596642.43", "mortgage"),                     # up-homeloan
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": ok_payload("-6492.26", "unknown"),   # anz
     "CC6EE20D-4931-4B10-86CA-EADD45A062DC": ok_payload("-230", "unknown"),              # westpac
 }
 

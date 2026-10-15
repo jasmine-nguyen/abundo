@@ -142,7 +142,6 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
     assert stored == {
         "up-spending": Decimal("96270.59"),
         "up-homeloan": Decimal("-596642.43"),
-        "anz-rewards-black-visa": Decimal("-6492.26"),
         "westpac-altitude-qantas-black": Decimal("-230"),
     }
 
@@ -276,7 +275,7 @@ def test_poll_account_balances_partial_fetch_failure_survivors_keep_batched_old(
     # (not a shifted/None value). Extends the existing single-account-isolation test, which only
     # checks the stored count and ids, not that survivors keep the right prior.
     accounts = _FakeAccountRepo(
-        prior={"up-spending": Decimal("90000"), "anz-rewards-black-visa": Decimal("-6000")}
+        prior={"up-spending": Decimal("90000"), "westpac-altitude-qantas-black": Decimal("-200")}
     )
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
@@ -292,7 +291,7 @@ def test_poll_account_balances_partial_fetch_failure_survivors_keep_batched_old(
     assert stored == len(handler.BALANCE_SOURCES) - 1
     assert "up-homeloan" not in by_account  # the failed account is skipped from deltas
     assert by_account["up-spending"]["old"] == Decimal("90000")     # survivor keeps its own old
-    assert by_account["anz-rewards-black-visa"]["old"] == Decimal("-6000")
+    assert by_account["westpac-altitude-qantas-black"]["old"] == Decimal("-200")
 
 
 def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler, monkeypatch):

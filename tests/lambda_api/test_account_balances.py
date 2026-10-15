@@ -113,7 +113,6 @@ def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
     assert upserted(repo) == {
         "up-spending": Decimal("96270.59"),
         "up-homeloan": Decimal("-596642.43"),
-        "anz-rewards-black-visa": Decimal("-6492.26"),
         "westpac-altitude-qantas-black": Decimal("-230"),
     }
     assert marker_writes(repo) == [1000]  # marker armed at now
@@ -143,7 +142,7 @@ def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monk
     resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200  # one account down, the others still refresh
-    assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa", "westpac-altitude-qantas-black"}
+    assert set(upserted(repo)) == {"up-spending", "westpac-altitude-qantas-black"}
     assert marker_writes(repo) == [1000]   # marker armed despite the partial failure
 
 
@@ -239,7 +238,7 @@ def _repo_whose_prior_read_fails():
 
 
 _NEW_HOMELOAN = Decimal("-596642.43")
-_ALL_IDS = {"up-spending", "up-homeloan", "anz-rewards-black-visa", "westpac-altitude-qantas-black"}
+_ALL_IDS = {"up-spending", "up-homeloan", "westpac-altitude-qantas-black"}
 
 
 @pytest.mark.parametrize(
