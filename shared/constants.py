@@ -193,7 +193,6 @@ BALANCE_POLL_TIMEOUT_SECONDS = 30
 BALANCE_SOURCES = [
     {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
     {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
-    {"bid": "fiskil_4", "aid": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"},  # anz-rewards-black-visa
     {"bid": "fiskil_77", "aid": "CC6EE20D-4931-4B10-86CA-EADD45A062DC"},        # westpac-altitude-qantas-black
 ]
 # Drift guard (mirrors the HOMELOAN_ACCOUNT_ID assert): a source whose aid isn't mapped
@@ -208,7 +207,7 @@ assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
 # transaction has arrived for FEED_STALL_DAYS (22-25 Sept 2026: BankSync went quiet for 3
 # days while the Westpac balance kept moving, and nobody noticed). The home loan is NOT
 # watched: interest moves its balance with no transaction, so it would false-alarm.
-FEED_STALL_ACCOUNT_IDS = ("up-spending", "westpac-altitude-qantas-black", "anz-rewards-black-visa")
+FEED_STALL_ACCOUNT_IDS = ("up-spending", "westpac-altitude-qantas-black")
 FEED_STALL_DAYS = 3
 # How far back (by bank date) the poller reads transaction ids to spot a new one. Past
 # FEED_WINDOW_DAYS so every BankSync re-send lands inside it and is recognised as seen.
