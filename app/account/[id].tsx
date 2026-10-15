@@ -5,28 +5,27 @@ import { C, FONT, fmt, PRESSED } from '../../src/theme';
 import { availableCredit, balanceDisplay } from '../../src/accountDisplay';
 import { Glyph } from '../../src/icons';
 import { accountDetail, accountNameFromId, useAppContext } from '../../src/context';
-import { useRecentTransactionsScreenData, useRefreshLiveBalances } from '../../src/queries';
+import { useAccountTransactionsScreenData, useRefreshLiveBalances } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { Header } from '../../src/components/Header';
 import { DayHeading } from '../../src/components/DayHeading';
 import { TransactionRow } from '../../src/components/TransactionRow';
+import { LoadMoreButton } from '../../src/components/LoadMoreButton';
 import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { BalanceFreshnessPill } from '../../src/components/BalanceFreshnessPill';
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
-// route is the account_id. Transactions come from the recent query — a seam that reads the
-// same cache as the Transactions tab today, and in the follow-up becomes a bounded fixed
-// window so this count can't drift as that tab pages back through history. We filter to this
-// account and group by date. WHIT-212: the live balance comes from the account-balances query
-// (poller-fed), keyed by the same account_id.
+// route is the account_id. ABU-67: the rows are this account's own paged history — the newest
+// page first, Load More for older ones — grouped by date. WHIT-212: the live balance comes from
+// the account-balances query (poller-fed), keyed by the same account_id.
 export default function AccountDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { transactions, category, balances, isLoading, isError, refetch } = useRecentTransactionsScreenData();
+  const { transactions, category, balances, isLoading, isError, refetch, hasMore, loadMore, isLoadingMore } = useAccountTransactionsScreenData(id);
   const { showToast } = useAppContext();
   const refreshLiveBalances = useRefreshLiveBalances();
   // ABU-66: the same pull as Accounts — re-read the list and fetch live balances.
@@ -90,17 +89,24 @@ export default function AccountDetail() {
           )}
           {detail && (
             <>
-              <Text style={styles.count} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{detail.count} {detail.count === 1 ? 'transaction' : 'transactions'}</Text>
               {detail.groups.map((g) => (
                 <View key={g.label} style={{ marginTop: 14 }}>
                   <DayHeading label={g.label} dayTotal={g.dayTotal} />
                   {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} category={category} />)}
                 </View>
               ))}
+              {hasMore && (
+                <LoadMoreButton
+                  testID="account-load-more"
+                  onPress={loadMore}
+                  loading={isLoadingMore}
+                  accessibilityLabel="Load older transactions for this account"
+                />
+              )}
             </>
           )}
-          {/* WHIT-643: a saved balance but none of the loaded transactions — a quiet account. */}
-          {!detail && bal && <Text style={styles.count} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>No recent transactions</Text>}
+          {/* WHIT-643: a saved balance but no transactions at all — a quiet account. */}
+          {!detail && bal && <Text style={styles.quiet} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>No transactions yet</Text>}
           {!detail && !bal && (
             // No transaction or balance carries this id (unknown/stale account) — settled, not loading.
             <EmptyState title="No transactions" sub="This account has no transactions yet." />
@@ -120,4 +126,4 @@ const styles = StyleSheet.create({
   payoffLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginTop: 10 },
   payoffText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
 
-  count: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },});
+  quiet: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },});

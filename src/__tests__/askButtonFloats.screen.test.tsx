@@ -3,7 +3,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen } from '@testing-library/react-native';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
@@ -35,8 +35,8 @@ describe('WHIT-737 the Ask button floats', () => {
   // list row pads the right side more than the left, so cards run full width (no right-hand lane).
   const TABS: [string, () => void, React.ReactElement, string][] = [
     ['Budgets', () => seedBudgetsTab(server, { groceries: { target: 100, posted: 30, pending: 0 } }, [GROCERIES]), <Budgets />, 'Groceries'],
-    ['Transactions', () => server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: null }), <Transactions />, '−\u2060$42.00'],
-    ['Accounts', () => server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: null }), <Accounts />, 'ANZ'],
+    ['Transactions', () => seedFeedPage(server, '/transactions/feed', [LIST_ROW]), <Transactions />, '−\u2060$42.00'],
+    ['Accounts', () => seedFeedPage(server, '/transactions/feed', [LIST_ROW]), <Accounts />, 'ANZ'],
     ['Insights', () => {
       server.seed('/breakdown', { coffee: { posted: 40, pending: 0 } });
       server.seed('/categories', [{ ...COFFEE }]);

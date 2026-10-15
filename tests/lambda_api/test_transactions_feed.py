@@ -20,19 +20,24 @@ from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, _feed_even
 from _transaction_range_fakes import _AccountPagesTransactionRepo
 
 
-def _drain_feed(handler, repo, limits):
+def _drain_feed(handler, repo, limits, account=None):
     """Page the feed to exhaustion, following nextCursor and cycling through `limits` per page
-    (so a test can change the page size mid-pagination). Returns the flat list of transactions
-    across every page, in the order the client would see them."""
+    (so a test can change the page size mid-pagination). `account` scopes every page to one
+    account (?account=). Returns the flat list of transactions across every page, in the order
+    the client would see them."""
     all_transactions = []
     cursor = None
     for page in range(1000):  # generous bound; a correct feed terminates well before this
         page_params = {"limit": str(limits[page % len(limits)])}
+        if account is not None:
+            page_params["account"] = account
         if cursor is not None:
             page_params["cursor"] = cursor
         resp = handler.get_transactions_feed(_feed_event(page_params), repo)
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
+        if account is not None:
+            assert "bankSyncedAt" not in body
         all_transactions.extend(body["transactions"])
         cursor = body["nextCursor"]
         if cursor is None:
@@ -171,6 +176,41 @@ def test_trailing_lastevaluatedkey_quirk_terminates_without_dupes(handler):
     ]})
     drained = _drain_feed(handler, repo, [1])
     assert [t["transaction_id"] for t in drained] == ["s1"]   # exactly once, then stop
+
+
+# --- ?account= : one account's history (ABU-67) ------------------------------
+
+
+def test_account_param_pages_only_that_accounts_history_and_rejects_bad_input(handler):
+    rows = {
+        ANZ: [_row(ANZ, f"2026-06-{d:02d}", f"a{d}") for d in range(1, 9)],
+        SPENDING: [_row(SPENDING, f"2026-06-{d:02d}", f"s{d}") for d in range(1, 12)],
+        HOMELOAN: [_row(HOMELOAN, "2020-01-01", "h_ancient")],
+    }
+    _, repo, _ = real_repos(rows)
+    repo.mark_bank_synced({SPENDING, ANZ}, 1_760_000_000)
+    drained = _drain_feed(handler, repo, [1, 4, 3], account=SPENDING)
+    _assert_full_history_newest_first(drained, [r["transaction_id"] for r in rows[SPENDING]])
+    # A quiet account's only (very old) row comes back on its own first page.
+    assert [t["transaction_id"] for t in _drain_feed(handler, repo, [30], account=HOMELOAN)] == ["h_ancient"]
+
+    # A cursor from the all-accounts feed names several accounts → can't resume one account.
+    all_accounts_cursor = json.loads(
+        handler.get_transactions_feed(_feed_event({"limit": "1"}), repo)["body"])["nextCursor"]
+    # [A2] So can a cursor from ANOTHER account's own page (it would page ANZ's rows as SPENDING's).
+    anz_cursor = json.loads(
+        handler.get_transactions_feed(_feed_event({"limit": "1", "account": ANZ}), repo)["body"])["nextCursor"]
+    for params in (
+        {"account": "bogus"},
+        {"account": SPENDING, "cursor": all_accounts_cursor},
+        {"account": SPENDING, "cursor": anz_cursor},
+    ):
+        assert handler.get_transactions_feed(_feed_event(params), repo)["statusCode"] == 400
+
+    # An empty ?account= is the all-accounts feed.
+    empty_account_page = handler.get_transactions_feed(_feed_event({"account": ""}), repo)
+    all_accounts_page = handler.get_transactions_feed(_feed_event({}), repo)
+    assert json.loads(empty_account_page["body"]) == json.loads(all_accounts_page["body"])
 
 
 # --- limit clamping ----------------------------------------------------------

@@ -215,6 +215,15 @@ export interface TransactionFeedPage {
   bankSyncedAt?: Record<string, number>; // account id → epoch ms of its latest bank delivery
 }
 
+// The query string every paged feed sends: account (one account's feed), then cursor, then limit.
+function feedPath(base: string, { account, cursor, limit }: { account?: string; cursor?: string; limit?: number }): string {
+  const parts: string[] = [];
+  if (account) parts.push(`account=${encodeURIComponent(account)}`);
+  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+  return parts.length > 0 ? `${base}?${parts.join('&')}` : base;
+}
+
 /**
  * Fetch one page of the all-accounts transaction feed, newest first — every account merged,
  * cursor-paged back through the full history (no 7-day floor). Backs the Transactions tab's
@@ -227,13 +236,23 @@ export interface TransactionFeedPage {
  * @throws If the response status is not OK.
  */
 export const fetchTransactionsFeed = endpoint(
-  (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> => {
-    const parts: string[] = [];
-    if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
-    if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
-    const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
-    return send({ path: `/transactions/feed${qs}` });
-  },
+  (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> =>
+    send({ path: feedPath('/transactions/feed', { cursor, limit }) }),
+);
+
+/**
+ * Fetch one page of ONE account's transaction history, newest first (ABU-67) — the account
+ * page's "Load More". Same page shape and cursor rules as the all-accounts feed, but no
+ * bankSyncedAt; a null `nextCursor` means the account has no older rows.
+ *
+ * @param accountId - The account whose history to page.
+ * @param cursor - The previous page's nextCursor, or undefined/absent for the newest page.
+ * @returns One page: its transactions plus the cursor for the next page (null at the end).
+ * @throws If the response status is not OK.
+ */
+export const fetchAccountFeed = endpoint(
+  (send, accountId: string, cursor?: string): Promise<TransactionFeedPage> =>
+    send({ path: feedPath('/transactions/feed', { account: accountId, cursor }) }),
 );
 
 /**
@@ -251,13 +270,8 @@ export const fetchTransactionsFeed = endpoint(
  * @throws If the response status is not OK.
  */
 export const fetchUncategorizedFeed = endpoint(
-  (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> => {
-    const parts: string[] = [];
-    if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
-    if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
-    const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
-    return send({ path: `/transactions/uncategorized/feed${qs}` });
-  },
+  (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> =>
+    send({ path: feedPath('/transactions/uncategorized/feed', { cursor, limit }) }),
 );
 
 /** The Transactions-tab search over ALL history (WHIT-576): the newest matches, and whether the

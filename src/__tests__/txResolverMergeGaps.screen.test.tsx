@@ -13,14 +13,14 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../types';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 
 import { useTransactionResolver, useTransactionsSearchQuery } from '../queries';
-import { budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queryKeys';
+import { accountFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queryKeys';
 
 const server = installFakeServer();
 
@@ -30,7 +30,7 @@ const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true, ...over,
 });
 const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
-const emptyFeed = () => server.seed('/transactions/feed', { transactions: [], nextCursor: null });
+const emptyFeed = () => seedFeedPage(server, '/transactions/feed', []);
 
 beforeEach(() => {
   resetAuth();
@@ -98,7 +98,7 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
 
   // [R7] The filter keeps real data changes: setQueryData fires 'updated', so a row seeded into any
   // watched cache after mount still resolves. FAIL-ON-REVERT: filtering out 'updated' freezes these.
-  it('[R7] seeding a search, budget or category cache after mount still resolves the new row', async () => {
+  it('[R7] seeding a search, budget, category or account-page cache after mount still resolves the new row', async () => {
     const client = makeClient();
     client.setQueryData(transactionsKey, { pages: [{ transactions: [], nextCursor: null }], pageParams: [undefined] });
     client.setQueryData(transactionsRecentKey, []);
@@ -111,5 +111,11 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     await waitFor(() => expect(result.current.findTx('budgeted')).toBeDefined());
     await refreshInAct(() => client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('drilled')]));
     await waitFor(() => expect(result.current.findTx('drilled')).toBeDefined());
+    // ABU-67: an older row loaded only on an account page, then edited there.
+    const accountPages = (category: string | null) => ({ pages: [{ transactions: [tx('older', { category })], nextCursor: null }], pageParams: [undefined] });
+    await refreshInAct(() => client.setQueryData([...accountFeedKey, 'a1'], accountPages(null)));
+    await waitFor(() => expect(result.current.findTx('older')).toBeDefined());
+    await refreshInAct(() => client.setQueryData([...accountFeedKey, 'a1'], accountPages('dining')));
+    await waitFor(() => expect(result.current.findTx('older')!.category).toBe('dining'));
   });
 });

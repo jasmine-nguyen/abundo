@@ -1,11 +1,11 @@
 // WHIT-627 — the one place that knows every saved copy of a charge. readTransactionCopies reads
-// the feed, uncategorized feed, recent window and search results, then (only when asked) the
+// the feed, uncategorized feed, account feeds, recent window and search results, then (only when asked) the
 // budget and category lists. Writers pass includeScopedLists:false (WHIT-524); lookups pass true.
 // Freshest copies come first so they win the de-dup over a stale budget/category copy.
 import { it, expect, describe, beforeEach, afterEach } from '@jest/globals';
 import type { QueryKey } from '@tanstack/react-query';
 import { makeQueryClient, queryClient } from '../queryClient';
-import { readTransactionCopies, findTransaction, refreshAfter } from '../transactionCache';
+import { readTransactionCopies, findTransaction, refreshAfter, patchAllCopies, removeFromAllCopies } from '../transactionCache';
 import type { Transaction } from '../types';
 import { colesTxn } from './factory';
 import { seedTransactionsCache } from './support/transactionsCache';
@@ -26,6 +26,10 @@ function seededClient() {
     pages: [{ transactions: [tx('uncat1')], nextCursor: null }],
     pageParams: [undefined],
   });
+  client.setQueryData(['accountFeed', 'a1'], {
+    pages: [{ transactions: [tx('acct1')], nextCursor: 'c1' }, { transactions: [tx('acct2')], nextCursor: null }],
+    pageParams: [undefined, 'c1'],
+  });
   client.setQueryData(['transactionsRecent'], [tx('recent1')]);
   client.setQueryData(['transactionsSearch', 'all', 'coles'], { transactions: [tx('search1')], truncated: false });
   client.setQueryData(['budgetTransactions', 'dining'], [tx('shared', { category: 'dining' }), tx('budget1')]);
@@ -38,11 +42,11 @@ describe('readTransactionCopies', () => {
     const client = seededClient();
 
     const lookup = readTransactionCopies(client, { includeScopedLists: true });
-    expect(ids(lookup)).toEqual(['shared', 'feed1', 'uncat1', 'recent1', 'search1', 'budget1', 'category1']);
+    expect(ids(lookup)).toEqual(['shared', 'feed1', 'uncat1', 'acct1', 'acct2', 'recent1', 'search1', 'budget1', 'category1']);
     expect(lookup.find((t) => t.transaction_id === 'shared')?.category).toBe('groceries');
 
     const writer = readTransactionCopies(client, { includeScopedLists: false });
-    expect(ids(writer)).toEqual(['shared', 'feed1', 'uncat1', 'recent1', 'search1']);
+    expect(ids(writer)).toEqual(['shared', 'feed1', 'uncat1', 'acct1', 'acct2', 'recent1', 'search1']);
   });
 
   it('reads an empty cache and a data-less search entry as nothing', () => {
@@ -65,6 +69,28 @@ describe('findTransaction (the singleton cache)', () => {
     expect(findTransaction('budgetOnly', { includeScopedLists: true })?.category).toBe('dining');
     expect(findTransaction('categoryOnly', { includeScopedLists: true })?.category).toBe('dining');
     expect(findTransaction('missing', { includeScopedLists: true })).toBeUndefined();
+  });
+});
+
+// ABU-67: an account page's own history is a main copy — an edit or delete reaches an older row
+// loaded only there, page boundaries and cursors kept, and the delete's restore puts it back.
+describe('the account feed copy', () => {
+  const accountRows = () => queryClient.getQueryData<{ pages: { transactions: Transaction[] }[]; pageParams: unknown[] }>(['accountFeed', 'a1']);
+
+  it('is patched in place, and removed then restored', () => {
+    queryClient.setQueryData(['accountFeed', 'a1'], {
+      pages: [{ transactions: [tx('new')], nextCursor: 'c1' }, { transactions: [tx('old')], nextCursor: null }],
+      pageParams: [undefined, 'c1'],
+    });
+
+    patchAllCopies((row) => (row.transaction_id === 'old' ? { ...row, category: 'dining' } : row));
+    expect(accountRows()?.pages[1].transactions[0].category).toBe('dining');
+    expect(accountRows()?.pageParams).toEqual([undefined, 'c1']);
+
+    const restore = removeFromAllCopies('old');
+    expect(accountRows()?.pages.map((page) => ids(page.transactions))).toEqual([['new'], []]);
+    restore();
+    expect(accountRows()?.pages.map((page) => ids(page.transactions))).toEqual([['new'], ['old']]);
   });
 });
 

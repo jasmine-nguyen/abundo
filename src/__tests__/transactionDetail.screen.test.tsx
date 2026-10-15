@@ -33,7 +33,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey } from '../queryKeys';
@@ -45,10 +45,6 @@ import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
 useTestQueryClient();
-
-function seedFeed(transactions: Transaction[]) {
-  server.seed('/transactions/feed', { transactions, nextCursor: null });
-}
 
 const rollup = (over: Partial<BudgetRollup> = {}): BudgetRollup => ({ target: 100, posted: 40, pending: 10, ...over });
 
@@ -65,7 +61,7 @@ beforeEach(() => {
   resetAuth();
   setParams({ id: 't1' });
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
-  seedFeed([txn({ transaction_id: 't1', category: 'coffee' })]);
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee' })]);
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();
   mockOpenPicker.mockClear();
@@ -85,7 +81,7 @@ it('renders the transaction fields (merchant, amount, date, account, category, s
 // WHIT-845: at big text the hero amount stays on one line (shrinking to fit, capped at 2×), and the
 // tag "×" has no fixed line height to clip it.
 it('the hero amount fits one line and the tag "×" is not clipped by a fixed line height', async () => {
-  seedFeed([txn({ transaction_id: 't1', category: 'coffee', tags: ['work'] })]);
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', tags: ['work'] })]);
   await draw();
   const amount = screen.getByText('−\u2060$12.50');
   expect(amount.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: LARGE_TEXT_MAX_SCALE });
@@ -95,7 +91,7 @@ it('the hero amount fits one line and the tag "×" is not clipped by a fixed lin
 it('shows Pending with its age for a pending transaction 7 days old', async () => {
   pinToday(new Date('2026-07-08T08:00:00+10:00'));
   try {
-    seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending', date: '2026-07-01' })]);
+    seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', status: 'pending', date: '2026-07-01' })]);
     await draw();
     expect(screen.getByText('Pending · 7 days')).toBeTruthy();
   } finally {
@@ -104,7 +100,7 @@ it('shows Pending with its age for a pending transaction 7 days old', async () =
 });
 
 it('finds a row that is only in the recent list (not the feed)', async () => {
-  seedFeed([]);
+  seedFeedPage(server, '/transactions/feed', []);
   server.seed('/transactions', [txn({ transaction_id: 't1', category: 'coffee' })]);
   await draw();
   expect(screen.getByText('Woolworths')).toBeTruthy();
@@ -158,7 +154,7 @@ it('while loading with nothing cached, shows the spinner and NOT the not-found s
 // counts_to_budget test), rather than a contradictory OFF switch. Fails if the gate reverts to a
 // strict `=== false` (which would fall through to the toggle for undefined).
 it('shows the read-only note (not the toggle) when counts_to_budget is undefined — matching the list tag', async () => {
-  seedFeed([txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: undefined })]);
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: undefined })]);
   await draw();
   expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
@@ -182,7 +178,7 @@ it('tapping the Category row opens the picker for this transaction', async () =>
 // WHIT-328: unlike its quiet, non-tappable list row, a not-in-budget uncategorized charge can
 // still be re-filed from the detail screen.
 it('detail screen labels the Category "Uncategorized" and re-opens the picker on tap', async () => {
-  seedFeed([txn({ transaction_id: 't1', category: null, counts_to_budget: false })]);
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: null, counts_to_budget: false })]);
   await draw();
   expect(screen.getByText('Uncategorised')).toBeTruthy();
   fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
@@ -194,7 +190,7 @@ describe('spread this bill prompt', () => {
   // A spend charge on 'coffee' (the fixture category). Eligibility is driven by the BUDGET's
   // over/under state (the /budgets rollup), while the prefill comes from the category overage.
   const seedSpend = (over: Partial<Transaction> = {}) =>
-    seedFeed([txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })]);
+    seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })]);
 
   it('over-budget spend, no plan → shows "Spread a bill in this category" and prefills the OVERAGE', async () => {
     seedSpend();  // the tapped charge is -130, but the prefill is the category overage, not the charge
@@ -231,7 +227,7 @@ describe('spread this bill prompt', () => {
 // ── WHIT-539: "why this category" — name the rule that auto-filed the charge ──
 describe('rule attribution line', () => {
   const seedStamped = (filedByRule: string, category: string | null = 'coffee') =>
-    seedFeed([txn({ transaction_id: 't1', category, filed_by_rule: filedByRule })]);
+    seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category, filed_by_rule: filedByRule })]);
 
   it('names the rule when a description rule filed the charge (happy path)', async () => {
     seedStamped('r1');

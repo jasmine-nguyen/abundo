@@ -20,7 +20,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
 import { colesTxn } from './factory';
@@ -44,7 +44,6 @@ const merchants = (over: Record<string, unknown> = {}) => ({
 const BUTTON = 'transactions-file-by-shop';
 const APPLY_RULES = 'transactions-apply-rules';
 
-const seedUncategorizedFeed = (transactions: unknown[]) => server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor: null });
 
 async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
   const view = await renderWithQueries(<Transactions />);
@@ -62,7 +61,7 @@ beforeEach(async () => {
   server.seed('/categories', [GROCERIES_TOP]);
   server.seed(COUNT, { count: 5 });
   server.seed(MERCHANTS, merchants());
-  seedUncategorizedFeed([unfiled('t1')]);
+  seedFeedPage(server, UNCATEGORIZED_FEED, [unfiled('t1')]);
 });
 
 describe('the "File by shop" button', () => {

@@ -26,7 +26,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
@@ -51,9 +51,6 @@ const ROW = {
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-const seedFeed = (transactions: unknown[], nextCursor: string | null = null) => server.seed(FEED, { transactions, nextCursor });
-const seedUncategorizedFeed = (transactions: unknown[], nextCursor: string | null = null) =>
-  server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor });
 const gets = (path: string) => server.sentUnder('GET', path).filter((request) => request.path.split('?')[0] === path).length;
 
 // Under fake timers the first reads can still be settling when renderWithQueries returns.
@@ -72,12 +69,12 @@ beforeEach(() => {
   mockOpenMultiPicker.mockClear();
   mockShowToast.mockClear();
   server.seed(CATEGORIES, [GROCERIES_TOP]);
-  seedFeed([]);
+  seedFeedPage(server, FEED, []);
 });
 afterEach(() => { jest.useRealTimers(); });
 
 it('error WITH cached rows keeps the rows and shows NO inline error (cache-first)', async () => {
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
   await draw();
   server.once('GET', FEED, { status: 500 });
   await refreshInAct(() => queryClient.refetchQueries({ queryKey: transactionsKey }));
@@ -87,7 +84,7 @@ it('error WITH cached rows keeps the rows and shows NO inline error (cache-first
 });
 
 it('a background load (isLoading) with cached rows does NOT blank the list', async () => {
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
   const held = server.hold(CATEGORIES); // the taxonomy is still loading while the rows are in
   render(<WithQueries><Transactions /></WithQueries>);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
@@ -145,7 +142,7 @@ it('a cold-loading Uncategorized tab shows the spinner and no "Updated" line', a
 
 // [A3] The line sits directly under the search box: above the Uncategorized hint, not below it.
 it('[A3] the "Updated" line renders above the Uncategorized hint', async () => {
-  seedUncategorizedFeed([{ ...ROW, category: null }]);
+  seedFeedPage(server, UNCATEGORIZED_FEED, [{ ...ROW, category: null }]);
   await draw();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText(/Tap a transaction to categorise it/)).toBeTruthy();
@@ -157,7 +154,7 @@ it('[A3] the "Updated" line renders above the Uncategorized hint', async () => {
 // WHIT-846: the tabs are the shared soft-tint switch (not a solid white pill), 44pt tall, with a
 // rose count bubble; on-screen words use Australian spelling; an unfiled row's label is rose.
 it('the tabs use the soft tint, Australian spelling and a rose Uncategorised row', async () => {
-  seedFeed([{ ...ROW, category: null }]);
+  seedFeedPage(server, FEED, [{ ...ROW, category: null }]);
   server.seed(COUNT, { count: 1 });
   await draw();
   const allTab = screen.getByTestId('tab-all');
@@ -188,7 +185,7 @@ describe('Transactions — Load More', () => {
 const row = (id: string) => ({ ...ROW, transaction_id: id });
 
 it('shows Load More when there is more history, and tapping it pages older rows in', async () => {
-  seedFeed([row('t1')], 'c1');
+  seedFeedPage(server, FEED, [row('t1')], 'c1');
   await draw();
   server.once('GET', FEED, { body: { transactions: [{ ...row('t2'), amount: -7 }], nextCursor: null } });
   fireEvent.press(screen.getByTestId('transactions-load-more'));
@@ -201,8 +198,8 @@ it('shows Load More when there is more history, and tapping it pages older rows 
 // WHIT: on the Uncategorized tab, when everything is filed ("All caught up"), Load More must
 // not render even though older history still exists — there's nothing to page toward there.
 it('hides Load More on the uncategorized "all caught up" empty state, even with more history', async () => {
-  seedFeed([row('t1')], 'c1');
-  seedUncategorizedFeed([], 'c1'); // the server count is 0 -> the empty state shows
+  seedFeedPage(server, FEED, [row('t1')], 'c1');
+  seedFeedPage(server, UNCATEGORIZED_FEED, [], 'c1'); // the server count is 0 -> the empty state shows
   await draw();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText('All caught up')).toBeTruthy();
@@ -212,7 +209,7 @@ it('hides Load More on the uncategorized "all caught up" empty state, even with 
 // The guard is the EMPTY case, not the whole tab: with real uncategorized rows showing, Load
 // More still pages older history (so a buried uncategorized charge isn't stranded).
 it('keeps Load More on the uncategorized tab when there ARE uncategorized rows', async () => {
-  seedUncategorizedFeed([{ ...row('t1'), category: null }], 'c1');
+  seedFeedPage(server, UNCATEGORIZED_FEED, [{ ...row('t1'), category: null }], 'c1');
   server.seed(COUNT, { count: 1 });
   await draw();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
@@ -230,7 +227,7 @@ it('keeps Load More on the uncategorized tab when there ARE uncategorized rows',
 // pull, not by the query's raw `isFetching`. Holding the live balance call keeps a pull in flight.
 describe('Transactions — pull-to-refresh (WHIT-363)', () => {
 it('pull-to-refresh refreshes the visible list AND the live balances — not the Retry re-read', async () => {
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
   await draw();
   const before = { feed: gets(FEED), categories: gets(CATEGORIES), count: gets(COUNT), balances: gets(BALANCES) };
   const held = server.hold(REFRESH);
@@ -247,7 +244,7 @@ it('pull-to-refresh refreshes the visible list AND the live balances — not the
 // A background/focus refetch runs with NO user pull. The spinner is owned by the local `pulling`
 // flag (never isFetching, WHIT-363), so it stays DOWN when the user hasn't pulled.
 it('a background/focus refetch (non-empty list, NO pull) does NOT raise the spinner', async () => {
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
   await draw();
   const feedBefore = gets(FEED);
   const held = server.hold(FEED);
@@ -269,7 +266,7 @@ describe('Transactions — pull-to-refresh adversarial edges (WHIT-363)', () => 
 // Fail-on-revert: drop the `.catch`/`.finally` in onRefresh → the rejection escapes / the spinner
 // never clears → RED.
 it('[E1] a pull whose live balance call ERRORS still clears the spinner (and toasts)', async () => {
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
   await draw();
   const held = server.hold(REFRESH);
   await pull();
@@ -299,7 +296,7 @@ it('[E3] a pull during a cold load does NOT raise the pull spinner (inline spinn
 // [E2] After one full pull cycle (spin → clear), a SECOND pull must spin again and clear — the
 // `pulling` flag must reset, not latch permanently.
 it('[E2] a second pull after the first resolves still spins and clears', async () => {
-  seedFeed([ROW]);
+  seedFeedPage(server, FEED, [ROW]);
   await draw();
   // First cycle.
   let held = server.hold(REFRESH);
@@ -354,7 +351,7 @@ const COFFEE = row({ transaction_id: 'c', merchant_name: 'ST Ali', description: 
 
 beforeEach(() => {
   server.seed(CATEGORIES, CATS);
-  seedFeed([WOOLIES, COFFEE]);
+  seedFeedPage(server, FEED, [WOOLIES, COFFEE]);
 });
 
 const type = (q: string) => fireEvent.changeText(screen.getByPlaceholderText('Search transactions'), q);
@@ -403,7 +400,7 @@ const row = (id: string, merchant: string) => ({
 });
 
 beforeEach(() => {
-  seedFeed([row('t1', 'Woolworths'), row('t2', 'Coles')]);
+  seedFeedPage(server, FEED, [row('t1', 'Woolworths'), row('t2', 'Coles')]);
 });
 
 it('the "Select" header button shows on BOTH segments (All and Uncategorized)', async () => {
@@ -455,8 +452,8 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
   const uncategorized = { ...ROW, category: null };
 
   beforeEach(() => {
-    seedFeed([ROW], 'c1');
-    seedUncategorizedFeed([], 'c1'); // older history exists on the Uncategorized tab too
+    seedFeedPage(server, FEED, [ROW], 'c1');
+    seedFeedPage(server, UNCATEGORIZED_FEED, [], 'c1'); // older history exists on the Uncategorized tab too
   });
 
   // [A-S1] Uncategorized tab, everything filed (server count 0), a search typed that matches
@@ -477,7 +474,7 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
   // server already looked past every loaded page (WHIT-576), so there is nothing to page toward.
   it('[A-S2] uncategorized + uncategorized-rows + answered search miss: No matches shows, Load More hidden', async () => {
     jest.useFakeTimers();
-    seedUncategorizedFeed([uncategorized], 'c1');
+    seedFeedPage(server, UNCATEGORIZED_FEED, [uncategorized], 'c1');
     server.seed(COUNT, { count: 1 });
     await draw();
     fireEvent.press(screen.getByTestId('tab-uncategorized'));
@@ -533,8 +530,8 @@ describe('Transactions — a not-in-budget transfer on the Uncategorized tab (WH
   };
 
   beforeEach(() => {
-    seedFeed([TRANSFER]);
-    seedUncategorizedFeed([TRANSFER]);
+    seedFeedPage(server, FEED, [TRANSFER]);
+    seedFeedPage(server, UNCATEGORIZED_FEED, [TRANSFER]);
     server.seed(COUNT, { count: 1 }); // the server's whole-history tally counts the transfer
   });
 

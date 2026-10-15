@@ -195,6 +195,14 @@ function untilReleasedOrAborted(held: Promise<void>, signal?: AbortSignal | null
   });
 }
 
+/** Seed one page of a paged feed route (the all-accounts, account or uncategorized feed):
+ *  end of history unless a cursor is given. */
+export function seedFeedPage(
+  server: ReturnType<typeof installFakeServer>, path: string, transactions: unknown[], nextCursor: string | null = null,
+): void {
+  server.seed(path, { transactions, nextCursor });
+}
+
 export function installFakeServer() {
   let store: Store = new Map();
   let failures = new Map<string, Reply>();

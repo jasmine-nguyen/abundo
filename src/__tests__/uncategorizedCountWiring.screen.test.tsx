@@ -24,7 +24,7 @@ jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: 
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded, refreshInAct } from './support/renderWithQueries';
 import { GROCERIES_TOP } from './support/categories';
 import { queryClient } from '../queryClient';
@@ -38,8 +38,6 @@ const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 
 // No categories are seeded, so every row resolves to Uncategorized.
-const seedFeed = (path: string, transactions: unknown[], nextCursor: string | null = null) =>
-  server.seed(path, { transactions, nextCursor });
 
 async function renderUncategorizedTab() {
   await renderWithQueries(<Transactions />);
@@ -56,7 +54,7 @@ describe('Transactions screen badge', () => {
   // Fail-on-revert: point the badge back at the local count → it shows 2, not 7.
   it('shows the RESOLVED server number even when it differs from the rows on screen', async () => {
     server.seed(COUNT, { count: 7 });
-    seedFeed(FEED, [txn({ transaction_id: 't1', category: null }), txn({ transaction_id: 't2', category: null })]);
+    seedFeedPage(server, FEED, [txn({ transaction_id: 't1', category: null }), txn({ transaction_id: 't2', category: null })]);
     await renderWithQueries(<Transactions />);
     expect(within(screen.getByTestId('tab-uncategorized')).getByText('7')).toBeTruthy();
   });
@@ -64,7 +62,7 @@ describe('Transactions screen badge', () => {
   // Server value still loading (undefined) → the badge falls back to the local loaded-page count (2).
   it('falls back to the local count while the server value is undefined', async () => {
     const held = server.hold(COUNT);
-    seedFeed(FEED, [txn({ transaction_id: 't1', category: null }), txn({ transaction_id: 't2', category: null })]);
+    seedFeedPage(server, FEED, [txn({ transaction_id: 't1', category: null }), txn({ transaction_id: 't2', category: null })]);
     render(<WithQueries><Transactions /></WithQueries>);
     await loaded(transactionsKey);
     expect(within(screen.getByTestId('tab-uncategorized')).getByText('2')).toBeTruthy();
@@ -103,7 +101,7 @@ describe('Transactions screen "All caught up"', () => {
   // state → "All caught up" renders alongside the WOOLWORTHS row and this fails.
   it('does NOT show "All caught up" when server says 0 but unfiled rows are still loaded', async () => {
     server.seed(COUNT, { count: 0 });
-    seedFeed(UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
+    seedFeedPage(server, UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
     await renderWithQueries(<Transactions />);
     fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByText('Woolworths')).toBeTruthy(); // the unfiled row is still shown
@@ -155,7 +153,7 @@ describe('filing buttons and the shops gate', () => {
   // request on the server count alone → no shops request, no "File by shop".
   it('[A3] with unfiled rows loaded, the shops are fetched and both filing buttons show', async () => {
     server.fail(COUNT, 500);
-    seedFeed(UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
+    seedFeedPage(server, UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
     await renderUncategorizedTab();
     await countFailed();
     expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(1);
@@ -167,7 +165,7 @@ describe('filing buttons and the shops gate', () => {
   it('[A5] a failed shops request hides only "File by shop"', async () => {
     server.seed(COUNT, { count: 5 });
     server.fail(MERCHANTS, 500);
-    seedFeed(UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
+    seedFeedPage(server, UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
     await renderUncategorizedTab();
     expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(1);
     expect(screen.getByTestId(APPLY_RULES)).toBeTruthy();
@@ -179,7 +177,7 @@ describe('filing buttons and the shops gate', () => {
   // "Apply my rules" gate → it stays up over "All caught up".
   it('[A6] both buttons hide when the count drops to 0 mid-session', async () => {
     server.seed(COUNT, { count: 4 });
-    seedFeed(UNCATEGORIZED_FEED, [], 'c1');
+    seedFeedPage(server, UNCATEGORIZED_FEED, [], 'c1');
     await renderUncategorizedTab();
     expect(screen.getByTestId(APPLY_RULES)).toBeTruthy();
     expect(screen.getByTestId(FILE_BY_SHOP)).toBeTruthy();
@@ -211,7 +209,7 @@ it.each([
   [3, null, 'Nothing to show yet', 'More to load'],
 ])('an empty page with a badge of %i and cursor %j shows "%s", not "%s"', async (count, cursor, shown, absent) => {
   server.seed(COUNT, { count });
-  seedFeed(UNCATEGORIZED_FEED, [], cursor);
+  seedFeedPage(server, UNCATEGORIZED_FEED, [], cursor);
   await renderUncategorizedTab();
   expect(await screen.findByText(shown)).toBeTruthy();
   expect(screen.queryByText(absent)).toBeNull();

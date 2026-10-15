@@ -16,7 +16,7 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../types';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -45,8 +45,8 @@ beforeEach(() => {
 // would show u-rows, not plain1.
 describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
   it('keeps the plain feed on the way back', async () => {
-    server.seed(FEED, { transactions: [tx('plain1')], nextCursor: null });
-    server.seed(UNCATEGORIZED_FEED, { transactions: [tx('u1')], nextCursor: null });
+    seedFeedPage(server, FEED, [tx('plain1')]);
+    seedFeedPage(server, UNCATEGORIZED_FEED, [tx('u1')]);
     const { result, rerender } = renderHook((tab: 'all' | 'uncategorized') => useTransactionsScreenData(tab), {
       wrapper: wrapper(makeClient()), initialProps: 'all' as 'all' | 'uncategorized',
     });
@@ -69,7 +69,7 @@ describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
 // plain feed and recent are fetched as normal.
 describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
   it('finds a row that lives ONLY in the uncategorized feed and de-dupes a row in both', async () => {
-    server.seed(FEED, { transactions: [tx('dup', { description: 'FEED' }), tx('feedonly')], nextCursor: null });
+    seedFeedPage(server, FEED, [tx('dup', { description: 'FEED' }), tx('feedonly')]);
     server.seed('/transactions', [tx('recentonly')]);
     const client = makeClient();
     // The uncategorized feed cache the tab would have warmed (dup is ALSO in the plain feed).
@@ -95,7 +95,7 @@ describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
 // window). These caches aren't observed by a useQuery in the resolver, so a narrow query-cache
 // subscription re-runs the union when — and only when — one of them changes (WHIT-524).
 describe('[C4] useTransactionResolver unions the budget/category caches', () => {
-  const emptyFeed = () => server.seed(FEED, { transactions: [], nextCursor: null });
+  const emptyFeed = () => seedFeedPage(server, FEED, []);
 
   // The category drill is keyed [category, cycle], so only a PREFIX scan reaches a past cycle.
   it.each([
@@ -124,7 +124,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
 // [C3] refetchList is keyed to the ACTIVE feed only.
 describe('[C3] refetchList touches only the active feed cache', () => {
   it('a pull on the ALL tab leaves the uncategorized feed cache untrimmed', async () => {
-    server.seed(FEED, { transactions: [tx('plain1')], nextCursor: null });
+    seedFeedPage(server, FEED, [tx('plain1')]);
     const client = makeClient();
     // Seed a 2-page uncategorized feed cache as if the user had paged it earlier.
     client.setQueryData(uncategorizedFeedKey, {
@@ -144,7 +144,7 @@ describe('[C3] refetchList touches only the active feed cache', () => {
   it('a pull on the UNCATEGORIZED tab trims the uncategorized feed, not the plain feed', async () => {
     server.once('GET', UNCATEGORIZED_FEED, { body: { transactions: [tx('u1')], nextCursor: 'c1' } });
     server.once('GET', UNCATEGORIZED_FEED, { body: { transactions: [tx('u2')], nextCursor: null } });
-    server.seed(UNCATEGORIZED_FEED, { transactions: [tx('u1')], nextCursor: 'c1' }); // pull -> page 1 fresh
+    seedFeedPage(server, UNCATEGORIZED_FEED, [tx('u1')], 'c1'); // pull -> page 1 fresh
     const client = makeClient();
     // Seed a 2-page plain feed cache; it must survive an uncategorized pull.
     client.setQueryData(transactionsKey, {

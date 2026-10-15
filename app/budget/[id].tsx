@@ -8,6 +8,7 @@ import { budgetDetail, groupTransactionsByDate, useAppContext } from '../../src/
 import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
+import { LoadMoreButton } from '../../src/components/LoadMoreButton';
 import { BudgetBar, SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
@@ -141,9 +142,7 @@ export default function BudgetDetail() {
           </View>
         ))}
         {bd.relItems.length > visibleCount && (
-          <Pressable testID="budget-load-more" onPress={() => setVisibleCount((n) => n + BUDGET_TX_PAGE)} style={styles.loadMore}>
-            <Text style={styles.loadMoreText}>Load More</Text>
-          </Pressable>
+          <LoadMoreButton testID="budget-load-more" onPress={() => setVisibleCount((n) => n + BUDGET_TX_PAGE)} style={styles.loadMore} />
         )}
         {bd.relEmpty && !d.isLoading && <Text style={styles.empty}>No transactions in this category this cycle.</Text>}
 
@@ -190,8 +189,7 @@ const styles = StyleSheet.create({
   cycleTag: { fontSize: 11.5, color: C.textDim },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
-  loadMore: { marginTop: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
-  loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
+  loadMore: { marginTop: 14 },
   spreadBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
   spreadText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSofter },
   deleteBtn: { marginTop: 14, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },

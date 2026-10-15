@@ -10,6 +10,7 @@ export type Wire = [method: string | null, path: string, timeoutMs: number, body
 export const WIRE: Record<string, [() => Promise<unknown>, Wire]> = {
   fetchTransactions: [() => api.fetchTransactions(), [null, '/transactions', 15000, undefined]],
   fetchTransactionsFeed: [() => api.fetchTransactionsFeed('cur', 25), [null, '/transactions/feed?cursor=cur&limit=25', 15000, undefined]],
+  fetchAccountFeed: [() => api.fetchAccountFeed('a1', 'cur'), [null, '/transactions/feed?account=a1&cursor=cur', 15000, undefined]],
   fetchUncategorizedFeed: [() => api.fetchUncategorizedFeed('cur', 25), [null, '/transactions/uncategorized/feed?cursor=cur&limit=25', 15000, undefined]],
   fetchTransactionsSearch: [() => api.fetchTransactionsSearch('all', 'steven'), [null, '/transactions/search?tab=all&q=steven', 30000, undefined]],
   fetchUncategorizedCount: [() => api.fetchUncategorizedCount(), [null, '/transactions/uncategorized/count', 15000, undefined]],

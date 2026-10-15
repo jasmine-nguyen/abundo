@@ -27,8 +27,11 @@ export const transactionsKey = ['transactions'] as const;
 // charges via "Load More" instead of client-filtering the general feed's loaded pages. A
 // SEPARATE infinite-query key from transactionsKey so the two feeds page independently.
 export const uncategorizedFeedKey = ['uncategorizedFeed'] as const;
-// The BOUNDED "recent" list (the server's rolling window) behind the tab-bar dot, the
-// account-detail screen, and the goal-edit picker. A SEPARATE key from the feed so those
+// One account's cursor-paged history behind the account page's "Load More" (ABU-67): one
+// infinite query per account, keyed [...accountFeedKey, accountId].
+export const accountFeedKey = ['accountFeed'] as const;
+// The BOUNDED "recent" list (the server's rolling window) behind the tab-bar dot and the
+// goal-edit picker. A SEPARATE key from the feed so those
 // counts stay fixed and can't drift as the tab pages back through full history.
 export const transactionsRecentKey = ['transactionsRecent'] as const;
 // The Transactions-tab search over ALL history (WHIT-576): one flat result per [tab, query].
