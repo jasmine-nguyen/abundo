@@ -1,5 +1,15 @@
 ---
 description: Run the build graph for a card or request
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          # Per-token billing costs the user money, so only they can turn it on.
+          command: >-
+            jq -e '.tool_input.command | test("--allow-api-billing")' >/dev/null
+            && { echo "Only the user can choose per-token billing. Don't add --allow-api-billing: tell them, and if they want it, they run the command themselves with ! <command>." >&2; exit 2; }
+            || exit 0
 ---
 
 Run the build pipeline using `build_graph.py`.
