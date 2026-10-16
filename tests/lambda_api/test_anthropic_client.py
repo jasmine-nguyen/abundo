@@ -109,6 +109,24 @@ def test_transport_and_key_failures_are_anthropic_error_with_no_status(anthropic
     assert ei.value.upstream_status is None
 
 
+def test_a_failed_key_read_says_the_key_is_unavailable(anthropic_client, monkeypatch):
+    # ABU-81: the log must tell a key-read failure apart from a bad request or reply.
+    _fail_the_ssm_key_read(monkeypatch, anthropic_client)
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+    assert "key unavailable" in str(ei.value)
+
+
+def test_a_non_json_reply_says_the_request_or_reply_is_invalid(anthropic_client, monkeypatch):
+    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen",
+                        lambda req, timeout=None: FakeResponse())
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+    assert ei.value.upstream_status is None
+    assert "request or reply invalid" in str(ei.value)
+    assert "key" not in str(ei.value)
+
+
 # --- get_api_key -------------------------------------------------------------
 
 

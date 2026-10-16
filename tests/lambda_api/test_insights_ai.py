@@ -10,6 +10,7 @@ Two layers, both without network/AWS:
 
 import hashlib
 import json
+import logging
 from decimal import Decimal
 from functools import partial
 
@@ -148,6 +149,26 @@ def test_generate_anthropic_error_returns_502(handler, monkeypatch):
 
     assert resp["statusCode"] == 502
     assert insight_puts(repo) == []  # nothing cached on failure
+
+
+def test_generate_anthropic_error_logs_the_reason_without_the_key(handler, monkeypatch, caplog):
+    # ABU-81: "upstream=None" alone can't tell a bad key from an unreachable Anthropic.
+    monkeypatch.setattr(handler, "assemble_insight_input", lambda *a: ({}, "2026-06-25"))
+
+    def boom(_input):
+        try:
+            raise ValueError("Invalid header value b'sk-ant-SECRET\\n\\n'")
+        except ValueError as cause:
+            raise handler.AnthropicError(None, "Anthropic key unavailable") from cause
+
+    monkeypatch.setattr(handler, "generate_suggestions", boom)
+
+    with caplog.at_level(logging.WARNING):
+        resp = handler.generate_ai_insights(None, None, None, None, insight_repo(existing=None))
+
+    assert resp["statusCode"] == 502
+    assert "key unavailable" in caplog.text
+    assert "sk-ant-SECRET" not in caplog.text
 
 
 def test_generate_empty_result_not_cached_and_soft_fails(handler, monkeypatch):

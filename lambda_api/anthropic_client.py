@@ -105,15 +105,18 @@ def _body(system: str, messages: list, max_tokens: int) -> dict:
 
 def _send(body: dict, timeout: float) -> dict:
     """The one urllib POST to the Messages API: headers, error mapping, JSON parse."""
+    # get_api_key() reads SSM; a missing/denied param raises ValueError. Map it to an
+    # AnthropicError (-> 502), never an uncaught 500.
     try:
-        # get_api_key() reads SSM; a missing/denied param raises ValueError. Keep it
-        # inside the try so that too becomes an AnthropicError (-> 502), never an
-        # uncaught 500.
+        api_key = get_api_key()
+    except ValueError as e:
+        raise AnthropicError(None, "Anthropic key unavailable") from e
+    try:
         req = urllib.request.Request(
             f"{ANTHROPIC_BASE_URL}{ANTHROPIC_MESSAGES_PATH}",
             data=json.dumps(body).encode(),
             headers={
-                "x-api-key": get_api_key(),
+                "x-api-key": api_key,
                 "anthropic-version": ANTHROPIC_VERSION,
                 "anthropic-beta": ANTHROPIC_BETA,
                 "content-type": "application/json",
@@ -132,7 +135,7 @@ def _send(body: dict, timeout: float) -> dict:
         # a bare TimeoutError (an OSError), which callers must still see as an Anthropic failure.
         raise AnthropicError(None, "Anthropic timed out or dropped the connection") from e
     except (ValueError, TypeError) as e:
-        raise AnthropicError(None, "Anthropic key unavailable or non-JSON envelope") from e
+        raise AnthropicError(None, "Anthropic request or reply invalid") from e
     usage = payload.get("usage") or {}
     logger.info("anthropic usage model=%s input=%s output=%s", payload.get("model"),
                 usage.get("input_tokens"), usage.get("output_tokens"))
