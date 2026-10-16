@@ -31,6 +31,9 @@ When explaining, presenting ideas, or writing to Linear:
   either name the actual thing on screen (e.g. "the big 'days left' number") or add
   a plain gloss in parentheses. Use the glossary below for the recurring ones; any
   term not listed still gets a gloss.
+- Link PRs and cards with their full URL (e.g.
+  `https://github.com/jasmine-nguyen/abundo/pull/826`), never a bare `#826` or
+  `ABU-69`: a bare number isn't clickable in the terminal.
 - Applies to chat AND Linear writes.
 
 ## Jargon → say instead
