@@ -182,7 +182,7 @@ the card number for card builds) and check where it is:
       in bold, lines as bullets): the header line, Problem, Task, Solution, and
       the last line on how to change the plan. As with PLAN FOR REVIEW, rewrite
       any line that isn't plain English, and change nothing else.
-   2. Unless the build-pause mod is loaded (see step 3), send a push
+   2. Unless the cockpit mod is loaded (see step 3), send a push
       notification (the PushNotification tool, if you have it), since the user
       may have walked away: the card, "plan approved automatically", and the
       Task in one plain line, e.g. "ABU-42: plan approved automatically.
@@ -219,18 +219,18 @@ the card number for card builds) and check where it is:
    anything, in the same message as the question and above it. The question
    box alone never tells the user enough to answer, and a one-line recap of
    the block doesn't count. The one exception: when your instructions say the
-   build-pause mod is loaded, don't show the block at all. The mod puts it in
+   cockpit mod is loaded, don't show the block at all. The mod puts it in
    the Build plan pane, and a second copy in the chat is noise.
 
-   **When the build-pause mod is loaded** (the mod in the claude repo's
-   `mods/build-pause`, installed on the user's machine), it does three of this
+   **When the cockpit mod is loaded** (the mod in the claude repo's
+   `mods/cockpit`, installed on the user's machine), it does three of this
    step's jobs in code, so they can't slip:
    - It opens the Build plan pane with the block, and writes the question box
      itself from what the build asks (progress.json), whatever wording you
      give it. So don't show the block, and ask once, with the pause's question
      in your words.
    - It saves the user's picks. Its note on the box's result starts
-     `build-pause: the user's answers are saved`: then run exactly the command
+     `cockpit: the user's answers are saved`: then run exactly the command
      in that note (`--resume-answer`), and don't write a `--resume` reply. The
      build makes the reply from the picks itself. If you write one anyway, the
      mod runs `--resume-answer` instead and says so.

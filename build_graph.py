@@ -794,7 +794,7 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
 
 
 def write_progress(thread: str, **fields) -> None:
-    """Where the build is, for anything watching it (the build-pause mod's pane, band and alerts):
+    """Where the build is, for anything watching it (the cockpit mod's pane, band and alerts):
     .build/<thread>/progress.json, replaced whole so a reader never sees half of it."""
     path = BUILD_DIR / thread / "progress.json"
     try:
@@ -2773,7 +2773,7 @@ async def resume_build(graph, config, snapshot, reply: str):
 
 
 async def answer_build(graph, config, snapshot, thread: str):
-    """Resume with the picks the user made in the question box, saved by the build-pause mod."""
+    """Resume with the picks the user made in the question box, saved by the cockpit mod."""
     if not snapshot.interrupts:
         print("This build isn't waiting for a reply.")
         return None
@@ -2830,8 +2830,8 @@ async def recheck_build(graph, config, snapshot):
 
 
 # --- answering a pause through the question box ---
-# At each pause, progress.json carries `ask`: the pause's questions and options, with ids. The build-pause
-# mod (mods/build-pause in the claude repo) asks them in the question box and saves the picks, by id, to
+# At each pause, progress.json carries `ask`: the pause's questions and options, with ids. The cockpit
+# mod (mods/cockpit in the claude repo) asks them in the question box and saves the picks, by id, to
 # .build/<thread>/answer.json; `--resume-answer` turns them into this pause's reply. So neither writing
 # the options nor turning the user's picks into the reply's format is left to the chat.
 
@@ -2946,7 +2946,7 @@ def reply_from_answer(values: dict, ask: dict, answer: dict) -> tuple[str, str]:
 
 def save_pause(thread: str, snapshot) -> None:
     """Whether the build waits on the user, and the question it asks them word for word, in
-    progress.json: the build-pause mod (mods/build-pause in the claude repo) puts it in front of them."""
+    progress.json: the cockpit mod (mods/cockpit in the claude repo) puts it in front of them."""
     (BUILD_DIR / thread / ANSWER_FILE).unlink(missing_ok=True)
     if snapshot.interrupts:
         write_progress(thread, status="paused", question=snapshot.interrupts[0].value, ask=ask_for(snapshot))
