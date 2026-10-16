@@ -17,29 +17,11 @@ Write every PR description with `.github/pull_request_template.md`: Problem, Tas
 Solution, Evidence and Merge danger, plus Manual checks and Follow-ups when there
 are any. This applies to every agent, including when using the `pr` skill.
 
-# How to communicate with Jas
+# Jargon → say instead
 
-When explaining, presenting ideas, or writing to Linear:
-
-- Short sentences. To the point.
-- Bullet points, not paragraphs. Avoid walls of text.
-- Conditionals as: if X → then Y.
-- Use arrows (→) to show flow / what happens.
-- Draw a diagram when it helps (ASCII or mermaid).
-- Plain language — **no unexplained jargon reaches Jas.** Before you send or
-  post anything, scan it for technical terms (UI / code / infra). For each one,
-  either name the actual thing on screen (e.g. "the big 'days left' number") or add
-  a plain gloss in parentheses. Use the glossary below for the recurring ones; any
-  term not listed still gets a gloss.
-- Link PRs and cards with their full URL (e.g.
-  `https://github.com/jasmine-nguyen/abundo/pull/826`), never a bare `#826` or
-  `ABU-69`: a bare number isn't clickable in the terminal.
-- Applies to chat AND Linear writes.
-
-## Jargon → say instead
-
-Swap these on sight. If you must keep the term, follow it with the plain version in
-parentheses. Not exhaustive — gloss ANY technical term that isn't here.
+Swap these on sight, in chat AND Linear writes. If you must keep the term, follow
+it with the plain version in parentheses. Not exhaustive — gloss ANY technical term
+that isn't here.
 
 | Jargon                     | Say instead                                                                |
 | -------------------------- | -------------------------------------------------------------------------- |
@@ -75,7 +57,7 @@ parentheses. Not exhaustive — gloss ANY technical term that isn't here.
 # Presenting a decision
 
 When you surface a choice for Jasmine (an escalation, an open question, a decision
-the plan didn't settle), use this structure — the communication style above still
+the plan didn't settle), use this structure — the jargon list above still
 applies:
 
 - **Problem** — one or two lines: what's undecided and why it matters.
