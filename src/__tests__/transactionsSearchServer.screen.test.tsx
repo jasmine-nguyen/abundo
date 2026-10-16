@@ -282,7 +282,7 @@ describe('search transitions', () => {
 
   it('[A3] Uncategorized tab: a re-filed search result drops out, an unfiled one stays', async () => {
     const filed = row('steven-filed', 'Steven Nguyen', -33, '2024-01-01', 'groceries');
-    server.seed('/transactions/uncategorized/feed', { transactions: [], nextCursor: 'c1' });
+    seedFeedPage(server, '/transactions/uncategorized/feed', [], 'c1');
     server.seed('/transactions/uncategorized/count', { count: 2 });
     seedSearch([STEVEN_DEEP, filed]);
     await draw();
@@ -315,9 +315,7 @@ describe('search transitions', () => {
   // server, so it must behave like an empty box — not claim "No matches" above Load More.
   it('[A5] "$" on the Uncategorized tab never claims "No matches" while Load More is showing', async () => {
     server.seed('/transactions/uncategorized/count', { count: 4 }); // unfiled charges exist deeper in history
-    server.seed('/transactions/uncategorized/feed', {
-      transactions: [row('filed', 'Coles', -12.5, '2026-07-01', 'groceries')], nextCursor: 'c1',
-    });
+    seedFeedPage(server, '/transactions/uncategorized/feed', [row('filed', 'Coles', -12.5, '2026-07-01', 'groceries')], 'c1');
     await draw();
     fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByTestId('transactions-uncategorized-more')).toBeTruthy();

@@ -211,7 +211,7 @@ it('a day heading with no spend shows only the day label', async () => {
 // set) sends that cursor, a spinner shows while it loads, and the older rows join the list.
 // A pull snaps back to the newest page only.
 it('Load More appends this account\'s older rows, and a pull snaps back to the newest page', async () => {
-  server.seed('/transactions/feed', { transactions: [ROW], nextCursor: 'c1' });
+  seedFeedPage(server, '/transactions/feed', [ROW], 'c1');
   await renderWithQueries(<AccountDetail />);
   const feedReads = () => server.sentUnder('GET', '/transactions/feed')
     .map((request) => new URLSearchParams(request.path.split('?')[1] ?? ''))

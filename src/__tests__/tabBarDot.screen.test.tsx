@@ -10,7 +10,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, within, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { tabBarProps, TAB_ROUTES } from './support/tabBar';
 import { WithQueries, refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -81,7 +81,7 @@ describe('the dot falls back to the local recent-window count when the server co
   // [A3] WHIT-203: the fallback reads the BOUNDED recent list (GET /transactions), not the paged
   // feed. Fail-on-revert: drive the dot from useTransactionsScreenData (the feed) → dot shows.
   it('[A3] the fallback ignores an unfiled charge that is only in the feed, not the recent list', async () => {
-    server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 'old', category: null, counts_to_budget: true })], nextCursor: null });
+    seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 'old', category: null, counts_to_budget: true })]);
     server.seed('/transactions', [txn({ category: 'coffee', counts_to_budget: true })]);
     await renderWithQueries(<TabBar {...singleTab} />);
     expect(server.sent('GET', '/transactions')).toHaveLength(1);

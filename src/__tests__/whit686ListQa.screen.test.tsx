@@ -14,7 +14,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
@@ -44,7 +44,7 @@ const pull = () => act(async () => { refreshControl().props.onRefresh(); });
 beforeEach(() => {
   resetAuth();
   server.seed('/categories', [GROCERIES_TOP]);
-  server.seed(FEED, { transactions: [row('t1', -42)], nextCursor: null });
+  seedFeedPage(server, FEED, [row('t1', -42)]);
 });
 
 // [A1] (P0)
@@ -64,7 +64,7 @@ it('[A1] Uncategorized tab, empty + feed error: inline Retry re-reads the UNCATE
 
 // [A2] (P1)
 it('[A2] a pull on the Uncategorized tab re-reads the uncategorized feed and leaves the All feed alone', async () => {
-  server.seed(UNCATEGORIZED_FEED, { transactions: [row('u1', -9, null)], nextCursor: null });
+  seedFeedPage(server, UNCATEGORIZED_FEED, [row('u1', -9, null)]);
   server.seed(COUNT, { count: 1 });
   await renderWithQueries(<Transactions />);
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
@@ -80,7 +80,7 @@ it('[A2] a pull on the Uncategorized tab re-reads the uncategorized feed and lea
 
 // [A3] (P1)
 it('[A3] a pull after Load More snaps the list back to the newest page (older rows go, Load More returns)', async () => {
-  server.seed(FEED, { transactions: [row('t1', -42)], nextCursor: 'c1' });
+  seedFeedPage(server, FEED, [row('t1', -42)], 'c1');
   await renderWithQueries(<Transactions />);
   server.once('GET', FEED, { body: { transactions: [row('t2', -7)], nextCursor: null } });
   fireEvent.press(screen.getByTestId('transactions-load-more'));
@@ -97,7 +97,7 @@ it('[A3] a pull after Load More snaps the list back to the newest page (older ro
 
 // [A6] (P1)
 it('[A6] Uncategorized tab: a failed background refresh over loaded rows keeps the rows and shows no error', async () => {
-  server.seed(UNCATEGORIZED_FEED, { transactions: [row('u1', -9, null)], nextCursor: null });
+  seedFeedPage(server, UNCATEGORIZED_FEED, [row('u1', -9, null)]);
   server.seed(COUNT, { count: 1 });
   await renderWithQueries(<Transactions />);
   fireEvent.press(screen.getByTestId('tab-uncategorized'));

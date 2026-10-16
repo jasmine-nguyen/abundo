@@ -12,7 +12,7 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import type { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../types';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -37,7 +37,7 @@ const seedSearch = (tab: string, query: string) =>
   server.seed(SEARCH, { transactions: [tx(`${tab}-${query}`)], truncated: false });
 
 beforeEach(() => {
-  server.seed(FEED, { transactions: [tx('feed1')], nextCursor: 'more' });
+  seedFeedPage(server, FEED, [tx('feed1')], 'more');
 });
 
 function mountScreenData(client: QueryClient, initialProps: Props) {

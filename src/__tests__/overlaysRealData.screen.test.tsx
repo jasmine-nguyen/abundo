@@ -30,7 +30,7 @@ import { AppProvider, useAppContext } from '../context';
 import { Overlays } from '../components/Overlays';
 import { queryClient } from '../queryClient';
 import { useCategories, useGoalsQuery, useIsAuthed, useRulesScreenData, useTransactionResolver } from '../queries';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
@@ -45,7 +45,7 @@ const T1 = [{ transaction_id: 't1', amount: -12, description: 'CAFE', merchant_n
 // The picker resolves a tapped charge from the feed and the recent list; seed both.
 function seedTransactions(transactions: unknown[]) {
   server.seed('/transactions', transactions);
-  server.seed('/transactions/feed', { transactions, nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', transactions);
 }
 
 // Stands in for the tab screens under the overlay layer: in the app they have already loaded what

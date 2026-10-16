@@ -8,7 +8,7 @@ import { useAppContext } from '../context';
 import { useAccountTransactionsScreenData, useTransactionResolver } from '../queries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { resetAuth } from './support/authMock';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { queriesAppWrapper as wrapper } from './support/renderWithApp';
@@ -26,7 +26,7 @@ beforeEach(() => {
   server.seed('/categories', [GROCERIES_RECORD]);
   // The fake server ignores the query string, so the all-accounts feed sees this page too — it
   // never holds OLDER, which only the account page's second page brings in.
-  server.seed('/transactions/feed', { transactions: [NEWEST], nextCursor: 'c1' });
+  seedFeedPage(server, '/transactions/feed', [NEWEST], 'c1');
 });
 
 function useAccountPage({ id }: { id: string }) {
