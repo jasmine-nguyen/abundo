@@ -100,6 +100,7 @@ class BuildState(TypedDict):
     plan_attempts: NotRequired[int]
     plan_decision: NotRequired[str]
     plan_feedback: NotRequired[str]
+    code_change: NotRequired[bool]
     # branch and slices
     base_branch: NotRequired[str]
     branch: NotRequired[str]
@@ -293,6 +294,7 @@ DESIGNER_OUTPUT = _output(
     seams=TEXTS,
     decisions=_list_of(question=TEXT, options=TEXT, recommendation=TEXT),
     slices=_list_of(title=TEXT, delivers=TEXT),
+    code_change={"type": "boolean"},
     plan=TEXT,
 )
 CRITIC_OUTPUT = _output(
@@ -740,6 +742,8 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
             return f"❌ Checks still failing after {plural(MAX_IMPLEMENTATION_ROUNDS, 'round')}"
         return "❌ Checks failed, back to the implementer"
     if name == "ship":
+        if update.get("outcome") == "no_change":
+            return "✅ Nothing to change, so no PR"
         if update.get("outcome") == "shipped":
             return f"✅ PR opened: {update['pr_url']}"
         if update.get("outcome") == "pushed":
@@ -768,6 +772,10 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
             retry = "" if update.get("escalation") else ". Rewriting it"
             return f"❌ The bug test was rejected: {update['test_rejection']}{retry}"
         return "❌ Couldn't reproduce the bug"
+    if name == "sign_off" and update.get("outcome") == "no_change":
+        if update["plan_decision"] == "AUTO_APPROVED":
+            return "✅ Approved automatically: nothing to change, so the build ends here"
+        return "✅ You approved: nothing to change, so the build ends here"
     if name == "sign_off" and update.get("plan_decision") == "AUTO_APPROVED":
         return auto_approved_brief(state)
     if name == "next_slice":
@@ -1413,6 +1421,7 @@ async def designer(state: BuildState):
         "seams": out["seams"],
         "decisions": out["decisions"],
         "slices": slices,
+        "code_change": out["code_change"],
         "plan_attempts": state.get("plan_attempts", 0) + 1,
         "plan_feedback": "",
         "history": [f"• designer: {out['validity']}, {len(out['decisions'])} decision(s), {len(slices)} slice(s)"],
@@ -1519,6 +1528,8 @@ def plan_brief(state: BuildState, boxed: bool = False) -> str:
         f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} · {critic_summary(state)}",
         *plan_summary(state),
     ]
+    if no_code_change(state):
+        lines += ["", 'This plan changes no code: approving it ends the build as "Done: nothing to change".']
     if len(state.get("slices") or []) > 1:
         lines += section("Slices", [f"{s['title']}: {s['delivers']}" for s in state["slices"]])
     if state.get("complexity") == "significant" and state.get("complexity_reason"):
@@ -1625,6 +1636,10 @@ def answers_sent_back(state: BuildState, spelled: str) -> dict:
     }
 
 
+def no_code_change(state: BuildState) -> bool:
+    return not state.get("code_change", True)
+
+
 def auto_approvable(state: BuildState) -> bool:
     """Small and medium cards skip sign-off: both planners rated the change routine (no complex
     logic, architectural change or critical area), it's easy to undo, it fits one slice, the
@@ -1654,13 +1669,16 @@ def approve(state: BuildState, answers: str, decision: str) -> dict:
     approved = "\n\n".join(sections)
     write_text(work_dir(state) / "approved-plan.md", approved)
     how = "approved automatically (routine)" if decision == "AUTO_APPROVED" else "approved"
-    return {
+    update = {
         "plan_decision": decision,
         "plan": approved,
         "plan_feedback": "",
         "sign_off_answers": answers_block,
         "history": [f"✓ sign_off: {how}{' with answers' if answers else ''}"],
     }
+    if no_code_change(state):
+        update |= {"outcome": "no_change", "history": [f"✓ sign_off: {how}, nothing to change, build ends here"]}
+    return update
 
 
 def prepare_branch(state: BuildState):
@@ -2284,6 +2302,9 @@ def ship(state: BuildState):
     ok, output = commit_all(state, f"test: add QA tests for {state.get('card_number') or 'build'}")
     if not ok:
         return {"outcome": "ship_error", "pr_error": f"git commit failed:\n{tail(output)}"}
+    code, ahead = run(["git", "rev-list", "--count", f"origin/{base}..HEAD"])
+    if code == 0 and ahead.strip() == "0":
+        return {"outcome": "no_change", "pr_error": "", "history": ["✓ ship: nothing to change, no PR"]}
     title = f"{commit_prefix(state)}: {card_title(state)}"[:72]
     push = ["push", "-u", "origin", branch]
     if state.get("replaced_push"):
@@ -2343,6 +2364,8 @@ def after_critic(state: BuildState):
 
 
 def after_sign_off(state: BuildState):
+    if state.get("outcome") == "no_change":
+        return END
     return {"APPROVED": "prepare_branch", "AUTO_APPROVED": "prepare_branch", "CLOSED": END, "STOPPED": END}.get(
         state.get("plan_decision"), "designer"
     )
@@ -2583,6 +2606,7 @@ FINAL_HEADLINES = {
     "ship_error": "passed, PR failed",
     "shipped": "PR opened",
     "pushed": "branch pushed",
+    "no_change": "done, nothing to change",
 }
 
 
@@ -2641,11 +2665,26 @@ def report(thread: str, result: dict) -> int:
         print(f"Description: {pr_body_file(result).relative_to(ROOT)}")
         if result.get("pr_compare_url"):
             print(f"Open it here: {result['pr_compare_url']}")
+    elif outcome == "no_change":
+        print("NOTHING TO CHANGE — no code change was needed, so no PR was opened.")
+        if no_code_change(result):
+            print(f"Decision:\n{bullets(result.get('solution', []))}")
+        else:
+            print("The build ran but ended with no code changes.")
+        approved = work_dir(result) / "approved-plan.md"
+        if approved.exists():
+            print(f"Approved plan: {approved.relative_to(ROOT)}")
+        if result.get("replaced_push"):
+            branch = result["branch"]
+            print(
+                f"Note: {branch} on origin still holds work a replan threw away. "
+                f"Delete it with: git push origin --delete {branch}"
+            )
     else:
         print("Done.")
     print("=" * 60)
     ping_user(f"/build {thread}: {FINAL_HEADLINES.get(outcome, 'done')}")
-    if outcome not in ("shipped", "pushed"):  # a failed build prints these again once it ships
+    if outcome not in ("shipped", "pushed", "no_change"):  # a failed build prints these again once it ships
         return code
     if result.get("follow_ups"):
         print("\nFOLLOW-UPS THE BUILD COULDN'T DO:")
@@ -3053,7 +3092,7 @@ def stop_running_build(values: dict, pid: int | None, replan: bool = False, befo
         print("No saved build for this thread.")
         return False
     outcome = values.get("outcome")
-    if outcome in ("shipped", "closed", "stopped") or (outcome == "pushed" and not replan):
+    if outcome in ("shipped", "closed", "stopped", "no_change") or (outcome == "pushed" and not replan):
         print("This build already finished. Open a new card for the change, or change the PR directly.")
         return False
     branch = values.get("branch")
@@ -3183,7 +3222,7 @@ def clean_backups(values: dict, branch: str | None = None) -> int:
     if not values and not branch:
         print("No saved build for this thread. Add --branch <the build's branch> to delete its backups.")
         return 1
-    if values and values.get("outcome") not in ("shipped", "pushed", "closed", "stopped"):
+    if values and values.get("outcome") not in ("shipped", "pushed", "closed", "stopped", "no_change"):
         print("This build isn't done yet, so its backups are kept.")
         return 1
     branch = branch or values.get("branch")

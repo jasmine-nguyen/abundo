@@ -199,6 +199,10 @@ to say instead (if the project has its own jargon → plain-words list, such as 
   none.
 - `slices` — `title` (plain English) + `delivers` (the end-to-end behaviour it makes
   work), or empty.
+- `code_change` — `false` only when the plan, following its recommended answers,
+  changes no files in this repo (e.g. a spike that ends in "keep as is"). The build
+  then ends once the plan is approved, possibly automatically, with "Done: nothing
+  to change". Otherwise `true`.
 - `plan` — the full plan in Markdown, in exactly the structure below. If `validity`
   isn't VALID, keep it to a short note on what the card should become instead.
 

@@ -404,6 +404,11 @@ the card number for card builds) and check where it is:
      pull request" tool). If you don't, give the user the "Open it here" link,
      the title, and the description in a code block to paste. Either way,
      relay the PR link once there is one.
+   - **NOTHING TO CHANGE** — the approved plan needed no code change (or the
+     build ended with none), so there's no PR. Set the card's Status to 'Done'
+     (no PR will merge to do it), add a comment (`save_comment`) with the
+     printed decision, and tell the user the decision in plain English, since
+     a small plan may have been approved without them seeing it.
    - **BUILD CANCELLED** — the user stopped it. Set the card's Status back
      to 'Todo', and mention the branch if the script printed one.
    - **CARD CLOSED** — the user agreed the card isn't needed. Set its Status
