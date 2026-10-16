@@ -108,6 +108,7 @@ export function AiCoachCard() {
       {/* Big button only on first run / empty; re-runs use the header refresh. */}
       {!hasAi && (
         <Pressable
+          accessibilityRole="button"
           style={[styles.aiBtn, isLoading && styles.aiBtnBusy]}
           disabled={isLoading}
           onPress={() => generate(goal)}

@@ -102,3 +102,12 @@ def test_get_api_key_fetches_from_the_ssm_client(api_key_module, monkeypatch):
 
     assert set(services) == {"ssm"}
     assert calls[-1] == {"Name": "/bank/key", "WithDecryption": True}
+
+
+def test_get_api_key_trims_whitespace_saved_around_the_ssm_value(api_key_module, monkeypatch):
+    # ABU-81: the Anthropic key was re-saved with two trailing newlines; urllib then
+    # rejected the header before any network call, so every AI request failed.
+    client = _FakeSsmClient({"/bank/key": "sk-test\n\n"}, [])
+    monkeypatch.setattr(sys.modules["boto3"], "client", lambda *a, **k: client, raising=False)
+
+    assert api_key_module.get_api_key("/bank/key") == "sk-test"

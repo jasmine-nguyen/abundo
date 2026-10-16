@@ -2791,7 +2791,7 @@ def generate_ai_insights(
     try:
         result = generate_suggestions(model_input)
     except AnthropicError as e:
-        logger.warning("AI insight generation failed: upstream=%s", e.upstream_status)
+        logger.warning("AI insight generation failed: upstream=%s reason=%s", e.upstream_status, e)
         return _json_response(502, {"error": "insights unavailable, please try again"})
 
     if not _insight_has_content(result.get("summary"), result.get("suggestions")):

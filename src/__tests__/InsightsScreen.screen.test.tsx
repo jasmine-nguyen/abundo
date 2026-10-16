@@ -335,7 +335,7 @@ describe('breakdown and AI fail independently', () => {
 
 it('tapping "Analyse my spending" calls generateAiInsights', async () => {
   await renderInsights();
-  fireEvent.press(screen.getByText('Analyse my spending'));
+  fireEvent.press(screen.getByRole('button', { name: 'Analyse my spending' }));
   expect(generateAiInsights).toHaveBeenCalled();
 });
 
