@@ -23,7 +23,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
 import { COFFEE_RECORD } from './support/categories';
 
@@ -33,7 +33,7 @@ useTestQueryClient();
 const rollup = (over: Partial<BudgetRollup> = {}): BudgetRollup => ({ target: 100, posted: 40, pending: 10, ...over });
 
 const seedSpend = (over: Partial<Transaction> = {}) =>
-  server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })]);
 
 beforeEach(() => {
   resetRouter();

@@ -16,7 +16,7 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
@@ -39,7 +39,7 @@ beforeEach(() => {
 function openConfirm() {
   server.seed('/categories', [GROCERIES_TOP_RECORD]);
   server.seed('/transactions', [TX]);
-  server.seed('/transactions/feed', { transactions: [TX], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', [TX]);
   const state = { sheet: { mode: 'confirm', txId: 't1', categoryId: 'groceries' }, toast: null, ...fns } as unknown as AppContext;
   return openOverlays(state, (next) => { mockState = next; });
 }

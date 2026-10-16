@@ -8,7 +8,7 @@ import React from 'react';
 import { screen, fireEvent, waitFor, within } from '@testing-library/react-native';
 import { pullAndSettle } from './support/pull';
 import { txn } from './factory';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 it('Accounts: a pull that loses the connection keeps the cards and says "You look offline · showing 9:40am", cleared by a good pull', async () => {
-  server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+  seedFeedPage(server, FEED, [LIST_ROW]);
   await renderWithApp(<Accounts />);
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.queryByTestId('accounts-stale')).toBeNull();
@@ -53,7 +53,7 @@ it('Accounts: a pull that loses the connection keeps the cards and says "You loo
 });
 
 it('Transactions: a failed pull after Load More keeps the rows and shows the original load time; the line hides during a search', async () => {
-  server.seed(FEED, { transactions: [LIST_ROW], nextCursor: 'c1' });
+  seedFeedPage(server, FEED, [LIST_ROW], 'c1');
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
 
@@ -78,7 +78,7 @@ it('Transactions: a failed pull after Load More keeps the rows and shows the ori
 // A failed refresh swaps it for the "Couldn't refresh" line; the next good refresh brings it back
 // with the new load time.
 it('Transactions: always shows "Updated <time>" after a good load, swapped for the stale line while a refresh fails (WHIT-844)', async () => {
-  server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+  seedFeedPage(server, FEED, [LIST_ROW]);
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   // WHIT-863: the line lives in the screen header, under the title.
@@ -103,16 +103,12 @@ it('Transactions: always shows "Updated <time>" after a good load, swapped for t
 // old → that entry turns amber. It reads from the all-accounts feed, so Uncategorised shows it too.
 it('Transactions: shows "Bank synced <account> <time>" per account on both tabs, amber when over a day old (WHIT-858)', async () => {
   const upRow = txn({ transaction_id: 'u1', amount: -42, account_id: 'up-spending', account_name: 'Up Spending' });
-  server.seed('/transactions/uncategorized/feed', { transactions: [{ ...upRow, category: '' }], nextCursor: null });
+  seedFeedPage(server, '/transactions/uncategorized/feed', [{ ...upRow, category: '' }]);
   // [A4] Westpac has more loaded rows than Up, so a busiest-first order would put it first.
   const westpacRows = ['w1', 'w2'].map((transaction_id) => txn({ transaction_id, amount: -3, account_id: 'westpac-altitude-qantas-black', account_name: 'Westpac Altitude Qantas Black' }));
-  server.seed(FEED, {
-    transactions: [upRow, ...westpacRows],
-    nextCursor: null,
-    bankSyncedAt: {
-      'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),
-      'up-spending': new Date('2026-09-18T08:10:00+10:00').getTime(),
-    },
+  seedFeedPage(server, FEED, [upRow, ...westpacRows], null, {
+    'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),
+    'up-spending': new Date('2026-09-18T08:10:00+10:00').getTime(),
   });
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
@@ -139,12 +135,12 @@ describe('stale line edges', () => {
   const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 
   beforeEach(() => {
-    server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: null });
+    seedFeedPage(server, UNCATEGORIZED_FEED, []);
   });
 
   // [A3] a focus refetch (no pull) that fails over cached cards still shows the line.
   it('Accounts: a failed background refetch on return to the tab shows the line with no pull', async () => {
-    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    seedFeedPage(server, FEED, [LIST_ROW]);
     const first = await renderWithApp(<Accounts />);
     first.unmount();
     jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00')); // past the 45s staleTime
@@ -156,7 +152,7 @@ describe('stale line edges', () => {
 
   // [A4] the list is the feed plus categories: a categories-only failure is a list refresh failure too.
   it('Transactions: a pull where only categories fail still shows the line', async () => {
-    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    seedFeedPage(server, FEED, [LIST_ROW]);
     await renderWithApp(<Transactions />);
     server.once('GET', '/categories', { status: 500 });
     await pullAndSettle();
@@ -165,7 +161,7 @@ describe('stale line edges', () => {
 
   // [A5] balances are out: a failed live-balance call alone never claims the list is stale.
   it('Accounts: a pull where only the live balances fail shows no stale line', async () => {
-    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    seedFeedPage(server, FEED, [LIST_ROW]);
     await renderWithApp(<Accounts />);
     server.fail('/accounts/balances/refresh', 503);
     server.fail('/accounts/balances', 503);
@@ -176,7 +172,7 @@ describe('stale line edges', () => {
 
   // [A6] a failed Load More must not hide a LATER failed pull (the Load More direction resets).
   it('Transactions: a failed Load More, then a failed pull → the line shows', async () => {
-    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: 'c1' });
+    seedFeedPage(server, FEED, [LIST_ROW], 'c1');
     await renderWithApp(<Transactions />);
     server.once('GET', FEED, { status: 503 });
     fireEvent.press(screen.getByTestId('transactions-load-more'));
@@ -189,7 +185,7 @@ describe('stale line edges', () => {
 
   // [A7] the line follows the ACTIVE feed: the Uncategorized tab's own feed loaded fine.
   it('Transactions: after a failed pull on All, switching to Uncategorized hides the line', async () => {
-    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    seedFeedPage(server, FEED, [LIST_ROW]);
     await renderWithApp(<Transactions />);
     server.once('GET', FEED, { status: 503 });
     await pullAndSettle();
@@ -202,7 +198,7 @@ describe('stale line edges', () => {
   // [A9] a cached EMPTY list that fails to refresh shows the full error card; the quiet line must
   // not stack on top of it saying the same thing twice.
   it('Accounts: a cached empty list that fails to refresh shows the error card only, not the stale line too', async () => {
-    server.seed(FEED, { transactions: [], nextCursor: null });
+    seedFeedPage(server, FEED, []);
     await renderWithApp(<Accounts />);
     server.once('GET', FEED, { status: 503 });
     await pullAndSettle();

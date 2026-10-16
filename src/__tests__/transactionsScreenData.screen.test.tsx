@@ -13,7 +13,7 @@ import { render, renderHook, screen, fireEvent, act, waitFor } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
 import type { Transaction } from '../types';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 
 // ../auth — mutable status (superset: supports the screen-render auth-flip test). INERT for the
 // renderHook describes: their beforeEach re-seeds 'authed' and no test calls setAuthStatus, so the
@@ -62,7 +62,7 @@ const TXNS = [{
 describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
   beforeEach(() => {
     resetAuth();
-    server.seed(FEED, { transactions: TXNS, nextCursor: null });
+    seedFeedPage(server, FEED, TXNS);
     server.seed('/categories', mockCategories);
   });
 
@@ -191,7 +191,7 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
   });
 
   it('the bounded recent hook reads its OWN endpoint, not the feed (Decision 2 separation)', async () => {
-    server.seed(FEED, { transactions: [tx('f1')], nextCursor: null });
+    seedFeedPage(server, FEED, [tx('f1')]);
     server.seed('/transactions', [tx('r1')]);
     const { result } = renderHook(() => useRecentTransactionsScreenData(), { wrapper: wrapper(makeClient()) });
 
@@ -215,12 +215,12 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
 
   beforeEach(() => {
     resetAuth();
-    server.seed(FEED, { transactions: [], nextCursor: null });
+    seedFeedPage(server, FEED, []);
   });
 
   it('drives the list from the uncategorized feed, not the plain feed', async () => {
-    server.seed(FEED, { transactions: [tx('plain1')], nextCursor: null });
-    server.seed(UNCATEGORIZED_FEED, { transactions: [tx('u1'), tx('u2')], nextCursor: null });
+    seedFeedPage(server, FEED, [tx('plain1')]);
+    seedFeedPage(server, UNCATEGORIZED_FEED, [tx('u1'), tx('u2')]);
     const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
 
     await waitFor(() => expect(result.current.transactions.length).toBe(2));
@@ -308,7 +308,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   beforeEach(() => {
     resetAuth();
-    server.seed(FEED, { transactions: TXNS, nextCursor: null });
+    seedFeedPage(server, FEED, TXNS);
     server.seed('/categories', mockCategories);
   });
 
@@ -319,7 +319,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   // [A4] a day with nothing that counts shows the bare date, no " · " suffix
   it('a date heading with nothing that counts shows just the date (WHIT-847)', async () => {
-    server.seed(FEED, { transactions: [{ ...TXNS[0], amount: 900, category: 'income' }], nextCursor: null });
+    seedFeedPage(server, FEED, [{ ...TXNS[0], amount: 900, category: 'income' }]);
     renderTransactions();
     expect(await screen.findByText('+$900.00')).toBeTruthy();
     expect(screen.getByText('Wed 1 Jul')).toBeTruthy();
@@ -364,7 +364,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 describe('useTransactionDetailScreenData (WHIT-614)', () => {
   beforeEach(() => {
     resetAuth();
-    server.seed(FEED, { transactions: TXNS, nextCursor: null });
+    seedFeedPage(server, FEED, TXNS);
     server.seed('/categories', mockCategories);
   });
 

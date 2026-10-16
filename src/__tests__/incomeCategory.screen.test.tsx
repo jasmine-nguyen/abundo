@@ -19,7 +19,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import CategoryList from '../../app/category/index';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
@@ -41,7 +41,7 @@ const setMockState = (next: AppContext) => { mockState = next; };
 // The picker resolves the tapped charge from the feed and the recent list; seed both.
 function seedTransactions(transactions: unknown[]) {
   server.seed('/transactions', transactions);
-  server.seed('/transactions/feed', { transactions, nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', transactions);
 }
 
 function openPicker(tx: any, fns: Record<string, unknown>, categories: unknown[] = [INCOME_CAT, GROCERIES_TOP_RECORD]) {

@@ -9,7 +9,7 @@ import { RefreshControl } from 'react-native';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
@@ -40,7 +40,7 @@ const pull = async () => { await act(async () => { rc().props.onRefresh(); }); }
 
 beforeEach(() => {
   resetAuth();
-  server.seed(FEED, { transactions: TXNS, nextCursor: null });
+  seedFeedPage(server, FEED, TXNS);
   server.seed('/categories', mockCategories);
   // The live refresh echoes the stored balances unless a test queues its own reply.
   server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);

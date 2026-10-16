@@ -13,7 +13,7 @@ import { RefreshControl } from 'react-native';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
@@ -48,7 +48,7 @@ const pull = async () => { await act(async () => { rc().props.onRefresh(); }); }
 describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-212 gaps)', () => {
   beforeEach(() => {
     resetAuth();
-    server.seed('/transactions/feed', { transactions: TXNS, nextCursor: null });
+    seedFeedPage(server, '/transactions/feed', TXNS);
     server.seed('/categories', mockCategories);
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
     mockShowToast.mockReset();

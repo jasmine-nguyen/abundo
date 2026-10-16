@@ -29,7 +29,7 @@ let mockReduceMotion = false;
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduceMotion }));
 
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
@@ -205,7 +205,7 @@ describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
   function openPicker() {
     server.seed('/categories', [CAT_A, CAT_B]);
     server.seed('/transactions', [TX]);
-    server.seed('/transactions/feed', { transactions: [TX], nextCursor: null });
+    seedFeedPage(server, '/transactions/feed', [TX]);
     return mount({ sheet: { mode: 'picker', txId: 't1' }, toast: null, ...fns } as unknown as AppContext);
   }
 

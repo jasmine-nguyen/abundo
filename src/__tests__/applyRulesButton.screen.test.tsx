@@ -16,7 +16,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, settle } from './support/renderWithQueries';
 import { colesTxn } from './factory';
@@ -30,9 +30,6 @@ const unfiled = (id: string) => colesTxn({ transaction_id: id });
 
 const BUTTON = 'transactions-apply-rules';
 
-const seedUncategorizedFeed = (transactions: unknown[], nextCursor: string | null = null) =>
-  server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor });
-
 /** Render, wait for the first reads, and switch to the Uncategorized tab. */
 async function renderTab() {
   await renderWithQueries(<Transactions />);
@@ -45,7 +42,7 @@ beforeEach(() => {
   mockSetSheet.mockClear();
   server.seed('/categories', [GROCERIES_TOP]);
   server.seed(COUNT, { count: 5 });
-  seedUncategorizedFeed([unfiled('t1')]);
+  seedFeedPage(server, UNCATEGORIZED_FEED, [unfiled('t1')]);
 });
 
 describe('the "Apply my rules" button', () => {
@@ -60,7 +57,7 @@ describe('the "Apply my rules" button', () => {
   // gate on the local loaded-page count instead and the button vanishes mid-way through the job.
   it('stays visible when the loaded page is empty but history still has unfiled charges', async () => {
     server.seed(COUNT, { count: 339 });
-    seedUncategorizedFeed([], 'c1');
+    seedFeedPage(server, UNCATEGORIZED_FEED, [], 'c1');
     await renderTab();
     expect(screen.getByTestId(BUTTON)).toBeTruthy();
   });

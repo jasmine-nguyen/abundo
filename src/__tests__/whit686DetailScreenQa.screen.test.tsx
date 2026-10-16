@@ -19,7 +19,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth, setAuthStatus } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedFeedKey } from '../queryKeys';
@@ -35,7 +35,7 @@ beforeEach(() => {
   setParams({ id: 't1' });
   resetAuth();
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
-  server.seed('/transactions/feed', { transactions: [ROW], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', [ROW]);
 });
 
 // [A2] Retry recovers the screen, not just fires a request.
@@ -53,7 +53,7 @@ it('[A2] a first-open feed failure → Retry → the charge shows and the error 
 // [A4] The uncategorised feed is read passively: a row already in its cache resolves, and the
 // detail screen never starts that whole-history scan itself.
 it('[A4] resolves a row only in the uncategorised cache without fetching that feed', async () => {
-  server.seed('/transactions/feed', { transactions: [], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', []);
   queryClient.setQueryData(uncategorizedFeedKey, {
     pages: [{ transactions: [txn({ transaction_id: 't1', category: null, merchant_name: 'Deep Unfiled' })], nextCursor: null }],
     pageParams: [undefined],
@@ -75,7 +75,7 @@ it('[A5] the feed fails but the recent list has the row → row shows, no error'
 
 // [A6] A rule line held back while rules load fills in with the NAMED rule once they arrive.
 it('[A6] rules arriving late fill in the named rule line', async () => {
-  server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })]);
   server.seed('/rules', [{ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'coffee' }]);
   const held = server.hold('/rules');
   render(<WithQueries><TransactionDetail /></WithQueries>);

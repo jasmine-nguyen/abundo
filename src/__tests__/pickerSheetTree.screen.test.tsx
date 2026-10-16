@@ -14,7 +14,7 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
@@ -32,7 +32,7 @@ const TX = { transaction_id: 't1', amount: -12, description: 'CAFE NERO', mercha
 function openPicker(categories: unknown[], fns: Record<string, unknown>) {
   server.seed('/categories', categories);
   server.seed('/transactions', [TX]);
-  server.seed('/transactions/feed', { transactions: [TX], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', [TX]);
   const state = { sheet: { mode: 'picker', txId: 't1' }, toast: null, ...fns } as unknown as AppContext;
   return openOverlays(state, setMockState);
 }

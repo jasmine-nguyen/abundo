@@ -20,7 +20,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
 import { colesTxn } from './factory';
@@ -35,8 +35,8 @@ beforeEach(() => {
   mockPendingFlag = false;
   mockClearSpy.mockClear();
   server.seed('/categories', [GROCERIES_TOP]);
-  server.seed('/transactions/feed', { transactions: [unfiled('t1')], nextCursor: null });
-  server.seed('/transactions/uncategorized/feed', { transactions: [unfiled('t1')], nextCursor: null });
+  seedFeedPage(server, '/transactions/feed', [unfiled('t1')]);
+  seedFeedPage(server, '/transactions/uncategorized/feed', [unfiled('t1')]);
   server.seed('/transactions/uncategorized/count', { count: 3 });
   server.seed('/transactions/uncategorized/merchants', { unfiled: 3, groups: [], ungrouped: { count: 3, samples: ['ONE OFF'] } });
 });
