@@ -196,11 +196,12 @@ function untilReleasedOrAborted(held: Promise<void>, signal?: AbortSignal | null
 }
 
 /** Seed one page of a paged feed route (the all-accounts, account or uncategorized feed):
- *  end of history unless a cursor is given. */
+ *  end of history unless a cursor is given. `bankSyncedAt` maps account id → last bank sync (ms). */
 export function seedFeedPage(
   server: ReturnType<typeof installFakeServer>, path: string, transactions: unknown[], nextCursor: string | null = null,
+  bankSyncedAt?: Record<string, number>,
 ): void {
-  server.seed(path, { transactions, nextCursor });
+  server.seed(path, { transactions, nextCursor, ...(bankSyncedAt && { bankSyncedAt }) });
 }
 
 export function installFakeServer() {

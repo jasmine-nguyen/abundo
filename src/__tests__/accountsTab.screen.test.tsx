@@ -273,14 +273,10 @@ it('every account-type chip icon is a real drawing', () => {
 // ABU-66: the header shows "Updated … · Bank synced …" like Transactions, and each account card is
 // a labelled button: name and balance, or "balance not loaded yet" before the first poll.
 it('shows the Updated + Bank synced line, and each card is a button labelled with name and balance', async () => {
-  server.seed('/transactions/feed', {
-    transactions: [
-      { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' },
-      { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Spending' },
-    ],
-    nextCursor: null,
-    bankSyncedAt: { a1: new Date('2026-07-08T09:12:00+10:00').getTime() },
-  });
+  seedFeedPage(server, '/transactions/feed', [
+    { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' },
+    { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Spending' },
+  ], null, { a1: new Date('2026-07-08T09:12:00+10:00').getTime() });
   server.seed('/accounts/balances', [bal({ account_id: 'a1', amount: 96270.59 })]);
   await renderWithQueries(<Accounts />);
   await waitFor(() => expect(screen.getByTestId('accounts-updated')).toBeTruthy());

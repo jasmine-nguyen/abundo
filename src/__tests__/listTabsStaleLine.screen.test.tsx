@@ -106,13 +106,9 @@ it('Transactions: shows "Bank synced <account> <time>" per account on both tabs,
   seedFeedPage(server, '/transactions/uncategorized/feed', [{ ...upRow, category: '' }]);
   // [A4] Westpac has more loaded rows than Up, so a busiest-first order would put it first.
   const westpacRows = ['w1', 'w2'].map((transaction_id) => txn({ transaction_id, amount: -3, account_id: 'westpac-altitude-qantas-black', account_name: 'Westpac Altitude Qantas Black' }));
-  server.seed(FEED, {
-    transactions: [upRow, ...westpacRows],
-    nextCursor: null,
-    bankSyncedAt: {
-      'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),
-      'up-spending': new Date('2026-09-18T08:10:00+10:00').getTime(),
-    },
+  seedFeedPage(server, FEED, [upRow, ...westpacRows], null, {
+    'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),
+    'up-spending': new Date('2026-09-18T08:10:00+10:00').getTime(),
   });
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
