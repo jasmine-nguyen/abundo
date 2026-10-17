@@ -2,11 +2,12 @@
 // account detail screen can't drift. The subtitle is a useful fact, not a count of loaded rows:
 // cards → credit left; everyday → when money last went out; home loan → its payoff line.
 import { it, expect, afterEach, jest } from '@jest/globals';
-import { accountSubtitle, accountKind, orderAccounts, balanceDisplay, availableCredit } from '../accountDisplay';
-import { C } from '../theme';
+import { accountSubtitle, accountKind, orderAccounts, balanceDisplay, availableCredit, accountAccent } from '../accountDisplay';
+import { C, ACCOUNT_ACCENTS } from '../theme';
 import type { AccountBalance } from '../api';
 import { pinToday } from './support/clock';
 import { accountBalance as bal } from './support/accountBalance';
+import { colourDifference, hueDegrees, type Vision } from './support/colourDifference';
 
 const summary = (lastSpendDate: string | null) => ({ id: 'a1', name: 'Up Spending', count: 3, lastSpendDate });
 
@@ -55,4 +56,27 @@ it('availableCredit is null for a maxed card or a positive balance; the card sub
   expect(availableCredit(maxed)).toBeNull();
   expect(availableCredit(bal({ amount: 50, available_balance: 50 }))).toBeNull();
   expect(accountSubtitle({ summary: summary('2026-10-16'), bal: maxed, loanLine: null })).toBe('Last spend today');
+});
+
+// ABU-77: every pair of account colours must be easy to tell apart, for normal vision and both
+// kinds of red-green colour blindness (CIEDE2000 gap; Machado 2009 simulation, full strength).
+const accentPairs = ACCOUNT_ACCENTS.flatMap((a, i) => ACCOUNT_ACCENTS.slice(i + 1).map((b) => [a, b] as const));
+const MIN_GAP: Record<Vision, number> = { normal: 20, protan: 10, deutan: 10 };
+
+it.each(Object.entries(MIN_GAP) as [Vision, number][])('ACCOUNT_ACCENTS: every pair differs by at least the minimum gap (%s vision)', (vision, minGap) => {
+  const tooClose = accentPairs
+    .map(([a, b]) => ({ pair: `${a} vs ${b}`, gap: Math.round(colourDifference(a, b, vision) * 10) / 10 }))
+    .filter(({ gap }) => gap < minGap);
+  expect(tooClose).toEqual([]);
+});
+
+it('ACCOUNT_ACCENTS: no green, cyan or rose — those are the money colours', () => {
+  const inMoneyHue = (h: number) => (h >= 75 && h <= 200) || h >= 330 || h <= 15;
+  expect(ACCOUNT_ACCENTS.filter((hex) => inMoneyHue(hueDegrees(hex)))).toEqual([]);
+});
+
+it('accountAccent: each account keeps its slot in the colour list', () => {
+  expect(accountAccent('a1')).toBe(C.accent);
+  expect(accountAccent('visa-9912')).toBe(C.accountMagenta);
+  expect(accountAccent('acc-up-spending')).toBe(C.warn);
 });

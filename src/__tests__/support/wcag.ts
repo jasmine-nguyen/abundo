@@ -16,7 +16,7 @@ export const hexToRgb = (hex: string): Rgb => {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 };
 
-const linearize = (channel: number): number => {
+export const linearize =(channel: number): number => {
   const scaled = channel / 255;
   return scaled <= 0.04045 ? scaled / 12.92 : Math.pow((scaled + 0.055) / 1.055, 2.4);
 };
