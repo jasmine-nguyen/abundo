@@ -3,6 +3,7 @@ import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { HeaderTextButton } from '../components/ui';
+import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
 
 it('shows its label as a button and a tap calls onPress', () => {
   const onPress = jest.fn();
@@ -20,6 +21,12 @@ it('shows its label as a button and a tap calls onPress', () => {
   expect(screen.getByLabelText('Select transactions')).toBeTruthy();
   fireEvent.press(screen.getByText('Select'));
   expect(onPress).toHaveBeenCalledTimes(1);
+});
+
+// ABU-76: at the largest text size the label stops growing at the title cap, so it fits the 40px button.
+it('caps the label at the screen-title text size limit', () => {
+  render(<HeaderTextButton label="Export" testID="hdr-export" onPress={() => {}} />);
+  expect(screen.getByText('Export').props.maxFontSizeMultiplier).toBe(TITLE_MAX_SCALE);
 });
 
 it('while busy, swaps the label for a spinner and reports busy', () => {

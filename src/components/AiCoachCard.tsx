@@ -6,6 +6,7 @@ import { aiGoalSignal } from '../context';
 import { useAiInsights } from '../hooks/useAiInsights';
 import { useGoalScreenData } from '../queries';
 import { useChat } from '../chat/ChatContext';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 // The Insights "coach" card (WHIT-104), extracted from the Insights screen (WHIT-68) so the
 // screen can gate it behind `{cycle === 0 && <AiCoachCard />}` in one line and its AI-state
@@ -64,8 +65,8 @@ export function AiCoachCard() {
     <View style={styles.aiCard}>
       <View style={styles.aiHeadRow}>
         <View style={styles.aiHeadLeft}>
-          <Text style={styles.aiEmoji}>👀</Text>
-          <Text style={styles.aiTitle}>Worth a look</Text>
+          <Text style={styles.aiEmoji} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>👀</Text>
+          <Text style={styles.aiTitle} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Worth a look</Text>
         </View>
         {/* Once an insight exists the re-run is a quiet stamp + refresh, not a big
             button — the card stays about the advice. Refresh spins while working. */}
@@ -74,8 +75,8 @@ export function AiCoachCard() {
             {/* A failed re-run keeps the old advice below, but must SAY it failed
                 (not just silently stop) — the refresh stays tappable to retry. */}
             {isError
-              ? <Text style={styles.aiStampErr}>Couldn’t refresh</Text>
-              : !!ago && <Text style={styles.aiStamp}>{ago}</Text>}
+              ? <Text style={styles.aiStampErr} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Couldn’t refresh</Text>
+              : !!ago && <Text style={styles.aiStamp} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{ago}</Text>}
             {isLoading
               ? <ActivityIndicator testID="ai-refresh-busy" size="small" color={C.accentSoft} accessibilityLabel="Re-analysing your spending" />
               : <Pressable
@@ -90,19 +91,19 @@ export function AiCoachCard() {
         )}
       </View>
 
-      {hasAi && !!ai?.summary && <Text style={styles.aiSummary}>{ai.summary}</Text>}
+      {hasAi && !!ai?.summary && <Text style={styles.aiSummary} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{ai.summary}</Text>}
       {hasAi && ai!.suggestions.map((tip, i) => (
         <View key={i} style={styles.aiTipRow}>
           <View style={styles.aiDiamond} />
-          <Text style={styles.aiTip}>{tip}</Text>
+          <Text style={styles.aiTip} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{tip}</Text>
         </View>
       ))}
 
       {!hasAi && !isLoading && !isError && (
-        <Text style={styles.aiIdle}>Get a few AI suggestions on where to cut back this cycle.</Text>
+        <Text style={styles.aiIdle} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Get a few AI suggestions on where to cut back this cycle.</Text>
       )}
       {!hasAi && isError && (
-        <Text style={styles.aiError}>Couldn’t generate insights. Please try again.</Text>
+        <Text style={styles.aiError} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Couldn’t generate insights. Please try again.</Text>
       )}
 
       {/* Big button only on first run / empty; re-runs use the header refresh. */}
@@ -115,14 +116,14 @@ export function AiCoachCard() {
         >
           {isLoading
             ? <ActivityIndicator testID="ai-generate-busy" color={C.heroInk} accessibilityLabel="Analysing your spending" />
-            : <Text style={styles.aiBtnText}>{isError ? 'Try again' : 'Analyse my spending'}</Text>}
+            : <Text style={styles.aiBtnText} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{isError ? 'Try again' : 'Analyse my spending'}</Text>}
         </Pressable>
       )}
 
       {/* Full disclosure before the first send (conscious choice); a compact reminder once
           populated. Anthropic is named in both, and the loan figures are named only when a
           goal is actually attached (WHIT-134). */}
-      <Text style={styles.aiNote}>{noteText}</Text>
+      <Text style={styles.aiNote} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{noteText}</Text>
 
       {/* Card 609: carry on from this summary in the Ask Abundo chat — a fresh thread that opens
           with the summary as its first answer, keyboard up. */}
@@ -135,7 +136,7 @@ export function AiCoachCard() {
             hitSlop={8}
             style={styles.aiFollowUpTarget}
           >
-            <Text style={styles.aiFollowUp}>Ask a follow-up →</Text>
+            <Text style={styles.aiFollowUp} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Ask a follow-up →</Text>
           </Pressable>
         </View>
       )}
@@ -149,11 +150,11 @@ const styles = StyleSheet.create({
   // other two wash cards (mortgage.tsx contribCard, milestone.tsx nextCard) — it was the last
   // surface still built from C.accent at 0.07, which made it a slightly greener, fainter blue.
   aiCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 20, padding: 16, marginBottom: 22 },
-  aiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  aiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9, marginBottom: 10 },
+  aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 7, flexShrink: 1 },
   aiEmoji: { fontSize: 15 },
   aiHeadRight: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 20 },
-  aiTitle: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
+  aiTitle: { flexShrink: 1, fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
   aiStamp: { fontFamily: FONT.body, fontSize: 12, color: C.textFaint },
   aiStampErr: { fontFamily: FONT.body, fontSize: 12, color: C.bad },
   aiSummary: { fontFamily: FONT.body, fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 12 },

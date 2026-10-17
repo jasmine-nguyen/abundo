@@ -3,7 +3,7 @@ import { ActivityIndicator, View, Text, Pressable, StyleSheet, ViewStyle, TextSt
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { C, FONT, tint } from '../theme';
 import { Glyph } from '../icons';
-import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
+import { LARGE_TEXT_MAX_SCALE, TITLE_MAX_SCALE } from '../hooks/useLargeText';
 
 // WHIT-615 — a full-bleed gradient layer. iOS react-native-svg saves a shape's `%` sizes from
 // its first draw and never updates them on resize, so the Rect is sized in a 0-1 viewBox that
@@ -99,7 +99,7 @@ export function HeaderTextButton({ label, onPress, testID, busy = false, accessi
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy }}
     >
-      {busy ? <ActivityIndicator color={C.accentSoft} /> : <Text style={styles.hdrBtnText}>{label}</Text>}
+      {busy ? <ActivityIndicator color={C.accentSoft} /> : <Text style={styles.hdrBtnText} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{label}</Text>}
     </Pressable>
   );
 }
