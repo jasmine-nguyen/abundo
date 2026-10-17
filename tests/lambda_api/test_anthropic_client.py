@@ -125,6 +125,23 @@ def test_an_error_reply_without_a_usable_explanation_keeps_the_plain_message(
     assert str(ei.value) == "Anthropic messages -> 502"
 
 
+def test_an_error_reply_that_times_out_mid_read_keeps_the_plain_message(anthropic_client, monkeypatch):
+    # [A1] reading the error body can itself fail (socket timeout); still an AnthropicError
+    def boom(req, timeout=None):
+        error = http_error(503, url="https://api.anthropic.com/v1/messages")
+        def read(*args):
+            raise TimeoutError("read timed out")
+        error.read = read
+        raise error
+    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
+
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+
+    assert ei.value.upstream_status == 503
+    assert str(ei.value) == "Anthropic messages -> 503"
+
+
 def test_a_long_explanation_is_cut_to_the_safe_length(anthropic_client, monkeypatch):
     _raise_http_error(monkeypatch, anthropic_client, 400, _error_body("invalid_request_error", "x" * 1000))
 
