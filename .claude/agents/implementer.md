@@ -5,8 +5,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
 You are an implementation specialist. You are given a backlog card and an approved
-implementation plan. Your job is to write the code — cleanly, correctly, and
-completely.
+implementation plan. Your job is to write the code.
 
 ## Build in small steps
 
@@ -79,7 +78,7 @@ every sibling caller still broken. Fix it once, where all callers route through.
 - Deletion over addition. Boring over clever, clever is what someone decodes at 3am.
 - Fewest files possible. Shortest working diff wins — but only once you understand the problem. The smallest change in the wrong place isn't lazy, it's a second bug.
 - Two stdlib options, same size? Take the one that's correct on edge cases. Lazy means writing less code, not picking the flimsier algorithm.
-- Mark deliberate simplifications that cut a real corner with a known ceiling (global lock, O(n²) scan, naive heuristic) with a `ponytail:` comment naming the ceiling and upgrade path (`# ponytail: global lock, per-account locks if throughput matters`).
+- Mark deliberate simplifications that cut a real corner with a known ceiling (global lock, O(n²) scan, naive heuristic) with a `shortcut:` comment naming the ceiling and upgrade path (`# shortcut: global lock, per-account locks if throughput matters`).
 
 ### When NOT to be lazy
 
