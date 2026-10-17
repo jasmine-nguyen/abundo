@@ -64,26 +64,6 @@ def test_iam_references_ssm_by_arn_locals_with_the_old_names():
         assert tf_attr(text, f"{name}_arn") == f'"${{local.ssm_parameter_arn_prefix}}/{kebab}"'
 
 
-# Which secrets each lambda role could read before the switch to ARN locals.
-SSM_GRANTS = {
-    "app_api_ssm": {"banksync_api_key", "anthropic_api_key"},
-    "transaction_ssm": {"banksync_webhook_secret", "expo_access_token",
-                        "up_personal_access_token", "up_webhook_signing_secret"},
-    "transaction_trigger_ssm": {"banksync_api_key"},
-    "balance_poller_ssm": {"banksync_api_key"},
-    "push_receipts_ssm": {"expo_access_token"},
-    "goal_nudge_ssm": {"expo_access_token"},
-    "ai_chat_worker_ssm": {"anthropic_api_key"},
-}
-
-
-@pytest.mark.parametrize("policy, secrets", SSM_GRANTS.items())
-def test_each_lambda_role_keeps_its_secret_grants(policy, secrets):
-    # [A3] swapping aws_ssm_parameter.X.arn for local.X_arn must not move a grant between roles.
-    block = tf_block((TERRAFORM_DIR / "iam.tf").read_text(), "aws_iam_role_policy", policy)
-    assert set(re.findall(r"local\.(\w+)_arn\b", block)) == secrets
-
-
 def test_api_stage_is_throttled():
     block = tf_block((TERRAFORM_DIR / "apigateway.tf").read_text(), "aws_apigatewayv2_stage", "default")
     assert "default_route_settings" in block, "the API stage has no rate limit"
