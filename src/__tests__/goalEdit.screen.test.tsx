@@ -27,6 +27,7 @@ import { queryClient } from '../queryClient';
 jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
 import { setPickedDate, resetPickedDate, FUTURE } from './support/mockDatePicker';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
+import { spyOnAlert, pressAlertButton } from './support/alertSpy';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
@@ -86,6 +87,13 @@ function renderForm() {
 
 async function press(testID: string) {
   await act(async () => { fireEvent.press(screen.getByTestId(testID)); });
+}
+
+const alerts = spyOnAlert();
+
+async function pressDeleteAndConfirm() {
+  await press('goal-delete');
+  await act(async () => { await pressAlertButton(alerts, 'Delete'); });
 }
 
 const saveDisabled = () => screen.getByTestId('goal-save').props.accessibilityState?.disabled === true;
@@ -235,12 +243,28 @@ describe('edit', () => {
   // WHIT-749: the goal's page is gone too, so delete returns straight to the Goals tab.
   it('Delete → deleteGoal(id) once, then straight to the Goals tab', async () => {
     await renderForm();
-    await press('goal-delete');
+    await pressDeleteAndConfirm();
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     expect(mockDeleteGoal).toHaveBeenCalledWith('g1');
     await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/goals'));
     expect(routerSpies.dismissAll).toHaveBeenCalledTimes(1);
     expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+});
+
+describe('ABU-85: Delete goal asks first', () => {
+  beforeEach(() => { setParams({ id: 'g1' }); goals = [RAINY_DAY]; });
+
+  it('shows a Cancel / Delete pop-up, and Cancel deletes nothing', async () => {
+    await renderForm();
+    await press('goal-delete');
+
+    expect(alerts.spy).toHaveBeenCalledTimes(1);
+    expect(alerts.last().title).toBe('Delete this goal?');
+    expect(alerts.last().buttons.map((button) => [button.text, button.style])).toEqual([['Cancel', 'cancel'], ['Delete', 'destructive']]);
+    await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
+    expect(mockDeleteGoal).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 });
 
@@ -271,8 +295,8 @@ describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
     mockDeleteGoal.mockRejectedValueOnce(new Error('network blew up'));
     await renderForm();
 
-    await press('goal-delete');
-    await press('goal-delete');
+    await pressDeleteAndConfirm();
+    await pressDeleteAndConfirm();
     expect(mockDeleteGoal).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledTimes(1));
     expect(errorSpy).toHaveBeenCalled();
@@ -369,7 +393,7 @@ describe('writer failure does not navigate', () => {
     goals = [RAINY_DAY];
     mockDeleteGoal.mockImplementation(async () => false);
     await renderForm();
-    await press('goal-delete');
+    await pressDeleteAndConfirm();
 
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     await act(async () => {});

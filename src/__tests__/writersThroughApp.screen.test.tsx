@@ -13,6 +13,7 @@ import { resetAuth, setAuthStatus } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { rulesKey } from '../queryKeys';
+import { spyOnAlert, pressAlertButton } from './support/alertSpy';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -59,6 +60,7 @@ it('user saves an edited category → the real app sends PATCH /categories/parki
 
 describe('Rules delete through the real deleteRule', () => {
   beforeEach(() => server.seed('/categories', [SUBSCRIPTIONS]));
+  const alerts = spyOnAlert();
 
   // [A2] a failed delete of a MIDDLE rule puts it back in its old place, not at the end.
   it('[A2] a failed delete puts the rule back in its original position', async () => {
@@ -68,6 +70,7 @@ describe('Rules delete through the real deleteRule', () => {
     expect(cachedRuleIds()).toEqual(['e1', 'e2', 'e3']);
 
     fireEvent.press(screen.getByTestId('delete-rule-e2'));
+    pressAlertButton(alerts, 'Delete');
     await waitFor(() => expect(shownToasts()).toEqual(['Could not delete rule. Please try again.']));
 
     expect(cachedRuleIds()).toEqual(['e1', 'e2', 'e3']);
@@ -82,6 +85,7 @@ describe('Rules delete through the real deleteRule', () => {
     const held = server.hold('/rules/e1');
 
     fireEvent.press(screen.getByTestId('delete-rule-e1'));
+    pressAlertButton(alerts, 'Delete');
     await waitFor(() => expect(server.sent('DELETE', '/rules/e1')).toHaveLength(1));
     act(() => setAuthStatus('anon'));
     await act(async () => { held.fail('DELETE', { status: 500 }); });

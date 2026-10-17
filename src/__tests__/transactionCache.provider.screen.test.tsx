@@ -310,10 +310,8 @@ it('deleteCategory unfiles its charges in every copy and refreshes the category-
   // WHIT-628: the budget / category charge lists are unfiled too, and reload.
   expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null });
   expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
-  for (const key of [BREAKDOWN_KEY, COUNT_KEY, UNCAT_KEY, SEARCH_KEY, BUDGET_KEY, CATEGORY_KEY]) {
+  for (const key of [BUDGETS_KEY, BREAKDOWN_KEY, COUNT_KEY, UNCAT_KEY, SEARCH_KEY, BUDGET_KEY, CATEGORY_KEY]) {
     expect([key, invalidated(key)]).toEqual([key, true]);
   }
-  // Budgets are cascaded by hand (a refetch would resurrect the dropped budget).
-  expect(invalidated(BUDGETS_KEY)).toBe(false);
   expect(invalidated(['transactions'])).toBe(false);
 });

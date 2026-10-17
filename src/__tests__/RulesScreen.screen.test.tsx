@@ -3,7 +3,7 @@
 // fake server inside the real AppProvider (WHIT-692): the real useRulesScreenData + useCategories
 // read the seeded GET /rules + /categories, and the real deleteRule/setSheet run — the server's
 // request log shows the DELETE, and the probe shows the toast and the open sheet.
-import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { RuleRecord } from '../api';
@@ -15,6 +15,7 @@ import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 import { rulesKey } from '../queryKeys';
 import { fireFocus } from './support/routerMock';
+import { spyOnAlert, pressAlertButton } from './support/alertSpy';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -49,9 +50,12 @@ function search(text: string) {
 // The query library hands its screen updates over on a timer, which the fake clock holds back:
 // run it once the first load has landed. The fake server replies with promises, which fake timers never hold back.
 const flush = () => act(async () => { jest.runOnlyPendingTimers(); });
-// Tap a rule's trash button, then let the real deleteRule's DELETE and its follow-up reads land.
+const alerts = spyOnAlert();
+// Tap a rule's trash button and answer Delete on the pop-up, then let the real deleteRule's DELETE
+// and its follow-up reads land.
 async function deleteRule(id: string) {
   fireEvent.press(screen.getByTestId(`delete-rule-${id}`));
+  pressAlertButton(alerts, 'Delete');
   await waitFor(() => expect(server.sent('DELETE', `/rules/${id}`)).toHaveLength(1));
   await settleQueries();
   await flush();
@@ -98,6 +102,23 @@ it('a failed delete puts the rule back and toasts', async () => {
   await deleteRule('e1');
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(shownToasts()).toEqual(['Could not delete rule. Please try again.']);
+});
+
+describe('ABU-85: the trash button asks before deleting', () => {
+  it('shows a Cancel / Delete pop-up, and Cancel sends no delete', async () => {
+    server.seed('/rules', [NETFLIX]);
+    await renderWithApp(<Rules />);
+    fireEvent.press(screen.getByTestId('delete-rule-e1'));
+    await settleQueries();
+
+    expect(alerts.spy).toHaveBeenCalledTimes(1);
+    expect(alerts.last().title).toBe('Delete this rule?');
+    expect(alerts.last().buttons.map((button) => [button.text, button.style])).toEqual([['Cancel', 'cancel'], ['Delete', 'destructive']]);
+    await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
+    await settleQueries();
+    expect(server.sent('DELETE', '/rules/e1')).toHaveLength(0);
+    expect(screen.getByText('NETFLIX')).toBeTruthy();
+  });
 });
 
 it('tapping a rule body opens the edit sheet with its id', async () => {

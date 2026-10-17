@@ -145,12 +145,13 @@ const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDelet
   // patched in place.
   transactionDeleted: [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, uncategorizedCountKey],
   // The deleted category's charges become unfiled: they must ENTER the uncategorized feed and
-  // search results, which an in-place patch can't do. Budgets are cascaded by hand (a refetch
-  // would resurrect the dropped budget, as the server doesn't cascade). The charge lists reload so
-  // a charge leaves a parent budget's list and the spend moves; their refetched rows still carry
-  // the dangling id, which shows as Uncategorized through categoryIsUnmapped.
+  // search results, which an in-place patch can't do. Budgets are dropped by hand straight away so
+  // nothing flickers, then reloaded: the server deletes the budget too, and a budgeted parent's
+  // spend changes. The charge lists reload so a charge leaves a parent budget's list and the spend
+  // moves; their refetched rows still carry the dangling id, which shows as Uncategorized through
+  // categoryIsUnmapped.
   categoryDeleted: [
-    breakdownKey, uncategorizedCountKey, uncategorizedFeedKey, transactionsSearchKey,
+    budgetsKey, breakdownKey, uncategorizedCountKey, uncategorizedFeedKey, transactionsSearchKey,
     budgetTransactionsKey, categoryTransactionsKey,
   ],
   // A server-side run can file rows we never saw, move them into or out of search, mint rules

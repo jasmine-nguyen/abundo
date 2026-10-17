@@ -13,6 +13,7 @@ import { SwitchRow } from '../../src/components/ui';
 import { CategoryFields } from '../../src/components/CategoryFields';
 import { QuickCreateCategory } from '../../src/components/QuickCreateCategory';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { confirmDelete } from '../../src/confirmDelete';
 
 export default function CategoryEdit() {
   const s = useAppContext(); // saveCategory / deleteCategory writers stay on the store
@@ -191,7 +192,7 @@ export default function CategoryEdit() {
   // WHIT-241: same-frame double-tap guard on Delete (a separate latch from save — each button
   // guards only its own double-tap).
   const runRemove = useInFlightGuard();
-  const remove = () => runRemove(async () => {
+  const onConfirmDelete = () => runRemove(async () => {
     if (!categoryId || submitting) return;
     setSubmitting(true);
     try {
@@ -203,6 +204,11 @@ export default function CategoryEdit() {
       throw error;
     }
   });
+  const onDelete = () => confirmDelete(
+    'Delete this category?',
+    "Its budget and rules will be removed, and its transactions will become Uncategorized. This can't be undone.",
+    onConfirmDelete,
+  );
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -303,7 +309,7 @@ export default function CategoryEdit() {
         )}
 
         {categoryId && (
-          <Pressable onPress={remove} style={styles.deleteBtn}>
+          <Pressable onPress={onDelete} style={styles.deleteBtn}>
             <Text style={styles.deleteText}>Delete category</Text>
           </Pressable>
         )}

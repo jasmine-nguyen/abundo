@@ -1363,10 +1363,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteCategory = useCallback(async (id: string): Promise<boolean> => runSave({
     apply: () => {
       // Client-side cascade into the query caches the migrated screens read (category
-      // list, budget screens, tab badge, pickers). setQueryData — NOT invalidate —
-      // because the server does no cascade, so a refetch would resurrect the just-dropped
-      // budget/rule/txn-tag (cosmetic: those txns re-appear with the dangling id and
-      // render as Uncategorized via isUncategorized). The ['budgets'] cache holds the RAW
+      // list, budget screens, tab badge, pickers), for instant feedback. Categories and rules
+      // are patched in place. Transactions keep the dangling id on the server, so they show
+      // as Uncategorized via isUncategorized. Budgets are dropped here, then reloaded by
+      // refreshAfter (the server deletes the budget too). The ['budgets'] cache holds the RAW
       // Record<categoryId, BudgetRollup> (not the select'd Budget[]), so drop the deleted
       // id's KEY from the Record — filtering it as an array would throw `.filter is not a
       // function` and abort the rest of the cascade.
