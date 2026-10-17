@@ -69,6 +69,9 @@ export const C = {
   purpleWash: 'rgba(201,179,245,.16)',
   // Pale lavender figure text on the purple equity card (mortgage + milestone screens).
   purpleSoft: '#d9c9f7',
+  // ABU-77: only for the account icon tiles (ACCOUNT_ACCENTS).
+  accountMagenta: '#d673bc',
+  accountYellow: '#e3e446',
 
   // Ink drawn ON a bright surface — accentInk on the accent-blue buttons, heroInk on the hero
   // gradient. Both are the screen background's hex, but that is a coincidence of the palette, not
@@ -124,8 +127,9 @@ export const C = {
 
 // WHIT-215 / ABU-65: account cards carry no server-side colour, so each account gets a stable
 // cosmetic accent picked from its id (accountAccent) — purely visual. No green, cyan or rose, so a
-// chip never reads like the balance's money colours.
-export const ACCOUNT_ACCENTS = [C.accent, C.purple, C.warn, C.accentAlt] as const;
+// chip never reads like the balance's money colours. ABU-77: every pair also stays distinct under
+// red-green colour blindness (guarded in accountDisplay.logic.test.ts).
+export const ACCOUNT_ACCENTS = [C.accent, C.accountMagenta, C.warn, C.accountYellow] as const;
 
 export const FONT = {
   // 'Inter Tight' / 'Inter' in the mockup. On web these resolve via the Google Fonts

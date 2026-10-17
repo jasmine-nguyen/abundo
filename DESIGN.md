@@ -24,6 +24,8 @@ colors:
   under-green: "#9ece6a"
   warn-amber: "#e0af68"
   bad-rose: "#f7768e"
+  account-magenta: "#d673bc"
+  account-yellow: "#e3e446"
 typography:
   hero-number:
     fontFamily: "Inter Tight"
@@ -187,6 +189,9 @@ A cool, low-glare night palette of navy surfaces and lavender ink, lit by one bl
 - **Under Green**: under-budget deltas in the Ask Abundo chat.
 - **Warn Amber**: heads-ups outside budgets: behind schedule on Mortgage, stale Goals data, checkpoint warnings. Budgets have no amber state.
 - **Bad Rose**: over budget, uncategorised rows and dot, destructive actions.
+
+### Account tiles
+- **Account Magenta** and **Account Yellow**: only for account icon tiles. Each account's tile takes Tokyo Blue, Account Magenta, Warn Amber or Account Yellow, picked from its id so it never changes. Never green, cyan or rose (the money colours), and every pair stays distinct for colour-blind viewers (a test guards it).
 
 ### Category palettes
 Categories have their own fixed hues and are not part of the UI palette above. They come from one palette, `src/chartColors.ts` (a 20-step even-lightness ramp, plus a neutral grey for "Other"), applied in `toCategory`, so a category is the same colour on Budgets, Transactions and Insights. It is a computed set: never hand-tune one hex. `src/categoryColors.ts` now holds only `BUCKET_COLOR`.
