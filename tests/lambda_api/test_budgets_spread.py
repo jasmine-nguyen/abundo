@@ -209,6 +209,8 @@ def test_a_payday_change_alone_also_counts_as_a_cycle_change(handler):
     assert result["insurance"]["spread"] == {"amount": BILL, "cycles": 1, "index": 1, "adjustment": -BILL}
     assert budget_repo.set_spread_calls == [("insurance", BILL, 1, "2026-07-07", LENGTH, PAYDATE)]
     assert budget_repo.clear_spread_calls == []
+    # [A2] Nothing changed during the read, so the settle really lands (the guard only skips stale writes).
+    assert stored_budgets(budget_repo)["insurance"]["spread_paydate"] == PAYDATE
 
 
 def test_a_spread_deleted_during_the_read_stays_deleted(handler):

@@ -21,12 +21,13 @@ from _api_event import api_event
 from _paycycle_fakes import paycycle_repo, stored_cycle
 
 
-@pytest.fixture
-def melbourne_today(handler, monkeypatch):
-    """Pin the handler's Melbourne "today" — the clock the payday ceiling must use. Pinned to
-    the real UTC date, so Melbourne-tomorrow is UTC today + 1: the date a UTC-based ceiling
-    with a day of slack wrongly lets through for most of the Melbourne day."""
-    today = datetime.now(timezone.utc).date()
+@pytest.fixture(params=[0, 1], ids=["melbourne-same-date-as-utc", "melbourne-a-day-ahead-of-utc"])
+def melbourne_today(handler, monkeypatch, request):
+    """Pin the handler's Melbourne "today" — the clock the payday ceiling must use — at both
+    hours of the Melbourne day: on the UTC date (a UTC ceiling with a day of slack wrongly
+    lets Melbourne-tomorrow through) and a day ahead of it (a plain UTC ceiling wrongly
+    rejects Melbourne-today). [A1]"""
+    today = datetime.now(timezone.utc).date() + timedelta(days=request.param)
     monkeypatch.setattr(handler, "melbourne_today", lambda: today)
     return today
 
