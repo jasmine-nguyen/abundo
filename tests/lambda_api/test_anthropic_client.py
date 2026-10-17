@@ -68,23 +68,20 @@ def test_post_returns_empty_string_when_no_text_block(anthropic_client, monkeypa
 # --- post: error taxonomy ----------------------------------------------------
 
 
-def test_post_http_error_raises_with_status(anthropic_client, monkeypatch):
+def _raise_http_error(monkeypatch, anthropic_client, code, body):
     def boom(req, timeout=None):
-        raise http_error(429)
-
+        raise http_error(code, url="https://api.anthropic.com/v1/messages", body=body)
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
+
+
+def test_post_http_error_raises_with_status(anthropic_client, monkeypatch):
+    _raise_http_error(monkeypatch, anthropic_client, 429, b"")
     with pytest.raises(anthropic_client.AnthropicError) as ei:
         anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status == 429
 
 
 # --- ABU-97: Anthropic's error explanation reaches the log -------------------
-
-
-def _raise_http_error(monkeypatch, anthropic_client, code, body):
-    def boom(req, timeout=None):
-        raise http_error(code, url="https://api.anthropic.com/v1/messages", body=body)
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
 
 
 def _error_body(error_type, message):
@@ -152,6 +149,16 @@ def test_a_long_explanation_is_cut_to_the_safe_length(anthropic_client, monkeypa
     message = str(ei.value)
     assert message.startswith(prefix + "invalid_request_error: x")
     assert len(message) - len(prefix) <= anthropic_client.ANTHROPIC_ERROR_DETAIL_MAX_LEN
+
+
+def test_a_multi_line_explanation_stays_on_one_log_line(anthropic_client, monkeypatch):
+    _raise_http_error(monkeypatch, anthropic_client, 400,
+                      _error_body("invalid_request_error", "first line\n  second line"))
+
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+
+    assert str(ei.value) == "Anthropic messages -> 400: invalid_request_error: first line second line"
 
 
 def test_the_error_message_never_holds_the_api_key(anthropic_client, monkeypatch):

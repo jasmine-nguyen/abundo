@@ -106,14 +106,15 @@ def _body(system: str, messages: list, max_tokens: int) -> dict:
 
 
 def _error_detail(error: urllib.error.HTTPError) -> str:
-    """Anthropic's `<type>: <message>` from an error reply body, trimmed; "" if unreadable."""
+    """Anthropic's `<type>: <message>` from an error reply body, on one line and trimmed;
+    "" if unreadable."""
     try:
         reply = json.loads(error.read())
         detail = reply["error"]
         text = f"{detail['type']}: {detail['message']}"
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return ""
-    return text[:ANTHROPIC_ERROR_DETAIL_MAX_LEN]
+    return " ".join(text.split())[:ANTHROPIC_ERROR_DETAIL_MAX_LEN]
 
 
 def _send(body: dict, timeout: float) -> dict:
