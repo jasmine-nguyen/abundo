@@ -43,7 +43,6 @@ import {
 import { accountBalancesKey, transactionsSearchKey } from '../queryKeys';
 import Transactions from '../../app/(tabs)/transactions';
 import { GROCERIES_RECORD } from './support/categories';
-import { MINUS } from '../theme';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';
@@ -314,7 +313,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   it("each date heading shows that day's total (WHIT-847)", async () => {
     renderTransactions();
-    expect(await screen.findByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
+    expect(await screen.findByText(/ · \$42 spent$/)).toBeTruthy();
   });
 
   // [A4] a day with nothing that counts shows the bare date, no " · " suffix

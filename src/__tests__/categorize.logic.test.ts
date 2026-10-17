@@ -4,7 +4,7 @@
 // regression here would silently mislabel money.
 import { describe, it, expect } from '@jest/globals';
 import { isUncategorized, countUncategorized, transactionView, transactionGroups, transactionMatchesSearch } from '../context';
-import { C, MINUS } from '../theme';
+import { C } from '../theme';
 import type { Transaction } from '../types';
 import { makeState, cat, txn } from './factory';
 import { GROCERIES, SALARY, SAVINGS } from './support/categories';
@@ -118,16 +118,16 @@ describe('transactionGroups', () => {
   // budget-excluded charges and transfers (counts_to_budget: false) are left out.
   const day = (over: Partial<Transaction>) => txn({ date: '2026-05-01', ...over });
   it.each<[string, Partial<Transaction>[], string | null]>([
-    ['two charges, with cents', [{ amount: -20 }, { amount: -12.5 }], `${MINUS}$32.50`],
-    ['a pending charge counts', [{ amount: -10, status: 'pending' }, { amount: -5 }], `${MINUS}$15`],
-    ['a budget-excluded charge is left out', [{ amount: -100, budget_excluded: true }, { amount: -10 }], `${MINUS}$10`],
-    ['a transfer (counts_to_budget false) is left out', [{ amount: -100, counts_to_budget: false }, { amount: -10 }], `${MINUS}$10`],
-    ["the 'income' row is left out", [{ amount: 1000, category: 'income' }, { amount: -10 }], `${MINUS}$10`],
-    ['an Income-bucket category row is left out', [{ amount: 500, category: SALARY.id }, { amount: -10 }], `${MINUS}$10`],
-    ['a Savings-bucket category row is left out', [{ amount: -50, category: SAVINGS.id }, { amount: -10 }], `${MINUS}$10`],
-    ['a refund nets against a charge', [{ amount: 5 }, { amount: -20 }], `${MINUS}$15`],
-    ['a refund-only day reads as money back', [{ amount: 7.25 }], '+$7.25'],
-    ['an uncategorized charge counts', [{ amount: -9, category: null }], `${MINUS}$9`],
+    ['two charges, with cents', [{ amount: -20 }, { amount: -12.5 }], '$32.50 spent'],
+    ['a pending charge counts', [{ amount: -10, status: 'pending' }, { amount: -5 }], '$15 spent'],
+    ['a budget-excluded charge is left out', [{ amount: -100, budget_excluded: true }, { amount: -10 }], '$10 spent'],
+    ['a transfer (counts_to_budget false) is left out', [{ amount: -100, counts_to_budget: false }, { amount: -10 }], '$10 spent'],
+    ["the 'income' row is left out", [{ amount: 1000, category: 'income' }, { amount: -10 }], '$10 spent'],
+    ['an Income-bucket category row is left out', [{ amount: 500, category: SALARY.id }, { amount: -10 }], '$10 spent'],
+    ['a Savings-bucket category row is left out', [{ amount: -50, category: SAVINGS.id }, { amount: -10 }], '$10 spent'],
+    ['a refund nets against a charge', [{ amount: 5 }, { amount: -20 }], '$15 spent'],
+    ['a refund-only day reads as money back', [{ amount: 7.25 }], '$7.25 back'],
+    ['an uncategorized charge counts', [{ amount: -9, category: null }], '$9 spent'],
     ['an income-only day has no total', [{ amount: 1000, category: 'income' }], null],
     ['a day that nets to zero has no total', [{ amount: 10 }, { amount: -10 }], null],
     // [A2] float dust below a cent is zero, not "−$0"
@@ -152,7 +152,7 @@ describe('transactionGroups', () => {
         day({ transaction_id: '3', amount: 1000, category: 'income', date: '2026-04-30' }),
       ],
     });
-    expect(transactionGroups(s, 'all').map((g) => g.dayTotal)).toEqual([`${MINUS}$10`, `${MINUS}$3`, null]);
+    expect(transactionGroups(s, 'all').map((g) => g.dayTotal)).toEqual(['$10 spent', '$3 spent', null]);
   });
 
   it('dayTotal on the uncategorized tab totals only the uncategorized rows', () => {
@@ -163,7 +163,7 @@ describe('transactionGroups', () => {
         day({ transaction_id: '2', amount: -9, category: null }),
       ],
     });
-    expect(transactionGroups(s, 'uncategorized')[0].dayTotal).toBe(`${MINUS}$9`);
+    expect(transactionGroups(s, 'uncategorized')[0].dayTotal).toBe('$9 spent');
   });
 });
 

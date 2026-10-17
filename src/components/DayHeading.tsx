@@ -2,7 +2,7 @@ import { Text, StyleSheet } from 'react-native';
 import { C, FONT } from '../theme';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
-// ABU-66: a list's day heading — "Today · −$42" — shared by Transactions and the account page.
+// ABU-66: a list's day heading — "Today · $42 spent" — shared by Transactions and the account page.
 export function DayHeading({ label, dayTotal }: { label: string; dayTotal: string | null }) {
   let heading = label;
   if (dayTotal) heading = `${label} · ${dayTotal}`;

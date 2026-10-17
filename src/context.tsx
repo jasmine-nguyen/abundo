@@ -2655,8 +2655,8 @@ export function daySpend(s: Pick<TransactionListInput, 'category'>, items: Trans
 
 export function dayTotalLabel(spend: number | null): string | null {
   if (spend === null) return null;
-  if (spend > 0) return MINUS + fmtExact(spend);
-  return '+' + fmtExact(spend);
+  if (spend > 0) return `${fmtExact(spend)} spent`;
+  return `${fmtExact(spend)} back`;
 }
 
 export function countUncategorized(s: TransactionListInput) {
