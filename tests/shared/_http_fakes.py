@@ -26,6 +26,6 @@ class FakeResponse:
         return self._body
 
 
-def http_error(code, url="https://api.banksync.io/x"):
-    """A urllib HTTPError with status `code` and an empty body."""
-    return urllib.error.HTTPError(url, code, "boom", None, io.BytesIO(b""))
+def http_error(code, url="https://api.banksync.io/x", body=b""):
+    """A urllib HTTPError with status `code` and reply `body` (empty by default)."""
+    return urllib.error.HTTPError(url, code, "boom", None, io.BytesIO(body))
