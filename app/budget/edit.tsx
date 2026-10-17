@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, Switch } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
@@ -9,6 +9,7 @@ import { cycleName } from '../../src/payCycle';
 import { useBudgetsScreenData } from '../../src/queries';
 import { queryClient } from '../../src/queryClient';
 import { Header } from '../../src/components/Header';
+import { SwitchRow } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 export default function BudgetEdit() {
@@ -105,20 +106,13 @@ export default function BudgetEdit() {
         </View>
 
         {info.smoothingShown && (
-          <View style={[styles.rolloverRow, info.smoothingLocked && { opacity: 0.6 }]}>
-            <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={styles.rolloverTitle}>{info.smoothingTitle}</Text>
-              <Text style={styles.rolloverHelp}>
-                {info.smoothingLocked ? info.smoothingLockedHelp : info.smoothingHelp}
-              </Text>
-            </View>
-            <Switch
-              value={info.smoothingLocked ? true : rollover}
-              onValueChange={setRollover}
-              disabled={info.smoothingLocked}
-              trackColor={{ true: C.accent, false: tint(C.accentAlt, 0.25) }}
-            />
-          </View>
+          <SwitchRow
+            title={info.smoothingTitle}
+            help={info.smoothingLocked ? info.smoothingLockedHelp : info.smoothingHelp}
+            value={info.smoothingLocked ? true : rollover}
+            onValueChange={setRollover}
+            disabled={info.smoothingLocked}
+          />
         )}
 
         <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}>
@@ -138,9 +132,6 @@ const styles = StyleSheet.create({
   amountBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderRadius: 16, paddingHorizontal: 18 },
   dollar: { fontFamily: FONT.display, fontSize: 28, fontWeight: '700', color: C.textMid },
   amountInput: { flex: 1, fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: '#fff', paddingVertical: 16, marginLeft: 4 },
-  rolloverRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 16, marginTop: 18 },
-  rolloverTitle: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.textBright },
-  rolloverHelp: { fontFamily: FONT.body, fontSize: 12.5, lineHeight: 17, color: C.textDim, marginTop: 4 },
   saveBtn: { marginTop: 20, paddingVertical: 16, borderRadius: 15, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700' },
 });

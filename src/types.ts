@@ -16,6 +16,8 @@ export interface Category {
   // category literals — and a server that predates slots — stay valid; absent means the
   // Insights chart falls back to the id-derived colour.
   colorSlot?: number;
+  // "Transfer, not spending" (ABU-83): nothing filed here counts toward budgets or Insights.
+  transfer?: boolean;
 }
 export interface Transaction {
   transaction_id: string;

@@ -19,6 +19,7 @@ import pytest
 from _anthropic_fakes import capture_urlopen, messages_payload, text_payload
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _category_fakes import CARD_PAYMENT
 from _insight_fakes import insight_puts, insight_repo
 from _transaction_range_fakes import _WindowKeyedTransactionRepo
 
@@ -382,6 +383,29 @@ def test_assemble_insight_input_omits_an_excluded_charge(handler):
     rows = {r["name"]: r for r in model_input["categories"]}
     assert rows["Groceries"]["posted"] == 100.0     # only the kept charge
     assert "500" not in json.dumps(model_input)      # the excluded figure is nowhere
+
+
+def test_assemble_insight_input_leaves_out_a_transfer_category(handler):
+    # ABU-83: a card repayment filed in a "Transfer, not spending" category isn't spending,
+    # in this cycle or the prior ones the trend reads.
+    cycle = FakePayCycleRepo().get_paycycle()
+    start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    from datetime import date, timedelta
+    prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+    prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
+    categories = _FakeCategoryRepo([
+        {"id": "groceries", "name": "Groceries", "bucket": "Living"},
+        CARD_PAYMENT,
+    ])
+    txn_repo = _WindowKeyedTransactionRepo({
+        (start, end): [_txn("groceries", -100), _txn("card-payment", -900)],
+        (prev_start, prev_end): [_txn("card-payment", -800)],
+    })
+
+    model_input, _ = handler.assemble_insight_input(categories, _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
+
+    assert [r["name"] for r in model_input["categories"]] == ["Groceries"]
+    assert "Credit Card Payment" not in json.dumps(model_input)
 
 
 # --- home-loan goal signal (WHIT-134) ---------------------------------------

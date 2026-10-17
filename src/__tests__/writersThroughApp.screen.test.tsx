@@ -53,7 +53,7 @@ it('user saves an edited category → the real app sends PATCH /categories/parki
 
   await waitFor(() => expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1));
   expect(server.sent('PATCH', '/categories/parking')[0].body).toEqual(
-    { name: 'Car parks', bucket: 'Lifestyle', icon: 'car', parent: 'fun' },
+    { name: 'Car parks', bucket: 'Lifestyle', icon: 'car', parent: 'fun', transfer: false },
   );
 });
 

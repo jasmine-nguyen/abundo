@@ -285,6 +285,22 @@ def counts_to_budget(internal_account_id: str, category: str | None) -> bool:
     )
 
 
+def transfer_category_ids(categories: list[dict]) -> set[str]:
+    """Ids of the categories marked "Transfer, not spending" (ABU-83)."""
+    return {c["id"] for c in categories if c.get("transfer")}
+
+
+def drop_transfer_rows(transactions: list[dict], categories: list[dict]) -> list[dict]:
+    """`transactions` minus the rows filed in a transfer category (ABU-83).
+
+    A transfer category's rows never count to any spend or income total, whatever their
+    `counts_to_budget` (filing turns that back on, WHIT-545), so card repayments aren't
+    counted on top of the card purchases they pay off.
+    """
+    transfer_ids = transfer_category_ids(categories)
+    return [t for t in transactions if t.get("category") not in transfer_ids]
+
+
 def contributes_to_budget(transaction: dict) -> bool:
     """Whether a transaction counts toward a budget summary: it's flagged to count
     (`counts_to_budget`), the user hasn't manually excluded it (`budget_excluded`,

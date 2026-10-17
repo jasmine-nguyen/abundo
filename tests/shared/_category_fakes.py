@@ -75,3 +75,17 @@ def _slot_histogram(repo):
     held = Counter(int(cat[_SLOT]) for cat in repo._table.store[_CFG]["items"].values()
                    if _SLOT in cat)
     return Counter({slot: held.get(slot, 0) for slot in range(20)})
+
+
+# ABU-83: a "Transfer, not spending" category, the twin of the client's CARD_PAYMENT fixture.
+CARD_PAYMENT = {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living",
+                "parent": None, "transfer": True}
+
+
+def transfer_tree():
+    """A budgeted Living parent over the CARD_PAYMENT transfer sub and a Rent sub."""
+    return [
+        {"id": "living", "name": "Living", "bucket": "Living", "parent": None},
+        {**CARD_PAYMENT, "parent": "living"},
+        {"id": "rent", "name": "Rent", "bucket": "Living", "parent": "living"},
+    ]

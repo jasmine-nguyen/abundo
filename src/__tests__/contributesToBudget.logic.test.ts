@@ -5,6 +5,7 @@ import { describe, it, expect } from '@jest/globals';
 import { contributesToBudget } from '../context';
 import type { Transaction } from '../types';
 import { txn } from './factory';
+import { CARD_PAYMENT, GROCERIES } from './support/categories';
 
 describe('contributesToBudget', () => {
   it.each<[string, Partial<Transaction>, boolean]>([
@@ -17,5 +18,11 @@ describe('contributesToBudget', () => {
     ['an undefined counts_to_budget is a strict false', { counts_to_budget: undefined }, false],
   ])('%s', (_case, fields, expected) => {
     expect(contributesToBudget(txn(fields))).toBe(expected);
+  });
+
+  it('given a category lookup, a row in a transfer category never counts (ABU-83)', () => {
+    const lookup = (id: string) => [CARD_PAYMENT, GROCERIES].find((c) => c.id === id);
+    expect(contributesToBudget(txn({ category: CARD_PAYMENT.id }), lookup)).toBe(false);
+    expect(contributesToBudget(txn({ category: GROCERIES.id }), lookup)).toBe(true);
   });
 });

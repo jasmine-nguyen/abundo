@@ -9,6 +9,7 @@ import { useAppContext, eligibleParents, eligibleChildren, categoryDepth, childC
 import type { Bucket, Category } from '../../src/types';
 import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
+import { SwitchRow } from '../../src/components/ui';
 import { CategoryFields } from '../../src/components/CategoryFields';
 import { QuickCreateCategory } from '../../src/components/QuickCreateCategory';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
@@ -27,6 +28,8 @@ export default function CategoryEdit() {
   const [icon, setIcon] = useState(existing?.icon ?? 'coffee');
   // WHIT-221: the category this one rolls up into (null = top-level).
   const [parent, setParent] = useState<string | null>(existing?.parent ?? null);
+  // ABU-83: "Transfer, not spending" — nothing filed here counts toward budgets or Insights.
+  const [transfer, setTransfer] = useState(existing?.transfer ?? false);
   // WHIT-203: the useState seeds run once, but on the query layer `existing` may resolve a
   // beat AFTER mount (cold cache / deep-link). Re-seed when it arrives so an edit never
   // shows — or SAVES — a blank "create" form over a real category.
@@ -41,7 +44,7 @@ export default function CategoryEdit() {
   const justSeeded = useRef(false);
   useEffect(() => {
     if (!existing) return;
-    setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon);
+    setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon); setTransfer(existing.transfer ?? false);
     setParent(eligibleParent(existing.parent ?? null, existing.bucket));
     justSeeded.current = true;
   }, [existing]);
@@ -113,13 +116,13 @@ export default function CategoryEdit() {
       // toasts, so own that message here before bailing.
       try {
         if (categoryId) {
-          const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
+          const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent, transfer }, { silent: true });
           // WHIT-282: the session changed mid-save (sign-out or re-auth) → bail silently rather than
           // toasting the generic failure / navigating into the next session.
           if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
           if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
         } else {
-          const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
+          const created = await s.createCategoryInline({ name, bucket, icon, parent, transfer }, { silent: true });
           if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
           if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
           parentId = created.id;
@@ -233,6 +236,13 @@ export default function CategoryEdit() {
           editId={categoryId ?? null}
           heldParentId={existing?.parent ?? null}
           noneLabel="None (top-level)"
+        />
+
+        <SwitchRow
+          title="Transfer, not spending"
+          help="Nothing filed here counts toward budgets or Insights. Use for card repayments, mortgage repayments. Sub-categories aren't included; switch them on separately."
+          value={transfer}
+          onValueChange={setTransfer}
         />
 
         {/* WHIT-237: nest existing categories under this one, and/or create new subs inline. */}

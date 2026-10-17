@@ -28,7 +28,7 @@ describe('selectCategories', () => {
     ]);
     // WHIT-836: the display colour is the Insights palette's, not the server hex — coffee's built-in
     // ramp colour is #e8a24f (the server's legacy '#E8A87C' is ignored).
-    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a24f', parent: null });
+    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a24f', parent: null, transfer: false });
     expect(out[1].icon).toBe('coffee'); // guaranteed-present fallback glyph
     expect(out[1]).not.toHaveProperty('recent');
     expect(typeof out[1].color).toBe('string'); // id-derived ramp colour

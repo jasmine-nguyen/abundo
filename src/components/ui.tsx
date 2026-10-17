@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View, Text, Pressable, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
+import { ActivityIndicator, View, Text, Pressable, StyleSheet, Switch, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { C, FONT, tint } from '../theme';
 import { Glyph } from '../icons';
@@ -189,7 +189,30 @@ export function HeaderIconButton({ icon, onPress, accessibilityLabel, testID, ic
   );
 }
 
+// A settings card with a title, help text and an on/off switch (budget smoothing, a transfer category).
+export function SwitchRow({ title, help, value, onValueChange, disabled = false }: {
+  title: string; help: string; value: boolean; onValueChange: (value: boolean) => void; disabled?: boolean;
+}) {
+  return (
+    <View style={[styles.switchRow, disabled && { opacity: 0.6 }]}>
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text style={styles.switchTitle}>{title}</Text>
+        <Text style={styles.switchHelp}>{help}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        disabled={disabled}
+        trackColor={{ true: C.accent, false: tint(C.accentAlt, 0.25) }}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  switchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 16, marginTop: 18 },
+  switchTitle: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.textBright },
+  switchHelp: { fontFamily: FONT.body, fontSize: 12.5, lineHeight: 17, color: C.textDim, marginTop: 4 },
   heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
   heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },
   hdrIconBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

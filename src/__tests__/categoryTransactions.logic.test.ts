@@ -7,6 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 import { categoryTransactions, categoryBreakdown } from '../context';
 import { UNCATEGORIZED_KEY } from '../model';
 import { makeState, cat, txn, spend, withRollup } from './factory';
+import { CARD_PAYMENT } from './support/categories';
 
 const cats = [
   cat(),
@@ -14,6 +15,16 @@ const cats = [
 ];
 
 describe('categoryTransactions', () => {
+  it('lists a transfer category’s rows but totals them as $0 (ABU-83)', () => {
+    const s = makeState({
+      categories: [...cats, CARD_PAYMENT],
+      transactions: [txn({ transaction_id: 'r1', category: CARD_PAYMENT.id, amount: -900, status: 'posted' })],
+    });
+    const detail = categoryTransactions(s, CARD_PAYMENT.id)!;
+    expect(detail.count).toBe(1);
+    expect(detail.total).toBe(0);
+  });
+
   it('groups a named category’s server rows and totals the spend', () => {
     const s = makeState({
       categories: cats,

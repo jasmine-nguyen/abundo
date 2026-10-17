@@ -34,6 +34,7 @@ from constants import INCOME_BUCKET, SAVINGS_BUCKET
 from spend import (
     build_category_children,
     current_cycle_window,
+    drop_transfer_rows,
     fold_subtree,
     rollover_history_view,
     rollover_windows,
@@ -112,6 +113,7 @@ def budget_spend(targets: dict, categories: list, transactions: list) -> dict:
     The same subtree fold and Income earn-target rule as `budget_standing`, with no
     rollover or spread.
     """
+    transactions = drop_transfer_rows(transactions, categories)
     bucket_by_id, ids_by_target = _subtrees(targets, categories)
     return _fold_spend(ids_by_target, bucket_by_id, transactions)
 
@@ -126,6 +128,7 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
     {"rollover": {cat_id: {carryover, carryover_from[, carryover_history]}}, "spread_finished": [cat_id],
      "spread_reanchored": {cat_id: plan}}.
     """
+    transactions = drop_transfer_rows(transactions, categories)
     cycle_start = window.cycle_start
     today = window.today
     length = window.length

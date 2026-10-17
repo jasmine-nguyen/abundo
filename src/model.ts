@@ -73,6 +73,7 @@ export function toCategory(raw: any): Category {
     color: chartCategoryColor(raw.id, { slot: colorSlot }),
     parent: raw.parent ?? null,
     colorSlot,
+    transfer: raw.transfer === true,
   };
 }
 
