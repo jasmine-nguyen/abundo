@@ -56,6 +56,9 @@ concurrency:
 # measures coverage for its slice and uploads a `coverage-final.json` — then the
 # `coverage` job merges them and enforces the floor. Reproduce locally with
 # `npm run coverage:local`.
+permissions:
+  contents: read
+
 jobs:
   logic:
     name: logic

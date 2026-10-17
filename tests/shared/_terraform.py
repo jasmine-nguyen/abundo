@@ -6,6 +6,7 @@ import re
 
 TERRAFORM_DIR = pathlib.Path(__file__).resolve().parents[2] / "terraform"
 MONITORING_TF = TERRAFORM_DIR / "monitoring.tf"
+BOOTSTRAP_MAIN_TF = TERRAFORM_DIR / "bootstrap" / "main.tf"
 
 
 def tf_block(text, kind, name):
@@ -68,9 +69,9 @@ def granted_dynamodb_actions(policy_block):
     return set(re.findall(r'"dynamodb:(\w+)"', policy_block)) - {"LeadingKeys"}
 
 
-def policy_statements(resource_name):
+def policy_statements(resource_name, path=TERRAFORM_DIR / "iam.tf"):
     """WHIT-680: each top-level `{ ... }` of an aws_iam_role_policy's Statement list, as text."""
-    block = tf_block((TERRAFORM_DIR / "iam.tf").read_text(), "aws_iam_role_policy", resource_name)
+    block = tf_block(path.read_text(), "aws_iam_role_policy", resource_name)
     body = block[block.index("Statement"):]
     statements, depth, start = [], 0, None
     for position, char in enumerate(body):

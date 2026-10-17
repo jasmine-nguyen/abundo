@@ -257,3 +257,20 @@ so the preview is accurate. That's bounded: it needs repo write access, the plan
 is read-only, and the secrets are `sensitive` so they're masked in plan output/logs.
 PRs from **forks** are skipped entirely (they get no token or secrets). Accepted for a
 one-owner private repo; revisit if collaborators are ever added.
+
+### Plan role data-read deny (ABU-93) — rollout order
+
+A PR run executes the workflow file from the PR branch, so the plan role must not read
+data. The bootstrap adds an explicit Deny on secret values (SSM), table rows, log lines,
+old state versions and the Cognito user list. The 6 SSM secrets are no longer managed by
+Terraform (`removed` blocks), so their values stop landing in state. Roll out in this order:
+
+1. Merge, then **Run workflow** (apply). The state drops the 6 `aws_ssm_parameter`
+   entries; nothing changes in AWS. Set or rotate those values by hand in the console/CLI.
+2. On your Mac: `cd terraform/bootstrap && terraform apply` to switch the deny on.
+3. Optional check, with the plan role: `aws ssm get-parameter --with-decryption --name
+   /abundo/banksync-api-key`, `aws dynamodb scan` and `aws logs filter-log-events` all
+   return AccessDenied.
+
+Doing step 2 first breaks PR previews until step 1 runs (the plan would try to read the
+SSM values and get denied).
