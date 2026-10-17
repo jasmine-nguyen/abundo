@@ -16,7 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from constants import (
-    CATEGORY_TRANSFER_FIELD, HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
+    HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
     PENDING_STATUS, POSTED_STATUS,
     ROLLOVER_HISTORY_MAX_CYCLES, ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
@@ -287,7 +287,7 @@ def counts_to_budget(internal_account_id: str, category: str | None) -> bool:
 
 def transfer_category_ids(categories: list[dict]) -> set[str]:
     """Ids of the categories marked "Transfer, not spending" (ABU-83)."""
-    return {c["id"] for c in categories if c.get(CATEGORY_TRANSFER_FIELD)}
+    return {c["id"] for c in categories if c.get("transfer")}
 
 
 def drop_transfer_rows(transactions: list[dict], categories: list[dict]) -> list[dict]:

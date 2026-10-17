@@ -240,7 +240,7 @@ export default function CategoryEdit() {
 
         <SwitchRow
           title="Transfer, not spending"
-          help="Nothing filed here counts toward budgets or Insights. Use for card repayments, mortgage repayments."
+          help="Nothing filed here counts toward budgets or Insights. Use for card repayments, mortgage repayments. Sub-categories aren't included; switch them on separately."
           value={transfer}
           onValueChange={setTransfer}
         />

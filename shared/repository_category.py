@@ -11,8 +11,6 @@ from repository_errors import (
     DuplicateCategoryError,
     InvalidCategoryParentError,
 )
-# Safe despite the note below: spend.py already imports shared constants at load.
-from constants import CATEGORY_TRANSFER_FIELD
 from spend import build_category_children
 
 # Category taxonomy data lives here, not in constants.py, on purpose: this module
@@ -348,7 +346,7 @@ class CategoryRepository(RepositoryBase):
         # carries both, even seed rows and rows written before those fields existed.
         # The slot goes out as a plain int (DynamoDB hands back a Decimal), None if corrupt.
         return [
-            {"parent": None, CATEGORY_TRANSFER_FIELD: False, **cat, _COLOR_SLOT_FIELD: _coerce_slot(cat.get(_COLOR_SLOT_FIELD))}
+            {"parent": None, "transfer": False, **cat, _COLOR_SLOT_FIELD: _coerce_slot(cat.get(_COLOR_SLOT_FIELD))}
             for cat in item["items"].values()
         ]
 
@@ -381,7 +379,7 @@ class CategoryRepository(RepositoryBase):
             # a retry we re-read, so two concurrent creates can never be handed the same slot.
             slot = plan_new_category_slot(items)
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
-                       "bucket": bucket, "parent": parent, CATEGORY_TRANSFER_FIELD: transfer,
+                       "bucket": bucket, "parent": parent, "transfer": transfer,
                        _COLOR_SLOT_FIELD: Decimal(slot)}
             update = {
                 # Nested SET adds ONE map key — never rewrites the whole items map.
@@ -453,7 +451,7 @@ class CategoryRepository(RepositoryBase):
                 values[":parent"] = parent
                 set_clause += ", #items.#id.#parent = :parent"
             if transfer is not _UNSET:
-                names["#transfer"] = CATEGORY_TRANSFER_FIELD
+                names["#transfer"] = "transfer"
                 values[":transfer"] = transfer
                 set_clause += ", #items.#id.#transfer = :transfer"
             update = {"expression": "SET " + set_clause,
@@ -462,12 +460,12 @@ class CategoryRepository(RepositoryBase):
             # Build the response from the pre-read item so id/color survive;
             # reflect the resolved parent (new one if changed, else stored).
             resolved_parent = parent if changing_parent else items[cat_id].get("parent")
-            resolved_transfer = transfer if transfer is not _UNSET else items[cat_id].get(CATEGORY_TRANSFER_FIELD, False)
+            resolved_transfer = transfer if transfer is not _UNSET else items[cat_id].get("transfer", False)
             # The stored slot as a plain int, the same value GET returns, so the body
             # carries `2` rather than the `2.0` a Decimal encodes to.
             result = {**items[cat_id], "name": name, "bucket": bucket,
                       "icon": icon, "parent": resolved_parent,
-                      CATEGORY_TRANSFER_FIELD: resolved_transfer,
+                      "transfer": resolved_transfer,
                       _COLOR_SLOT_FIELD: _coerce_slot(items[cat_id].get(_COLOR_SLOT_FIELD))}
             return update, result
 
