@@ -462,9 +462,7 @@ class CategoryRepository(RepositoryBase):
             # Build the response from the pre-read item so id/color survive;
             # reflect the resolved parent (new one if changed, else stored).
             resolved_parent = parent if changing_parent else items[cat_id].get("parent")
-            resolved_transfer = items[cat_id].get(CATEGORY_TRANSFER_FIELD, False)
-            if transfer is not _UNSET:
-                resolved_transfer = transfer
+            resolved_transfer = transfer if transfer is not _UNSET else items[cat_id].get(CATEGORY_TRANSFER_FIELD, False)
             # The stored slot as a plain int, the same value GET returns, so the body
             # carries `2` rather than the `2.0` a Decimal encodes to.
             result = {**items[cat_id], "name": name, "bucket": bucket,
