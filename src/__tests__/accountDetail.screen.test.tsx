@@ -8,7 +8,7 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
-import { C, MINUS } from '../theme';
+import { C } from '../theme';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -146,7 +146,7 @@ it('uses the transaction account name for the header when the account also has a
 it('pull refreshes the list and live balances, headings show the day total, balance shrinks to fit', async () => {
   server.seed('/accounts/balances', [bal({ amount: -592994.43, available_balance: 0 })]);
   await renderWithQueries(<AccountDetail />);
-  expect(screen.getByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
+  expect(screen.getByText(/ · \$42 spent$/)).toBeTruthy();
 
   const amount = screen.getByText('$592,994.43');
   expect(amount.props.numberOfLines).toBe(1);
