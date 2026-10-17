@@ -97,6 +97,38 @@ it('caps each row amount to one line at the shared large-text limit', async () =
   }
 });
 
+// ABU-76: the AI card's text stops growing at the row cap, and "Worth a look" wraps inside the card.
+it('caps the AI card text at the shared large-text limit and lets its heading wrap', async () => {
+  setAi({
+    insights: { summary: 'You are pacing well.', suggestions: ['Trim $20 from Coffee'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+  });
+  await renderInsights();
+  const texts = ['👀', 'Worth a look', 'You are pacing well.', 'Trim $20 from Coffee', /Re-analysing sends/, 'Ask a follow-up →'];
+  for (const text of texts) {
+    expect(screen.getByText(text).props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+  }
+  const title = screen.getByText('Worth a look');
+  expect(styleOf(title).flexShrink).toBe(1);
+  expect(styleOf(sharedHost(title, screen.getByText('👀'))).flexShrink).toBe(1);
+});
+
+it('caps the first-run AI card text at the shared large-text limit', async () => {
+  await renderInsights();
+  for (const text of [/Get a few AI suggestions/, 'Analyse my spending', /Sends your category spend totals/]) {
+    expect(screen.getByText(text).props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+  }
+});
+
+// [A1] The failed-run texts are capped too, both with and without earlier advice on screen.
+it.each([
+  ['a failed re-run', { summary: 'keep me', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false }, /Couldn’t refresh/],
+  ['a failed first run', null, /Couldn’t generate insights/],
+])('caps the AI card error text at the shared large-text limit after %s', async (_, insights, text) => {
+  setAi({ insights, isError: true });
+  await renderInsights();
+  expect(screen.getByText(text).props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+});
+
 it('renders a row per spent category with the pending portion visible', async () => {
   seedBreakdown({ spend: TWO_ROWS });
   await renderInsights();
