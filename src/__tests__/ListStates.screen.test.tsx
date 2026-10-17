@@ -76,10 +76,25 @@ describe('StaleDataLine (WHIT-713)', () => {
     [null, [old('westpac')], 'budgets-updated', 'Updated 9:40am · ● 1 account behind ›'],
     [null, [old('anz'), fresh, old('westpac')], 'budgets-updated', 'Updated 9:40am · ● 2 accounts behind ›'],
     [null, [], 'budgets-updated', 'Updated 9:40am'],
+    // [A1] exactly 24h old is not behind yet; 1ms more is.
+    [null, [{ ...fresh, at: Date.parse('2026-09-17T15:00:00+10:00') }], 'budgets-updated', 'Updated 9:40am · Banks synced ›'],
+    [null, [{ ...fresh, at: Date.parse('2026-09-17T15:00:00+10:00') - 1 }], 'budgets-updated', 'Updated 9:40am · ● 1 account behind ›'],
+    // [A2] the offline lead keeps the compact bank part.
+    [new TypeError('Network request failed'), [old('westpac')], 'budgets-stale', 'You look offline · showing 9:40am · ● 1 account behind ›'],
   ])('with bankSynced, error %p and %j → %s reads %s', (error, bankSynced, testId, text) => {
     render(<StaleDataLine idPrefix="budgets" error={error} updatedAt={loadedAt} showUpdated bankSynced={bankSynced} />);
     expect(screen.getByTestId(testId)).toHaveTextContent(text, { exact: true });
     if (bankSynced.length === 0) expect(screen.queryByTestId('budgets-bank-sync')).toBeNull();
+  });
+
+  // [A3] the error line is a button too: a press opens the bankSync sheet with the accounts given.
+  it('pressing the stale line with bank times opens the bank sync sheet with those accounts', () => {
+    const accounts = [old('anz'), fresh];
+    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated bankSynced={accounts} />);
+    const button = screen.getByTestId('budgets-bank-sync');
+    expect(button.props.accessibilityLabel).toContain('1 account behind');
+    fireEvent.press(button);
+    expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'bankSync', accounts });
   });
 
   it('with showUpdated, renders nothing when nothing has loaded yet', () => {
