@@ -141,6 +141,17 @@ it('at 20 tags, a new tag is refused with a friendly toast and is not saved', as
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
+// ABU-86: a pasted list that runs past the cap adds tags up to 20, then refuses the rest once.
+it('a pasted list near the cap saves up to 20 tags and toasts once', async () => {
+  withTags(18);
+  await draw();
+  fireEvent.changeText(screen.getByTestId('tag-input'), 'x,y,z,w,');
+  expect(mockEdit).toHaveBeenCalledTimes(1);
+  expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [...Array.from({ length: 18 }, (_, i) => `t${i}`), 'x', 'y'] });
+  expect(mockToast).toHaveBeenCalledTimes(1);
+  expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
+});
+
 // WHIT-296 — the "Exclude from budgets / Mark as transfer" toggle.
 const withExcluded = (excluded?: boolean) => seedRow({ budget_excluded: excluded });
 
