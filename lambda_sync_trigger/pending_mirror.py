@@ -157,18 +157,24 @@ def _carry(
     result: dict,
 ) -> tuple[list[dict], list[dict]]:
     """Move a user-edited pending's edit onto its settled twin, then delete the pending. With no
-    settled twin: a live or settled copy already holding the same edit → just delete the pending; else carry
-    onto the bank's re-issued pending copy; else keep it for next hour. The pending is only deleted
+    settled twin: a live copy already holding the same edit → just delete the pending; else carry
+    onto the bank's re-issued pending copy; else a settled copy already holding the same edit → just
+    delete the pending; else keep it for next hour. The pending is only deleted
     once the carry is saved. Returns both pools without the claimed twin, so no other pending can
     carry onto it."""
     transaction_id = pending["transaction_id"]
     twin = find_carry_twin(pending, posted_rows, is_unfiled)
-    identical = find_identical_copy(pending, live_pendings + posted_rows)
+    identical = find_identical_copy(pending, live_pendings)
     if twin is None and identical is not None:
         _remove_identical(repo, account_id, pending, identical, result)
         return posted_rows, live_pendings
     if twin is None:
         twin = find_reissued_twin(pending, live_pendings, is_unfiled)
+    # Settled copies only after the re-issued copy, so a look-alike purchase never swallows the edit.
+    identical = find_identical_copy(pending, posted_rows)
+    if twin is None and identical is not None:
+        _remove_identical(repo, account_id, pending, identical, result)
+        return posted_rows, live_pendings
     if twin is None:
         logger.info("pending_mirror %s: kept (user-edited, no settled twin yet) txn=%s", account_id, transaction_id)
         result["kept"] += 1

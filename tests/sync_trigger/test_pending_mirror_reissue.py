@@ -73,6 +73,23 @@ def test_a_stale_copy_identical_to_the_reissued_pending_is_removed(repo, mirror,
     assert result["removed"] + result["carried"] == 2
 
 
+def test_a_look_alike_settled_purchase_does_not_swallow_the_edit_meant_for_the_reissued_copy(repo, mirror, row):
+    # ABU-90: an earlier same-shop, same-amount purchase already settled with the same category.
+    # The edit must still move onto the re-issued copy, not vanish as "already held".
+    repo._table.seed(
+        row("earlier_gogi", "Gogi Matcha", "-84.50", day="2026-09-29", status="posted", category="eatingout"),
+        row("old_gogi", "Pending - Gogi Matcha", "-84.50", category="eatingout"),
+        row("new_gogi", "PENDING - Gogi Matcha", "-84.50"),
+    )
+
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_gogi"), _is_unfiled, REISSUE_TODAY)
+
+    assert stored_ids(repo) == {"earlier_gogi", "new_gogi"}
+    assert stored(repo, "new_gogi")["category"] == "eatingout"
+    assert result["carried"] == 1
+    assert result["removed"] == 0
+
+
 def test_clashing_hand_filed_categories_keep_both_copies(repo, mirror, row):
     repo._table.seed(
         row("old_cettire", CETTIRE_OLD, "-260.36", category="shopping"),
