@@ -7,6 +7,7 @@ monkeypatched — no network, no AWS. The `anthropic_client` fixture imports the
 module in isolation and pins a fake key.
 """
 
+import json
 import logging
 import urllib.error
 
@@ -75,6 +76,76 @@ def test_post_http_error_raises_with_status(anthropic_client, monkeypatch):
     with pytest.raises(anthropic_client.AnthropicError) as ei:
         anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status == 429
+
+
+# --- ABU-97: Anthropic's error explanation reaches the log -------------------
+
+
+def _raise_http_error(monkeypatch, anthropic_client, code, body):
+    def boom(req, timeout=None):
+        raise http_error(code, url="https://api.anthropic.com/v1/messages", body=body)
+    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
+
+
+def _error_body(error_type, message):
+    return json.dumps({"type": "error", "error": {"type": error_type, "message": message}}).encode()
+
+
+CALLS = [
+    lambda client: client.post("s", "p", {}, {}),
+    lambda client: client.post_messages("s", [{"role": "user", "content": "q"}], [], 10, 5),
+]
+CALL_IDS = ["tips post", "chat post_messages"]
+
+
+@pytest.mark.parametrize("call", CALLS, ids=CALL_IDS)
+def test_an_error_reply_puts_anthropics_explanation_in_the_message(anthropic_client, monkeypatch, call):
+    body = _error_body("invalid_request_error", "fallbacks: Extra inputs are not permitted")
+    _raise_http_error(monkeypatch, anthropic_client, 400, body)
+
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        call(anthropic_client)
+
+    assert ei.value.upstream_status == 400
+    assert str(ei.value) == (
+        "Anthropic messages -> 400: invalid_request_error: fallbacks: Extra inputs are not permitted")
+
+
+@pytest.mark.parametrize("body", [
+    b"<html>bad gateway</html>", b"", b'{"error": "x"}', b"[]", b'{"type": "error"}',
+], ids=["html", "empty", "error-not-a-dict", "list", "no-error-field"])
+def test_an_error_reply_without_a_usable_explanation_keeps_the_plain_message(
+        anthropic_client, monkeypatch, body):
+    _raise_http_error(monkeypatch, anthropic_client, 502, body)
+
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+
+    assert ei.value.upstream_status == 502
+    assert str(ei.value) == "Anthropic messages -> 502"
+
+
+def test_a_long_explanation_is_cut_to_the_safe_length(anthropic_client, monkeypatch):
+    _raise_http_error(monkeypatch, anthropic_client, 400, _error_body("invalid_request_error", "x" * 1000))
+
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+
+    prefix = "Anthropic messages -> 400: "
+    message = str(ei.value)
+    assert message.startswith(prefix + "invalid_request_error: x")
+    assert len(message) - len(prefix) <= anthropic_client.ANTHROPIC_ERROR_DETAIL_MAX_LEN
+
+
+def test_the_error_message_never_holds_the_api_key(anthropic_client, monkeypatch):
+    _raise_http_error(monkeypatch, anthropic_client, 401,
+                      _error_body("authentication_error", "invalid x-api-key"))
+
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {}, {})
+
+    assert "authentication_error: invalid x-api-key" in str(ei.value)
+    assert anthropic_client.get_api_key() not in str(ei.value)
 
 
 def _raise_url_error(monkeypatch, anthropic_client):

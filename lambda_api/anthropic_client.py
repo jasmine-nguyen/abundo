@@ -20,6 +20,7 @@ from api_constants import (
     ANTHROPIC_BASE_URL,
     ANTHROPIC_BETA,
     ANTHROPIC_EFFORT,
+    ANTHROPIC_ERROR_DETAIL_MAX_LEN,
     ANTHROPIC_FALLBACKS,
     ANTHROPIC_MAX_TOKENS,
     ANTHROPIC_MESSAGES_PATH,
@@ -37,7 +38,8 @@ logger.setLevel(logging.INFO)
 
 class AnthropicError(Exception):
     """A failed Anthropic call. `upstream_status` is the HTTP status, or None for a
-    network/transport failure. The API key is never included in the message."""
+    network/transport failure. The message may hold Anthropic's trimmed error explanation;
+    the API key is never included."""
 
     def __init__(self, upstream_status, message=""):
         super().__init__(message)
@@ -103,6 +105,17 @@ def _body(system: str, messages: list, max_tokens: int) -> dict:
     }
 
 
+def _error_detail(error: urllib.error.HTTPError) -> str:
+    """Anthropic's `<type>: <message>` from an error reply body, trimmed; "" if unreadable."""
+    try:
+        reply = json.loads(error.read())
+        detail = reply["error"]
+        text = f"{detail['type']}: {detail['message']}"
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return ""
+    return text[:ANTHROPIC_ERROR_DETAIL_MAX_LEN]
+
+
 def _send(body: dict, timeout: float) -> dict:
     """The one urllib POST to the Messages API: headers, error mapping, JSON parse."""
     # get_api_key() reads SSM; a missing/denied param raises ValueError. Map it to an
@@ -127,7 +140,11 @@ def _send(body: dict, timeout: float) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise AnthropicError(e.code, f"Anthropic messages -> {e.code}") from e
+        message = f"Anthropic messages -> {e.code}"
+        detail = _error_detail(e)
+        if detail:
+            message = f"{message}: {detail}"
+        raise AnthropicError(e.code, message) from e
     except urllib.error.URLError as e:
         raise AnthropicError(None, "Anthropic unreachable") from e
     except OSError as e:

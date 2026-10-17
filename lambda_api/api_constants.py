@@ -102,6 +102,8 @@ ANTHROPIC_FALLBACKS = "default"
 # User-Agent — the UA is load-bearing (same lesson as the BankSync client).
 ANTHROPIC_USER_AGENT = "abundo-app-api"
 ANTHROPIC_TIMEOUT_SECONDS = 30
+# Limits how much of Anthropic's error explanation goes into the log.
+ANTHROPIC_ERROR_DETAIL_MAX_LEN = 300
 # How many PRIOR pay cycles of category spend to include for trend context.
 INSIGHTS_PRIOR_CYCLES = 1
 
