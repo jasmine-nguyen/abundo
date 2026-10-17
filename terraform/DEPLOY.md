@@ -116,8 +116,8 @@ gh secret set TF_VAR_alert_email          --repo jasmine-nguyen/abundo
 ```
 
 **Your AWS parameter-store secrets are NOT in this list.** The BankSync /
-Anthropic / Expo / Up values in SSM use `ignore_changes = [value]`, so CI never
-overwrites them. Leave them alone.
+Anthropic / Expo / Up values in SSM are no longer managed by Terraform (ABU-93),
+so CI never touches them. Set them by hand in the console or CLI.
 
 > If you're unsure which `TF_VAR_*` you actually set, run
 > `env | grep TF_VAR_` on your Mac in the shell you deploy from.

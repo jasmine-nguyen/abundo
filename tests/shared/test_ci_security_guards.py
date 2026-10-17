@@ -24,9 +24,13 @@ def _plan_deny_block():
 
 
 def test_plan_role_has_inline_deny_on_data_reads():
+    # [A1] every statement is a Deny, so no data-read action can slip in as an Allow.
     block = _plan_deny_block()
     assert "aws_iam_role.github_plan" in block
-    assert '"Deny"' in block
+    statements = policy_statements("plan_deny_data_reads", path=BOOTSTRAP_MAIN_TF)
+    assert statements
+    for statement in statements:
+        assert re.search(r'Effect\s*=\s*"Deny"', statement), f"not a Deny: {statement}"
     for action in ("ssm:GetParameter", "dynamodb:Query", "dynamodb:Scan", "dynamodb:GetItem",
                    "logs:GetLogEvents", "logs:FilterLogEvents", "s3:GetObjectVersion",
                    "cognito-idp:ListUsers"):
@@ -51,10 +55,33 @@ def test_ssm_secrets_are_not_managed_in_terraform_state():
 
 def test_iam_references_ssm_by_arn_locals_with_the_old_names():
     assert "aws_ssm_parameter." not in (TERRAFORM_DIR / "iam.tf").read_text()
+    # [A2] the hand-built ARN must be exactly the old parameter's ARN, or every lambda loses its secret.
     text = (TERRAFORM_DIR / "ssm.tf").read_text()
+    assert tf_attr(text, "ssm_parameter_arn_prefix") == (
+        '"arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}'
+        ':parameter/${var.project_name}"')
     for name, kebab in SSM_PARAMETERS.items():
-        value = tf_attr(text, f"{name}_arn")
-        assert value.rstrip('"').endswith(f"/{kebab}"), f"{name}_arn must end in /{kebab}, got {value}"
+        assert tf_attr(text, f"{name}_arn") == f'"${{local.ssm_parameter_arn_prefix}}/{kebab}"'
+
+
+# Which secrets each lambda role could read before the switch to ARN locals.
+SSM_GRANTS = {
+    "app_api_ssm": {"banksync_api_key", "anthropic_api_key"},
+    "transaction_ssm": {"banksync_webhook_secret", "expo_access_token",
+                        "up_personal_access_token", "up_webhook_signing_secret"},
+    "transaction_trigger_ssm": {"banksync_api_key"},
+    "balance_poller_ssm": {"banksync_api_key"},
+    "push_receipts_ssm": {"expo_access_token"},
+    "goal_nudge_ssm": {"expo_access_token"},
+    "ai_chat_worker_ssm": {"anthropic_api_key"},
+}
+
+
+@pytest.mark.parametrize("policy, secrets", SSM_GRANTS.items())
+def test_each_lambda_role_keeps_its_secret_grants(policy, secrets):
+    # [A3] swapping aws_ssm_parameter.X.arn for local.X_arn must not move a grant between roles.
+    block = tf_block((TERRAFORM_DIR / "iam.tf").read_text(), "aws_iam_role_policy", policy)
+    assert set(re.findall(r"local\.(\w+)_arn\b", block)) == secrets
 
 
 def test_api_stage_is_throttled():
