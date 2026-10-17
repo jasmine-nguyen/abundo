@@ -4,7 +4,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor, within } from '@testing-library/react-native';
-import type { ReactTestInstance } from 'react-test-renderer';
 import { routerSpies, resetRouter, setParams } from './support/routerMock';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
@@ -13,7 +12,7 @@ import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals, renderLoad
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE, GROCERIES, GROCERIES_RECORD, SALARY, SAVINGS, MORTGAGE_RECORD } from './support/categories';
 import { seedBudgetsTab } from './support/budgetsTab';
-import { styleOf, sharedHost } from './support/layout';
+import { expectStacked } from './support/layout';
 import { pullAndSettle } from './support/pull';
 import { BudgetBar } from '../components/ui';
 
@@ -231,10 +230,7 @@ it('a budget row stacks: the amount sits below the name, not squeezed beside it'
   const name = row.getByText('Cafes & Coffee');
   const remain = row.getByText('$20');
 
-  expect(styleOf(sharedHost(name, remain)).flexDirection).not.toBe('row');
-  for (let host: ReactTestInstance | null = remain.parent; host; host = host.parent) {
-    if (typeof host.type === 'string') expect(styleOf(host).maxWidth).not.toBe('45%');
-  }
+  expectStacked(name, remain);
 });
 
 // WHIT-745 on screen: only an over-budget row moves up. A fully used (behind-pace) Mortgage keeps its

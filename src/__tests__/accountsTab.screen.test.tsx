@@ -20,7 +20,7 @@ import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
-import { styleOf, sharedHost } from './support/layout';
+import { styleOf, sharedHost, expectStacked } from './support/layout';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
@@ -307,11 +307,13 @@ it('ABU-75 — at very large text an account row stacks: the balance sits below 
   mockLarge = true;
   const { name, balance } = await showOneAccount();
 
-  expect(styleOf(sharedHost(name, balance)).flexDirection).not.toBe('row');
-  for (let host: ReactTestInstance | null = balance.parent; host; host = host.parent) {
-    if (typeof host.type === 'string') expect(styleOf(host).maxWidth).not.toBe('45%');
-  }
+  expectStacked(name, balance);
   expect(name.props.numberOfLines).toBeUndefined();
+  // The sub-line ("Last spend yesterday") gets the full width too, not squeezed beside the chip.
+  const rowRoot = sharedHost(name, balance);
+  for (let host: ReactTestInstance | null = screen.getByText(/^Last spend/).parent; host && host !== rowRoot; host = host.parent) {
+    if (typeof host.type === 'string') expect(styleOf(host).flexDirection).not.toBe('row');
+  }
 });
 
 it('ABU-75 — at normal text an account row stays side by side, centred, with the name capped at 2 lines', async () => {
