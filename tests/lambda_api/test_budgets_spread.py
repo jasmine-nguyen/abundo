@@ -211,6 +211,25 @@ def test_a_payday_change_alone_also_counts_as_a_cycle_change(handler):
     assert budget_repo.clear_spread_calls == []
 
 
+def test_a_spread_deleted_during_the_read_stays_deleted(handler):
+    # (ABU-88) The read snapshots a spread that needs settling after a payday change; before it
+    # saves the settle, the user deletes the spread. The read's settle must not bring it back.
+    entry = _entry(spread_from="2026-07-07")
+    entry["spread_paydate"] = "2026-01-03"
+    budget_repo = recording_budget_repo({"insurance": entry})
+    snapshot_read = budget_repo.list_budgets
+
+    def list_budgets_then_user_deletes():
+        snapshot = snapshot_read()
+        type(budget_repo).clear_spread(budget_repo, "insurance")
+        return snapshot
+
+    budget_repo.list_budgets = list_budgets_then_user_deletes
+    _list(handler, budget_repo)
+
+    assert "spread_amount" not in stored_budgets(budget_repo)["insurance"]
+
+
 # --- scope + robustness ---------------------------------------------------------
 
 

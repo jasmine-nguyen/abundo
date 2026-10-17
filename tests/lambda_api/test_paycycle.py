@@ -21,8 +21,14 @@ from _api_event import api_event
 from _paycycle_fakes import paycycle_repo, stored_cycle
 
 
-def _today_utc():
-    return datetime.now(timezone.utc).date()
+@pytest.fixture
+def melbourne_today(handler, monkeypatch):
+    """Pin the handler's Melbourne "today" — the clock the payday ceiling must use. Pinned to
+    the real UTC date, so Melbourne-tomorrow is UTC today + 1: the date a UTC-based ceiling
+    with a day of slack wrongly lets through for most of the Melbourne day."""
+    today = datetime.now(timezone.utc).date()
+    monkeypatch.setattr(handler, "melbourne_today", lambda: today)
+    return today
 
 
 def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_b64=False):
@@ -42,19 +48,30 @@ def test_set_paycycle_success(handler):
     assert stored_cycle(table) == (7, "2024-06-05")
 
 
-def test_set_paycycle_last_pay_date_at_future_ceiling_accepted(handler):
-    # The ceiling is today + 1 day (AEST-runs-ahead-of-UTC slack); exactly that is OK.
+def test_set_paycycle_last_pay_date_of_melbourne_today_accepted(handler, melbourne_today):
     _, repo = paycycle_repo()
-    body = json.dumps({"length": 30, "last_pay_date": (_today_utc() + timedelta(days=1)).isoformat()})
+    body = json.dumps({"length": 30, "last_pay_date": melbourne_today.isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 200
 
 
-def test_set_paycycle_future_last_pay_date_400(handler):
+def test_set_paycycle_last_pay_date_of_melbourne_tomorrow_400(handler, melbourne_today):
+    # ABU-88: a "tomorrow" payday collapses the window (days left reads 14, budgets show only
+    # today's spend). The ceiling is Melbourne today, at any hour.
     table, repo = paycycle_repo()
-    body = json.dumps({"length": 14, "last_pay_date": (_today_utc() + timedelta(days=5)).isoformat()})
+    body = json.dumps({"length": 30, "last_pay_date": (melbourne_today + timedelta(days=1)).isoformat()})
+
+    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
+
+    assert resp["statusCode"] == 400
+    assert table.update_calls == []
+
+
+def test_set_paycycle_future_last_pay_date_400(handler, melbourne_today):
+    table, repo = paycycle_repo()
+    body = json.dumps({"length": 14, "last_pay_date": (melbourne_today + timedelta(days=5)).isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
