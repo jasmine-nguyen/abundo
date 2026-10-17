@@ -10,7 +10,7 @@ import { pullAndSettle } from './support/pull';
 import { txn } from './factory';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, settle } from './support/renderWithQueries';
-import { renderWithApp } from './support/renderWithApp';
+import { renderWithApp, currentSheet } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
 import { styleOf } from './support/layout';
 import { C } from '../theme';
@@ -98,35 +98,43 @@ it('Transactions: always shows "Updated <time>" after a good load, swapped for t
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 });
 
-// WHIT-858: the line also says when the bank last sent each account's transactions, one time per
-// account, named like the Accounts tab and ordered by name. Not today → the date is added; over 24h
-// old → that entry turns amber. It reads from the all-accounts feed, so Uncategorised shows it too.
-it('Transactions: shows "Bank synced <account> <time>" per account on both tabs, amber when over a day old (WHIT-858)', async () => {
+// WHIT-858 / ABU-82: the line sums up the bank sync in one short part: "● 1 account behind ›" (amber
+// dot; accounts over a day old) or "Banks synced ›". Tapping it opens the bankSync sheet with every
+// account in name order. It reads from the all-accounts feed, so Uncategorised shows it too.
+it('Transactions: shows "● 1 account behind ›" on both tabs, and tapping it opens the bank sync sheet (ABU-82)', async () => {
   const upRow = txn({ transaction_id: 'u1', amount: -42, account_id: 'up-spending', account_name: 'Up Spending' });
   seedFeedPage(server, '/transactions/uncategorized/feed', [{ ...upRow, category: '' }]);
   // [A4] Westpac has more loaded rows than Up, so a busiest-first order would put it first.
   const westpacRows = ['w1', 'w2'].map((transaction_id) => txn({ transaction_id, amount: -3, account_id: 'westpac-altitude-qantas-black', account_name: 'Westpac Altitude Qantas Black' }));
+  const westpacAt = new Date('2026-09-16T07:55:00+10:00').getTime();
+  const upAt = new Date('2026-09-18T08:10:00+10:00').getTime();
   seedFeedPage(server, FEED, [upRow, ...westpacRows], null, {
-    'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),
-    'up-spending': new Date('2026-09-18T08:10:00+10:00').getTime(),
+    'westpac-altitude-qantas-black': westpacAt,
+    'up-spending': upAt,
   });
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
 
-  const expectBankSynced = async () => {
-    // [A3] WHIT-863: the Bank synced times (amber included) move into the header with the line.
-    const header = within(screen.getByTestId('screen-header'));
-    await waitFor(() => expect(header.getByTestId('transactions-updated')).toHaveTextContent(
-      'Updated 9:40am · Bank synced Up Spending 8:10am · Westpac Altitude Qantas Black 16 Sep, 7:55am',
-    ));
-    expect(styleOf(header.getByTestId('transactions-bank-synced-up-spending')).color).not.toBe(C.warn);
-    expect(styleOf(header.getByTestId('transactions-bank-synced-westpac-altitude-qantas-black')).color).toBe(C.warn);
+  // [A3] WHIT-863: the line lives in the screen header.
+  const header = () => within(screen.getByTestId('screen-header'));
+  const expectCompactLine = async () => {
+    await waitFor(() => expect(header().getByTestId('transactions-updated')).toHaveTextContent('Updated 9:40am · ● 1 account behind ›'));
+    expect(styleOf(header().getByTestId('transactions-bank-sync-dot')).color).toBe(C.warn);
   };
 
-  await expectBankSynced();
+  await expectCompactLine();
   fireEvent.press(screen.getByText('Uncategorised'));
   await settle();
-  await expectBankSynced();
+  await expectCompactLine();
+
+  fireEvent.press(header().getByTestId('transactions-bank-sync'));
+  expect(currentSheet()).toEqual({
+    mode: 'bankSync',
+    accounts: [
+      { id: 'up-spending', name: 'Up Spending', at: upAt },
+      { id: 'westpac-altitude-qantas-black', name: 'Westpac Altitude Qantas Black', at: westpacAt },
+    ],
+  });
 });
 
 // WHIT-713 QA — a focus refetch with no pull, a categories-only failure, a balances-only failure,

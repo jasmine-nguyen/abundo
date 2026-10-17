@@ -18,7 +18,8 @@ import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
 // date components (not UTC) so the calendar and label show the day the user picked —
 // no midnight-timezone drift. Shared with the loan form's goal-date picker (WHIT-126).
-import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
+import { parseISODate, toISODate, formatDayMonthYear, formatTimeOfDay } from '../dateutil';
+import { isBankSyncBehind } from './ListStates';
 import { useNativeDate } from './NativeDateField';
 import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
@@ -170,6 +171,7 @@ function SheetHost() {
             {s.sheet?.mode === 'fileByShopList' && <FileByShopListSheet />}
             {s.sheet?.mode === 'fileByShopConfirm' && <FileByShopConfirmSheet key={`${s.sheet.group.rulePattern}:${s.sheet.categoryId}`} />}
             {s.sheet?.mode === 'addRuleConfirm' && <AddRuleConfirmSheet key={`${s.sheet.pattern}:${s.sheet.categoryId}`} />}
+            {s.sheet?.mode === 'bankSync' && <BankSyncSheet />}
           </View>
         </Animated.View>
       </KeyboardAvoidingView>
@@ -799,6 +801,29 @@ function PayCycleSheet() {
         />
       )}
 
+      <SheetButton primary label="Done" onPress={() => s.setSheet(null)} style={{ marginTop: 16 }} />
+    </View>
+  );
+}
+
+// ABU-82: each account's last bank sync, opened from the "Updated · … ›" line. Amber dot = over a day old.
+function BankSyncSheet() {
+  const s = useAppContext();
+  if (s.sheet?.mode !== 'bankSync') return null;
+  return (
+    <View>
+      <Text style={styles.sheetTitle}>Bank sync</Text>
+      <View style={{ marginTop: 14, gap: 10 }}>
+        {s.sheet.accounts.map((account) => (
+          <View key={account.id} testID={`bank-sync-row-${account.id}`} style={[styles.cycleRow, styles.bankSyncRow]}>
+            <Text style={[styles.cycleText, styles.bankSyncName]} numberOfLines={1}>{account.name}</Text>
+            <View style={styles.bankSyncTime}>
+              {isBankSyncBehind(account) && <Text testID={`bank-sync-dot-${account.id}`} style={{ color: C.warn }}>●</Text>}
+              <Text style={[styles.cycleText, { color: C.textDim }]}>{formatTimeOfDay(account.at)}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
       <SheetButton primary label="Done" onPress={() => s.setSheet(null)} style={{ marginTop: 16 }} />
     </View>
   );
@@ -1962,6 +1987,9 @@ const styles = StyleSheet.create({
   ruleConflictText: { fontFamily: FONT.body, fontSize: 13.5, color: C.textBright, lineHeight: 19 },
   cycleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 15, paddingHorizontal: 16, borderRadius: 14, borderWidth: 1 },
   cycleText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
+  bankSyncRow: { backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)', gap: 12 },
+  bankSyncName: { color: C.textMid, flexShrink: 1 },
+  bankSyncTime: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   cycleSectionLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginTop: 20, letterSpacing: 0.2 },
   cycleSectionHint: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, lineHeight: 18, marginTop: 4 },
 
