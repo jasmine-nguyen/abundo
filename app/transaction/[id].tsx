@@ -331,7 +331,6 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
   // Adds every candidate in one write, so a pasted "a,b," doesn't lose "a" to a stale `tags`.
   const commitTags = (candidates: string[]) => {
     const next = [...tags];
-    let refused = false;
     for (const candidate of candidates) {
       const trimmed = candidate.trim();
       if (!trimmed) continue;
@@ -342,12 +341,11 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
       // runs first, so re-typing an existing tag at the cap stays a silent no-op. The
       // server is still the real gate; two adds in one tick could both pass this check.
       if (next.length >= TAG_MAX_COUNT) {
-        refused = true;
+        showToast(`Up to ${TAG_MAX_COUNT} tags.`);
         break;
       }
       next.push(trimmed);
     }
-    if (refused) showToast(`Up to ${TAG_MAX_COUNT} tags.`);
     if (next.length > tags.length) applyTransactionEdit(txId, { tags: next });
   };
 
