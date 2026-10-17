@@ -27,7 +27,7 @@ import { queryClient } from '../queryClient';
 jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
 import { setPickedDate, resetPickedDate, FUTURE } from './support/mockDatePicker';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
-import { spyOnAlert, pressAlertButton } from './support/alertSpy';
+import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
@@ -259,9 +259,7 @@ describe('ABU-85: Delete goal asks first', () => {
     await renderForm();
     await press('goal-delete');
 
-    expect(alerts.spy).toHaveBeenCalledTimes(1);
-    expect(alerts.last().title).toBe('Delete this goal?');
-    expect(alerts.last().buttons.map((button) => [button.text, button.style])).toEqual([['Cancel', 'cancel'], ['Delete', 'destructive']]);
+    expectConfirmDeletePopUp(alerts, 'Delete this goal?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
     expect(mockDeleteGoal).not.toHaveBeenCalled();
     expect(routerSpies.replace).not.toHaveBeenCalled();

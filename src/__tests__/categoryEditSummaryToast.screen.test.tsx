@@ -27,7 +27,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import CategoryEdit from '../../app/category/edit';
 import { COFFEE, COFFEE_RECORD } from './support/categories';
-import { spyOnAlert, pressAlertButton } from './support/alertSpy';
+import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -337,9 +337,7 @@ describe('ABU-85: Delete category asks first', () => {
     await drawEdit();
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
 
-    expect(alerts.spy).toHaveBeenCalledTimes(1);
-    expect(alerts.last().title).toBe('Delete this category?');
-    expect(alerts.last().buttons.map((button) => [button.text, button.style])).toEqual([['Cancel', 'cancel'], ['Delete', 'destructive']]);
+    expectConfirmDeletePopUp(alerts, 'Delete this category?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(0);
     expect(routerSpies.back).not.toHaveBeenCalled();

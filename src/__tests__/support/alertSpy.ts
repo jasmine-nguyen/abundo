@@ -1,5 +1,5 @@
 // Shared confirm-pop-up helpers for screen tests. (Not a *.test file, so Jest never runs it as a suite.)
-import { jest, beforeEach, afterEach } from '@jest/globals';
+import { jest, beforeEach, afterEach, expect } from '@jest/globals';
 import { Alert } from 'react-native';
 
 type AlertButton = { text?: string; style?: string; onPress?: () => void | Promise<void> };
@@ -16,6 +16,13 @@ export function spyOnAlert() {
       return { title, message, buttons, button: (text: string) => buttons.find((button) => button.text === text)! };
     },
   };
+}
+
+/** The one pop-up shown so far is the shared Cancel / Delete (red) confirm, with this title. */
+export function expectConfirmDeletePopUp(alerts: ReturnType<typeof spyOnAlert>, title: string) {
+  expect(alerts.spy).toHaveBeenCalledTimes(1);
+  expect(alerts.last().title).toBe(title);
+  expect(alerts.last().buttons.map((button) => [button.text, button.style])).toEqual([['Cancel', 'cancel'], ['Delete', 'destructive']]);
 }
 
 export function pressAlertButton(alerts: ReturnType<typeof spyOnAlert>, text: string) {

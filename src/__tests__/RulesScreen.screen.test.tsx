@@ -15,7 +15,7 @@ import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 import { rulesKey } from '../queryKeys';
 import { fireFocus } from './support/routerMock';
-import { spyOnAlert, pressAlertButton } from './support/alertSpy';
+import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -111,9 +111,7 @@ describe('ABU-85: the trash button asks before deleting', () => {
     fireEvent.press(screen.getByTestId('delete-rule-e1'));
     await settleQueries();
 
-    expect(alerts.spy).toHaveBeenCalledTimes(1);
-    expect(alerts.last().title).toBe('Delete this rule?');
-    expect(alerts.last().buttons.map((button) => [button.text, button.style])).toEqual([['Cancel', 'cancel'], ['Delete', 'destructive']]);
+    expectConfirmDeletePopUp(alerts, 'Delete this rule?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
     await settleQueries();
     expect(server.sent('DELETE', '/rules/e1')).toHaveLength(0);
