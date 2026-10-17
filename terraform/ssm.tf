@@ -1,71 +1,66 @@
-resource "aws_ssm_parameter" "banksync_webhook_secret" {
-  name  = "/${var.project_name}/banksync-webhook-secret"
-  type  = "SecureString"
-  value = "placeholder"
+# The SecureString secrets the lambdas read. Their values are set by hand in the
+# console or CLI. Terraform no longer manages these parameters (ABU-93): a managed
+# parameter's real value is written into the state file on every refresh, and the PR
+# preview login can read that file. The `removed` blocks drop them from state without
+# deleting them in AWS; iam.tf grants access by the ARNs below.
+#
+# banksync-webhook-secret: verifies BankSync webhook deliveries.
+# banksync-api-key: the sync-trigger lambda calls POST /v1/feeds/{id}/sync with it.
+# anthropic-api-key: lambda_api calls the Messages API for AI insights and chat (WHIT-104).
+# expo-access-token: an Expo PAT; the push sender (shared/push.py) sends it as a Bearer
+#   token because the project has Enhanced Security for Push Notifications on.
+# up-personal-access-token: the up-webhook lambda fetches the full transaction with it (WHIT-313).
+# up-webhook-signing-secret: the secretKey Up returns at webhook registration, used to
+#   verify each delivery's HMAC signature.
+locals {
+  ssm_parameter_arn_prefix = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project_name}"
+
+  banksync_webhook_secret_arn   = "${local.ssm_parameter_arn_prefix}/banksync-webhook-secret"
+  banksync_api_key_arn          = "${local.ssm_parameter_arn_prefix}/banksync-api-key"
+  anthropic_api_key_arn         = "${local.ssm_parameter_arn_prefix}/anthropic-api-key"
+  expo_access_token_arn         = "${local.ssm_parameter_arn_prefix}/expo-access-token"
+  up_personal_access_token_arn  = "${local.ssm_parameter_arn_prefix}/up-personal-access-token"
+  up_webhook_signing_secret_arn = "${local.ssm_parameter_arn_prefix}/up-webhook-signing-secret"
+}
+
+removed {
+  from = aws_ssm_parameter.banksync_webhook_secret
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-# BankSync REST API key, read by the sync-trigger lambda to call POST /v1/feeds/{id}/sync.
-# Terraform only seeds a placeholder; set the real value out-of-band (console/CLI) and
-# ignore_changes keeps Terraform from overwriting it on subsequent applies.
-resource "aws_ssm_parameter" "banksync_api_key" {
-  name  = "/${var.project_name}/banksync-api-key"
-  type  = "SecureString"
-  value = "placeholder"
+removed {
+  from = aws_ssm_parameter.banksync_api_key
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-# Anthropic API key, read by lambda_api (insights_ai.py) to call the Messages API
-# for AI spending insights (WHIT-104). Terraform seeds a placeholder; paste the
-# real key out-of-band (console/CLI). ignore_changes keeps applies from clobbering it.
-resource "aws_ssm_parameter" "anthropic_api_key" {
-  name  = "/${var.project_name}/anthropic-api-key"
-  type  = "SecureString"
-  value = "placeholder"
+removed {
+  from = aws_ssm_parameter.anthropic_api_key
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-# Expo access token (a PAT) used by the push sender (shared/push.py). The Expo
-# project has "Enhanced Security for Push Notifications" enabled, so every push
-# send must carry Authorization: Bearer <this token>. Terraform seeds a
-# placeholder; set the real PAT out-of-band (console/CLI) and ignore_changes
-# keeps applies from overwriting it. Read by the webhook lambda (the push sender's
-# runtime — see the lambda_ssm grant in iam.tf).
-resource "aws_ssm_parameter" "expo_access_token" {
-  name  = "/${var.project_name}/expo-access-token"
-  type  = "SecureString"
-  value = "placeholder"
+removed {
+  from = aws_ssm_parameter.expo_access_token
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-# Direct Up-bank webhook secrets (WHIT-313), read by the up-webhook lambda.
-# up-personal-access-token: an Up Personal Access Token, used to fetch the full
-# transaction (the webhook event is thin). up-webhook-signing-secret: the secretKey
-# Up returns at webhook registration, used to verify each delivery's HMAC signature.
-# Terraform seeds placeholders; set the real values out-of-band (console/CLI) and
-# ignore_changes keeps applies from clobbering them.
-resource "aws_ssm_parameter" "up_personal_access_token" {
-  name  = "/${var.project_name}/up-personal-access-token"
-  type  = "SecureString"
-  value = "placeholder"
+removed {
+  from = aws_ssm_parameter.up_personal_access_token
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-resource "aws_ssm_parameter" "up_webhook_signing_secret" {
-  name  = "/${var.project_name}/up-webhook-signing-secret"
-  type  = "SecureString"
-  value = "placeholder"
+removed {
+  from = aws_ssm_parameter.up_webhook_signing_secret
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }

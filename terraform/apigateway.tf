@@ -7,6 +7,13 @@ resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.api.id
   name        = "$default"
   auto_deploy = true
+
+  # Per-route limit (ABU-93): the webhook routes need no login, so a flood of junk
+  # requests would otherwise use up the account's lambda concurrency. The banks retry on 429.
+  default_route_settings {
+    throttling_rate_limit  = 20
+    throttling_burst_limit = 40
+  }
 }
 
 # lambda api endpoint used by abundo app to retrieve data from DynamoDB

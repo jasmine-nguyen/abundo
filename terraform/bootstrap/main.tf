@@ -194,6 +194,74 @@ resource "aws_iam_role_policy_attachment" "plan_state" {
   policy_arn = aws_iam_policy.tfstate_plan.arn
 }
 
+# ABU-93: a PR run executes the workflow file from the PR branch, so anything this role
+# can read, a branch can print to the build log. ReadOnlyAccess includes secret values,
+# table rows, log lines, old state versions and the user list; terraform plan needs none
+# of them. An explicit Deny wins over the Allow. The lock table is spared so plan can
+# still take the state lock.
+resource "aws_iam_role_policy" "plan_deny_data_reads" {
+  name = "${var.project_name}-plan-deny-data-reads"
+  role = aws_iam_role.github_plan.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DenySecretReads"
+        Effect = "Deny"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+          "ssm:GetParameterHistory",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyTableReads"
+        Effect = "Deny"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:BatchGetItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:PartiQLSelect",
+        ]
+        NotResource = [aws_dynamodb_table.tflock.arn]
+      },
+      {
+        Sid    = "DenyLogReads"
+        Effect = "Deny"
+        Action = [
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents",
+          "logs:StartQuery",
+          "logs:GetQueryResults",
+          "logs:StartLiveTail",
+          "logs:GetLogRecord",
+          "logs:Unmask",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "DenyOldStateVersions"
+        Effect   = "Deny"
+        Action   = "s3:GetObjectVersion"
+        Resource = "${aws_s3_bucket.tfstate.arn}/*"
+      },
+      {
+        Sid    = "DenyUserDirectoryReads"
+        Effect = "Deny"
+        Action = [
+          "cognito-idp:ListUsers",
+          "cognito-idp:ListUsersInGroup",
+          "cognito-idp:AdminGetUser",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
 # --- Apply role: assumed only by the gated `production` deploy job -------------
 
 # Trust is pinned to the `environment:<environment_name>` subject, so this role

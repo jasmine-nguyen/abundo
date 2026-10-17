@@ -202,9 +202,9 @@ resource "aws_iam_role_policy" "app_api_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.banksync_api_key.arn,
+        local.banksync_api_key_arn,
         # Anthropic key for AI spending insights (WHIT-104).
-        aws_ssm_parameter.anthropic_api_key.arn,
+        local.anthropic_api_key_arn,
       ]
     }]
   })
@@ -244,12 +244,12 @@ resource "aws_iam_role_policy" "transaction_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.banksync_webhook_secret.arn,
-        aws_ssm_parameter.expo_access_token.arn,
+        local.banksync_webhook_secret_arn,
+        local.expo_access_token_arn,
         # Direct Up webhook (WHIT-313): the up-webhook lambda runs on this same role,
         # so it reads its signing secret + Up token from here.
-        aws_ssm_parameter.up_personal_access_token.arn,
-        aws_ssm_parameter.up_webhook_signing_secret.arn,
+        local.up_personal_access_token_arn,
+        local.up_webhook_signing_secret_arn,
       ]
     }]
   })
@@ -270,7 +270,7 @@ resource "aws_iam_role_policy" "transaction_trigger_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.banksync_api_key.arn,
+        local.banksync_api_key_arn,
       ]
     }]
   })
@@ -390,7 +390,7 @@ resource "aws_iam_role_policy" "balance_poller_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.banksync_api_key.arn,
+        local.banksync_api_key_arn,
       ]
     }]
   })
@@ -478,7 +478,7 @@ resource "aws_iam_role_policy" "push_receipts_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.expo_access_token.arn,
+        local.expo_access_token_arn,
       ]
     }]
   })
@@ -556,7 +556,7 @@ resource "aws_iam_role_policy" "goal_nudge_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.expo_access_token.arn,
+        local.expo_access_token_arn,
       ]
     }]
   })
@@ -695,7 +695,7 @@ resource "aws_iam_role_policy" "ai_chat_worker_ssm" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["ssm:GetParameter"]
-      Resource = [aws_ssm_parameter.anthropic_api_key.arn]
+      Resource = [local.anthropic_api_key_arn]
     }]
   })
 }

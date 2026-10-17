@@ -21,6 +21,9 @@ on:
       - "v*"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   build-and-submit:
     name: Build + submit to TestFlight
