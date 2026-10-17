@@ -199,6 +199,19 @@ def test_a_charge_the_user_deleted_stays_deleted_after_a_recovery_run(lam, repo)
     assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 1}
 
 
+def test_a_failed_deleted_by_you_check_leaves_the_row_parked_and_stores_nothing(lam, repo):
+    # [A3] The "deleted by you" marker can't be read: the charge must not be stored on a guess,
+    # and the parked row stays for the next run.
+    repo.save_failed_transactions([_raw_row(txn_id="r1")])
+    repo._table.fail("get_item", when=lambda key: key["pk"].startswith("DELETED#"))
+
+    summary = reprocess_failed(lam.reprocess, repo)
+
+    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0}
+    assert _txn_keys(repo) == []
+    assert len(_failed_keys(repo)) == 1
+
+
 def test_multi_page_backlog_with_mixed_outcomes(lam, repo):
     # 5 dead-letter rows, forced to 2-per-page, with the two RECOVERABLE rows on later
     # pages. If pagination broke (only first page read) reprocessed would be < 2.
