@@ -270,9 +270,10 @@ it('every account-type chip icon is a real drawing', () => {
   for (const name of Object.values(ACCOUNT_KIND_ICON)) expect(ICON[name] ?? GLYPH[name]).toBeDefined();
 });
 
-// ABU-66: the header shows "Updated … · Bank synced …" like Transactions, and each account card is
-// a labelled button: name and balance, or "balance not loaded yet" before the first poll.
-it('shows the Updated + Bank synced line, and each card is a button labelled with name and balance', async () => {
+// ABU-66 / ABU-82: the header shows the compact "Updated … · ● 1 account behind ›" line like
+// Transactions (the seeded sync is months before the real clock), and each account card is a
+// labelled button: name and balance, or "balance not loaded yet" before the first poll.
+it('shows the Updated + bank sync line, and each card is a button labelled with name and balance', async () => {
   seedFeedPage(server, '/transactions/feed', [
     { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' },
     { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Spending' },
@@ -280,7 +281,8 @@ it('shows the Updated + Bank synced line, and each card is a button labelled wit
   server.seed('/accounts/balances', [bal({ account_id: 'a1', amount: 96270.59 })]);
   await renderWithQueries(<Accounts />);
   await waitFor(() => expect(screen.getByTestId('accounts-updated')).toBeTruthy());
-  expect(screen.getByTestId('accounts-bank-synced-a1')).toBeTruthy();
+  expect(screen.getByTestId('accounts-updated')).toHaveTextContent(/^Updated \S+ · ● 1 account behind ›$/);
+  expect(screen.getByTestId('accounts-bank-sync')).toBeTruthy();
 
   const labels = screen.getAllByRole('button').map((b) => b.props.accessibilityLabel as string | undefined);
   expect(labels.find((label) => label?.startsWith('ANZ'))).toContain('$96,270.59');

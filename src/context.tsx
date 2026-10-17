@@ -15,6 +15,7 @@ export { unionById, budgetSubtreeContains } from './transactionCache';
 export type { FilingResult, FilingTarget, FilingWhen } from './filingRun';
 export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
+import type { BankSyncedAccount } from './queries';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
 import { paydaysPerYear, elapsedFrac } from './payCycle';
 import { contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
@@ -69,6 +70,8 @@ export type Sheet =
   // saves the rule for future charges only. Carries the typed pattern + chosen category captured
   // from the add-rule form. Reuses the FileByShopConfirm flow (dry-run preview, then commit).
   | { mode: 'addRuleConfirm'; pattern: string; categoryId: string; budgetExcluded: boolean }
+  // ABU-82: each account's bank sync time, captured when the "Updated · … ›" line was tapped.
+  | { mode: 'bankSync'; accounts: BankSyncedAccount[] }
   | null;
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];

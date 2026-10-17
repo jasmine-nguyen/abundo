@@ -8,6 +8,10 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { ListStates, StaleDataLine } from '../components/ListStates';
 import { pinToday } from './support/clock';
 
+// ABU-82: the line reads setSheet from the app context once it has bank times to show.
+const mockSetSheet = jest.fn();
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ setSheet: mockSetSheet })));
+
 it('renders the spinner (only) with the prefixed testID when loading', () => {
   render(<ListStates showSpinner showError={false} idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="Retry loading your accounts" onRetry={jest.fn()} />);
   expect(screen.getByTestId('accounts-loading')).toBeTruthy();
@@ -36,7 +40,10 @@ it('with an error, adds the reason line under the error copy', () => {
 });
 
 describe('StaleDataLine (WHIT-713)', () => {
-  beforeEach(() => { pinToday(new Date('2026-09-18T15:00:00+10:00')); });
+  beforeEach(() => {
+    pinToday(new Date('2026-09-18T15:00:00+10:00'));
+    mockSetSheet.mockClear();
+  });
   afterEach(() => { jest.useRealTimers(); });
 
   const loadedAt = new Date('2026-09-18T09:40:00+10:00').getTime();
@@ -59,14 +66,35 @@ describe('StaleDataLine (WHIT-713)', () => {
     expect(screen.queryByTestId('budgets-updated')).toBeNull();
   });
 
-  // WHIT-858: the bank part follows either lead; an empty list leaves the line as it was.
+  // WHIT-858 / ABU-82: the compact bank part follows either lead; an empty list leaves the line as
+  // it was (no bank part, not a button).
+  const fresh = { id: 'up-spending', name: 'Up Spending', at: loadedAt };
+  const old = (id: string) => ({ id, name: id, at: new Date('2026-09-16T07:55:00+10:00').getTime() });
   it.each([
-    [null, [{ id: 'up-spending', name: 'Up Spending', at: loadedAt }], 'budgets-updated', 'Updated 9:40am · Bank synced Up Spending 9:40am'],
-    [new Error('API error: 503'), [{ id: 'up-spending', name: 'Up Spending', at: loadedAt }], 'budgets-stale', "Couldn't refresh · showing 9:40am · Bank synced Up Spending 9:40am"],
+    [null, [fresh], 'budgets-updated', 'Updated 9:40am · Banks synced ›'],
+    [new Error('API error: 503'), [fresh], 'budgets-stale', "Couldn't refresh · showing 9:40am · Banks synced ›"],
+    [null, [old('westpac')], 'budgets-updated', 'Updated 9:40am · ● 1 account behind ›'],
+    [null, [old('anz'), fresh, old('westpac')], 'budgets-updated', 'Updated 9:40am · ● 2 accounts behind ›'],
     [null, [], 'budgets-updated', 'Updated 9:40am'],
+    // [A1] exactly 24h old is not behind yet; 1ms more is.
+    [null, [{ ...fresh, at: Date.parse('2026-09-17T15:00:00+10:00') }], 'budgets-updated', 'Updated 9:40am · Banks synced ›'],
+    [null, [{ ...fresh, at: Date.parse('2026-09-17T15:00:00+10:00') - 1 }], 'budgets-updated', 'Updated 9:40am · ● 1 account behind ›'],
+    // [A2] the offline lead keeps the compact bank part.
+    [new TypeError('Network request failed'), [old('westpac')], 'budgets-stale', 'You look offline · showing 9:40am · ● 1 account behind ›'],
   ])('with bankSynced, error %p and %j → %s reads %s', (error, bankSynced, testId, text) => {
     render(<StaleDataLine idPrefix="budgets" error={error} updatedAt={loadedAt} showUpdated bankSynced={bankSynced} />);
-    expect(screen.getByTestId(testId)).toHaveTextContent(text);
+    expect(screen.getByTestId(testId)).toHaveTextContent(text, { exact: true });
+    if (bankSynced.length === 0) expect(screen.queryByTestId('budgets-bank-sync')).toBeNull();
+  });
+
+  // [A3] the error line is a button too: a press opens the bankSync sheet with the accounts given.
+  it('pressing the stale line with bank times opens the bank sync sheet with those accounts', () => {
+    const accounts = [old('anz'), fresh];
+    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated bankSynced={accounts} />);
+    const button = screen.getByTestId('budgets-bank-sync');
+    expect(button.props.accessibilityLabel).toContain('1 account behind');
+    fireEvent.press(button);
+    expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'bankSync', accounts });
   });
 
   it('with showUpdated, renders nothing when nothing has loaded yet', () => {
