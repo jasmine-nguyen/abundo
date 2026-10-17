@@ -494,7 +494,7 @@ it('[A2] saveCategory that flips "Transfer, not spending" refreshes Budgets and 
 
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', transfer: true }); });
 
-  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions']));
+  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions', 'categoryTransactions', 'aiInsights']));
   spy.mockRestore();
 });
 

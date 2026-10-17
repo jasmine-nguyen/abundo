@@ -18,7 +18,7 @@ import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query'
 import { queryClient } from './queryClient';
 import type { TransactionFeedPage, TransactionSearchResult } from './api';
 import type { Transaction, Category } from './types';
-import { accountFeedKey, breakdownKey, budgetTransactionsKey, budgetsKey, categoriesKey, categoryTransactionsKey, filingSuggestionsKey, rulesKey, transactionsKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedFeedKey, uncategorizedMerchantsKey } from './queryKeys';
+import { accountFeedKey, aiInsightsKey, breakdownKey, budgetTransactionsKey, budgetsKey, categoriesKey, categoryTransactionsKey, filingSuggestionsKey, rulesKey, transactionsKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedFeedKey, uncategorizedMerchantsKey } from './queryKeys';
 
 // Concatenate transaction lists, keeping the FIRST copy of each id — so callers list their
 // freshest source first.
@@ -135,7 +135,7 @@ export function removeFromAllCopies(txId: string): () => void {
 // What to mark for a refresh after each kind of change. The feed and the account feeds are never
 // here: each is an InfiniteData of loaded pages, so invalidating it would refetch every page (a storm); the
 // optimistic patch already wrote the change into it.
-const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDeleted' | 'categoryDeleted' | 'rulesApplied', QueryKey[]> = {
+const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDeleted' | 'categoryDeleted' | 'rulesApplied' | 'categoryTransfer', QueryKey[]> = {
   // A re-file changes the totals, which budget/category list a charge belongs to, and the
   // uncategorized tally (WHIT-501). Search is patched in place, so it is skipped.
   refile: [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, uncategorizedCountKey],
@@ -161,6 +161,8 @@ const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDelet
     uncategorizedFeedKey, transactionsSearchKey, categoriesKey, rulesKey, uncategorizedMerchantsKey,
     filingSuggestionsKey,
   ],
+  // "Transfer, not spending" (ABU-83) moves every server spend total, the AI summary included.
+  categoryTransfer: [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, aiInsightsKey],
 };
 
 export type ChangeKind = keyof typeof REFRESH_BY_CHANGE;
