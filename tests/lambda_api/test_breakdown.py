@@ -895,3 +895,33 @@ def test_rollup_income_and_savings_never_in_nodes_or_refunds(handler):
     assert "vault_sub" not in rollup["refunds"]
     assert result["__earned__"]["posted"] == Decimal("2000")     # earned still emitted
     assert "__uncategorized__" in result                          # raw charge still bucketed
+
+
+# --- transfer categories (ABU-83) ---------------------------------------------
+
+
+_REPAYMENT_SHAPES = {
+    "rule-filed": {"filed_by_rule": "rule-1"},
+    "settled-from-hand-filed-pending": {"status": "posted"},
+    "reprocessed": {"status": "posted", "raw": {"category": "TRANSFER"}},
+}
+
+
+@pytest.mark.parametrize("shape", _REPAYMENT_SHAPES.values(), ids=_REPAYMENT_SHAPES.keys())
+def test_breakdown_leaves_out_a_repayment_filed_in_a_transfer_category(handler, shape):
+    # Filing turned counting back on (counts_to_budget=True), but the category is marked
+    # "Transfer, not spending", so the card repayment isn't spending. Rent paid by transfer
+    # and filed under Rent still counts.
+    cats = _FakeCategoryRepo([
+        {**_category("card-payment", "Living", "Credit Card Payment"), "transfer": True},
+        _category("rent", "Living"),
+    ])
+    txns = _QueuedTransactionRepo([
+        {**_transaction("card-payment", -900), **shape},
+        _transaction("rent", -500),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "card-payment" not in result
+    assert result["rent"] == {"posted": Decimal("500"), "pending": Decimal("0")}

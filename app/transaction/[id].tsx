@@ -54,7 +54,7 @@ export default function TransactionDetail() {
   const spreadCategory = transaction?.category ? category(transaction.category) : undefined;
   const spreadBudget = transaction?.category ? budgets.find((b) => b.id === transaction.category) : undefined;
   const spreadElig = budgetSpreadEligibility(spreadCategory, spreadBudget);
-  const showSpread = !!transaction && transaction.amount < 0 && contributesToBudget(transaction) && spreadElig.entry !== 'hidden';
+  const showSpread = !!transaction && transaction.amount < 0 && contributesToBudget(transaction, category) && spreadElig.entry !== 'hidden';
 
   // WHIT-539: explain a rule-filed category. Resolve the stamped rule against the rules cache.
   // Gate on the rule STILL owning the current category: the server clears filed_by_rule on a hand
@@ -161,10 +161,14 @@ export default function TransactionDetail() {
                   A normal charge keeps the toggle so the user can still exclude it themselves.
                   Gate on the same "bank doesn't count this" test the row tag uses (falsy
                   counts_to_budget), so the list and this screen never disagree. */}
-              {transaction.counts_to_budget ? (
+              {/* ABU-83: a "Transfer, not spending" category never counts, so its rows get the
+                  note too — the manual toggle would do nothing. */}
+              {spreadCategory?.transfer ? (
+                <BudgetExcludedNote note={`${spreadCategory.name} is set as a transfer, so it doesn't count toward budgets or insights.`} />
+              ) : transaction.counts_to_budget ? (
                 <BudgetExcludeToggle transaction={transaction} />
               ) : (
-                <BudgetExcludedNote transaction={transaction} />
+                <BudgetExcludedNote note={excludeCopy(transaction).note} />
               )}
 
               {/* WHIT-556: spread a bill in this (over-budget) category over pay cycles. Same shared
@@ -279,10 +283,9 @@ function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
 }
 
 // WHIT-298: shown in place of the manual toggle when the BANK doesn't count the charge
-// (counts_to_budget falsy). Read-only, because the manual toggle can't un-exclude a bank
+// (counts_to_budget falsy) or its category is a transfer (ABU-83). Read-only, because the manual toggle can't un-exclude a bank
 // transfer — so we explain the auto-exclusion rather than offer an inert switch.
-function BudgetExcludedNote({ transaction }: { transaction: Transaction }) {
-  const { note } = excludeCopy(transaction);
+function BudgetExcludedNote({ note }: { note: string }) {
   return (
     <View
       style={styles.excludedNote}

@@ -39,7 +39,7 @@ from repository_errors import DatabaseError
 from repository_paycycle import PayCycleRepository
 from repository_job import STATUS_FAILED, STATUS_SUCCEEDED, JobRepository
 from repository_transaction import TransactionRepository, read_window
-from spend import transactions_in_window
+from spend import drop_transfer_rows, transactions_in_window
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -463,7 +463,9 @@ def load_chat_data(transaction_repo, category_repo, budget_repo, paycycle_repo) 
     cycle_start, length, today = window.cycle_start, window.length, window.today
     floor = lookback_floor(cycle_start, length, today)
     categories = category_repo.list_categories()
-    transactions = read_window(transaction_repo, min(floor, window.fetch_start), today)
+    transactions = drop_transfer_rows(
+        read_window(transaction_repo, min(floor, window.fetch_start), today), categories
+    )
     budgets, _ = budget_standing(
         targets, window, categories, transactions_in_window(transactions, window.fetch_start, today)
     )

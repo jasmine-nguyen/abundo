@@ -224,6 +224,19 @@ describe('spread this bill prompt', () => {
   });
 });
 
+// ABU-83: a charge filed in a "Transfer, not spending" category never counts, so the screen
+// explains why (no manual exclude switch) and offers no bill spread, even when over budget.
+it('a charge in a transfer category shows the note, not the switch, and no spread offer', async () => {
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null, transfer: true }]);
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130 })]);
+  server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
+  await draw();
+
+  expect(screen.getByText(`${COFFEE_RECORD.name} is set as a transfer, so it doesn't count toward budgets or insights.`)).toBeTruthy();
+  expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
+  expect(screen.queryByTestId('transaction-spread')).toBeNull();
+});
+
 // ── WHIT-539: "why this category" — name the rule that auto-filed the charge ──
 describe('rule attribution line', () => {
   const seedStamped = (filedByRule: string, category: string | null = 'coffee') =>

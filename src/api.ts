@@ -635,7 +635,10 @@ export const fetchCategories = endpoint((send): Promise<Category[]> =>
  * @throws If the response status is not OK (e.g. 409 when the slug already exists).
  */
 export const createCategory = endpoint(
-  (send, input: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<Category> =>
+  (
+    send,
+    input: { name: string; bucket: Bucket; icon: string; parent?: string | null; transfer?: boolean },
+  ): Promise<Category> =>
     send({ path: "/categories", method: "POST", body: input }),
   { withReason: true },
 );
@@ -653,7 +656,7 @@ export const updateCategory = endpoint(
   (
     send,
     id: string,
-    input: { name: string; bucket: Bucket; icon: string; parent?: string | null },
+    input: { name: string; bucket: Bucket; icon: string; parent?: string | null; transfer?: boolean },
   ): Promise<Category> =>
     send({ path: `/categories/${encodeURIComponent(id)}`, method: "PATCH", body: input }),
   { withReason: true },

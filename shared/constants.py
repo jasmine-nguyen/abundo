@@ -39,6 +39,10 @@ MIN_REPAYMENT_NOTIFY = 10
 # Confirmed against real Up data (2026-07-03).
 NON_BUDGET_CATEGORIES = {"TRANSFER_IN", "TRANSFER_OUT", "LOAN_PAYMENTS"}
 
+# Category field marking a user category "Transfer, not spending" (ABU-83): nothing filed
+# there counts toward any spend or income total, whatever its `counts_to_budget`.
+CATEGORY_TRANSFER_FIELD = "transfer"
+
 # SSM SecureString path holding the BankSync REST API key (read by abundo-transaction-trigger).
 BANKSYNC_API_KEY_PATH = "/abundo/banksync-api-key"
 

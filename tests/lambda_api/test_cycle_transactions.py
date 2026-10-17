@@ -57,12 +57,12 @@ def _event(cycle=None):
     return api_event("GET", "/transactions/cycle", query=query)
 
 
-def _call(handler, monkeypatch, event, repo=None):
+def _call(handler, monkeypatch, event, repo=None, categories=()):
     repo = repo or _DateFilteringTransactionRepo(TXNS)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(categories))
     return handler.lambda_handler(event, None)
 
 
@@ -126,3 +126,20 @@ def test_rows_from_every_account_merge_newest_first(handler, monkeypatch):
     ids = [r["transaction_id"] for r in json.loads(response["body"])["transactions"]]
     assert ids == ["westpac-c", "spend-c", "spend-b", "card-b", "loan-interest", "spend-a"]
     assert {c[0] for c in repo.calls} == set(BY_ACCOUNT)
+
+
+def test_a_row_in_a_transfer_category_is_marked_as_not_counting(handler, monkeypatch):
+    # ABU-83: filing set counts_to_budget=True, but the category is "Transfer, not spending".
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
+    repo = _DateFilteringTransactionRepo([
+        _txn("repayment", "2026-07-10", -900, category="card-payment"),
+        _txn("rent", "2026-07-10", -500, category="rent"),
+    ])
+    categories = [{"id": "card-payment", "bucket": "Living", "transfer": True},
+                  {"id": "rent", "bucket": "Living"}]
+
+    rows = json.loads(_call(handler, monkeypatch, _event(), repo, categories)["body"])["transactions"]
+
+    assert {r["transaction_id"]: r["counts_to_budget_effective"] for r in rows} == {
+        "repayment": False, "rent": True}

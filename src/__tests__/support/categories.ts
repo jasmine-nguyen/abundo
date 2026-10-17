@@ -17,6 +17,9 @@ export const SALARY: Category = Object.freeze({ id: 'salary', name: 'Salary', bu
 
 export const SAVINGS: Category = Object.freeze({ id: 'rainy', name: 'Rainy Day', bucket: 'Savings', icon: 'piggy-bank', color: '#9ad' });
 
+// A "Transfer, not spending" category (ABU-83): nothing filed here counts.
+export const CARD_PAYMENT: Category = Object.freeze({ id: 'cardpayment', name: 'Credit Card Payment', bucket: 'Living', icon: 'card', color: '#8ab4f8', transfer: true });
+
 export const GROCERIES_TOP_RECORD = Object.freeze({ ...GROCERIES_RECORD, parent: null } as const);
 
 export const GROCERIES_TOP = Object.freeze({ ...GROCERIES_TOP_RECORD, color: '#7FD49B' } as const);

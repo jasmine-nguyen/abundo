@@ -131,6 +131,7 @@ def test_create_slugifies_multiword_name(handler):
     pytest.param('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": 5}', id="non_string_parent"),
     # a blank parent is invalid like a non-string; it must never reach the repo
     pytest.param('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "   "}', id="blank_parent"),
+    pytest.param('{"name": "Parking", "bucket": "Living", "icon": "car", "transfer": "yes"}', id="non_bool_transfer"),
 ])
 def test_create_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
@@ -222,6 +223,7 @@ def test_update_missing_id_returns_404(handler):
     pytest.param('{"name": "   ", "bucket": "Living"}',   id="blank_name"),
     pytest.param('{"name": "Coffee", "bucket": "Fun"}',   id="invalid_bucket"),
     pytest.param("not json",                              id="invalid_json"),
+    pytest.param('{"name": "Coffee", "bucket": "Living", "transfer": 1}', id="non_bool_transfer"),
 ])
 def test_update_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
@@ -573,7 +575,8 @@ def test_repo_update_changes_editable_fields(handler):
     assert len(config["items"]) == 13 and config["version"] == 2
     # colorSlot rides through an edit untouched — a rename must never repaint a category.
     assert updated == {"id": "coffee", "name": "Coffee & Cake", "icon": "cart",
-                       "color": "#E8A87C", "bucket": "Living", "parent": None, "colorSlot": 9}
+                       "color": "#E8A87C", "bucket": "Living", "parent": None, "transfer": False,
+                       "colorSlot": 9}
 
 
 def test_repo_update_unknown_id_raises(handler):
@@ -1321,3 +1324,31 @@ def test_the_extracted_no_op_skip_did_not_leak_into_the_bucket_rule(handler):
         repo.update_category("kid0000", "Kid Zero", "Living", "tag", parent="coffee")
 
     assert repo._table.store[_CFG]["items"]["kid0000"]["bucket"] == "Lifestyle"
+
+
+# --- "Transfer, not spending" flag (ABU-83) ----------------------------------
+
+
+def test_transfer_flag_defaults_off_saves_and_survives_an_edit_that_leaves_it_out(handler):
+    _, repo = _repo_with_fake_table(handler)
+    assert all(c["transfer"] is False for c in repo.list_categories())
+
+    created = handler.create_category(
+        _categories_event('{"name": "Card Payment", "bucket": "Living", "icon": "card", "transfer": true}'),
+        repo, budget_repo())
+    assert json.loads(created["body"])["transfer"] is True
+
+    def card():
+        return next(c for c in repo.list_categories() if c["id"] == "cardpayment")
+
+    renamed = handler.update_category(
+        _category_item_event("PATCH", cat_id="cardpayment", body='{"name": "Card Repayment", "bucket": "Living"}'),
+        repo, budget_repo())
+    assert json.loads(renamed["body"])["transfer"] is True
+    assert card()["name"] == "Card Repayment" and card()["transfer"] is True
+
+    handler.update_category(
+        _category_item_event("PATCH", cat_id="cardpayment",
+                             body='{"name": "Card Repayment", "bucket": "Living", "transfer": false}'),
+        repo, budget_repo())
+    assert card()["transfer"] is False

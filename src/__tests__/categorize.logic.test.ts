@@ -7,7 +7,7 @@ import { isUncategorized, countUncategorized, transactionView, transactionGroups
 import { C } from '../theme';
 import type { Transaction } from '../types';
 import { makeState, cat, txn } from './factory';
-import { GROCERIES, SALARY, SAVINGS } from './support/categories';
+import { CARD_PAYMENT, GROCERIES, SALARY, SAVINGS } from './support/categories';
 
 const state = () => makeState({ categories: [cat()] });
 
@@ -125,6 +125,7 @@ describe('transactionGroups', () => {
     ["the 'income' row is left out", [{ amount: 1000, category: 'income' }, { amount: -10 }], '$10 spent'],
     ['an Income-bucket category row is left out', [{ amount: 500, category: SALARY.id }, { amount: -10 }], '$10 spent'],
     ['a Savings-bucket category row is left out', [{ amount: -50, category: SAVINGS.id }, { amount: -10 }], '$10 spent'],
+    ['a transfer-category row is left out', [{ amount: -900, category: CARD_PAYMENT.id }, { amount: -10 }], '$10 spent'],
     ['a refund nets against a charge', [{ amount: 5 }, { amount: -20 }], '$15 spent'],
     ['a refund-only day reads as money back', [{ amount: 7.25 }], '$7.25 back'],
     ['an uncategorized charge counts', [{ amount: -9, category: null }], '$9 spent'],
@@ -134,7 +135,7 @@ describe('transactionGroups', () => {
     ['a day that nets to under a cent has no total', [{ amount: -0.1 }, { amount: -0.2 }, { amount: 0.3 }], null],
   ])('dayTotal: %s', (_name, rows, expected) => {
     const s = makeState({
-      categories: [cat(), GROCERIES, SALARY, SAVINGS],
+      categories: [cat(), GROCERIES, SALARY, SAVINGS, CARD_PAYMENT],
       transactions: rows.map((over, i) => day({ transaction_id: String(i), ...over })),
     });
     const groups = transactionGroups(s, 'all');

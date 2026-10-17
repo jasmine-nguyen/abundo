@@ -407,11 +407,11 @@ def _groceries_row(txn_id, amount, day):
             "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
 
 
-def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo):
+def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo, categories=CATEGORIES):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
     return ai_chat.load_chat_data(
-        transaction_repo, _FakeCategoryRepo(CATEGORIES), budget_repo,
+        transaction_repo, _FakeCategoryRepo(categories), budget_repo,
         _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
 
 
@@ -455,6 +455,19 @@ def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_ch
     }}
     assert budget_repo.writes == []
     assert {t["transaction_id"] for t in data.transactions} == {"old", "prior", "now"}
+
+
+def test_load_chat_data_leaves_out_a_transfer_category(ai_chat, monkeypatch):
+    # ABU-83: every chat tool reads data.transactions, so a card repayment filed in a
+    # "Transfer, not spending" category never reaches an Ask Abundo total.
+    categories = [*CATEGORIES, {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living",
+                                "parent": None, "transfer": True}]
+    rows = [_groceries_row("food", "-25", "2026-09-15"),
+            {**_groceries_row("repayment", "-900", "2026-09-15"), "category": "card-payment"}]
+
+    data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo(rows), _FakeBudgetRepo({}), categories)
+
+    assert [t["transaction_id"] for t in data.transactions] == ["food"]
 
 
 # --- QA (card 609): boundaries the happy path doesn't reach ----------------------------------

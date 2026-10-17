@@ -106,6 +106,7 @@ from spend import (
     build_category_children,
     contributes_to_budget,
     current_cycle_window,
+    drop_transfer_rows,
     fold_subtree,
     melbourne_today,
     nth_prior_cycle_window,
@@ -115,6 +116,7 @@ from spend import (
     summarise_transactions,
     summarise_uncategorized,
     transactions_in_window,
+    transfer_category_ids,
 )
 from anthropic_client import AnthropicError
 from chat_tools import lookback_floor
@@ -800,6 +802,16 @@ def _parse_parent(raw):
     return raw.strip(), None
 
 
+def _parse_transfer(body: dict) -> tuple[dict, dict | None]:
+    """The optional "Transfer, not spending" flag (ABU-83) as repo kwargs, or a 400.
+    Absent → {} so an update leaves the stored flag as-is."""
+    if "transfer" not in body:
+        return {}, None
+    if not isinstance(body["transfer"], bool):
+        return {}, _json_response(400, {"error": "transfer must be a boolean"})
+    return {"transfer": body["transfer"]}, None
+
+
 def create_category(
     event: dict, repo: CategoryRepository, budget_repo: BudgetRepository
 ) -> dict:
@@ -841,8 +853,12 @@ def create_category(
     if parent_error:
         return parent_error
 
+    transfer, transfer_error = _parse_transfer(body)
+    if transfer_error:
+        return transfer_error
+
     try:
-        created = repo.create_category(cat_id, name.strip(), bucket, icon, parent=parent)
+        created = repo.create_category(cat_id, name.strip(), bucket, icon, parent=parent, **transfer)
     except DuplicateCategoryError:
         return _json_response(409, {"error": "category already exists"})
     except InvalidCategoryParentError as e:
@@ -900,8 +916,12 @@ def update_category(
             return parent_error
         update_parent["parent"] = parent
 
+    transfer, transfer_error = _parse_transfer(body)
+    if transfer_error:
+        return transfer_error
+
     try:
-        updated = repo.update_category(cat_id, name.strip(), bucket, icon, **update_parent)
+        updated = repo.update_category(cat_id, name.strip(), bucket, icon, **update_parent, **transfer)
     except CategoryNotFoundError:
         return _json_response(404, {"error": "category not found"})
     except InvalidCategoryParentError as e:
@@ -2146,7 +2166,7 @@ def get_budget_transactions(
     categories = category_repo.list_categories()
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
     children = build_category_children(categories)
-    target_ids = subtree_ids(category_id, children, bucket_by_id)
+    target_ids = subtree_ids(category_id, children, bucket_by_id) - transfer_category_ids(categories)
 
     return _json_response(200, _windowed_rows(
         transactions,
@@ -2216,7 +2236,7 @@ def list_category_breakdown(
     """
     categories = category_repo.list_categories()
     start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
-    transactions = read_window(transaction_repo, start, end)
+    transactions = drop_transfer_rows(read_window(transaction_repo, start, end), categories)
 
     all_ids = {c["id"] for c in categories}
     spend_ids = {c["id"] for c in categories if c.get("bucket") in SPEND_BUCKETS}
@@ -2430,9 +2450,9 @@ def get_cycle_transactions(
         read_start = start
     transactions = read_window(transaction_repo, read_start, end)
 
+    categories = category_repo.list_categories()
     budgets = {}
     if targets:
-        categories = category_repo.list_categories()
         if window is not None:
             budgets, _ = budget_standing(targets, window, categories, transactions)
         else:
@@ -2441,8 +2461,10 @@ def get_cycle_transactions(
 
     # After the budget maths: _windowed_rows strips pk/sk from these same dicts.
     rows = _windowed_rows(transactions_in_window(transactions, start, end), lambda _: True)
+    transfer_ids = transfer_category_ids(categories)
     for row in rows:
-        row["counts_to_budget_effective"] = contributes_to_budget(row)
+        row["counts_to_budget_effective"] = (contributes_to_budget(row)
+                                             and row.get("category") not in transfer_ids)
     return _json_response(200, {"start": start, "end": end, "transactions": rows, "budgets": budgets})
 
 
@@ -2647,7 +2669,7 @@ def assemble_insight_input(
     length = cycle["length"]
     start, end = current_cycle_window(cycle["last_pay_date"], length)
 
-    current = read_window(transaction_repo, start, end)
+    current = drop_transfer_rows(read_window(transaction_repo, start, end), categories)
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     all_ids = {c["id"] for c in categories}
 
@@ -2686,7 +2708,7 @@ def assemble_insight_input(
     prior = []
     for n in range(1, INSIGHTS_PRIOR_CYCLES + 1):
         prev_start, prev_end = nth_prior_cycle_window(start, length, n)
-        prev_txns = read_window(transaction_repo, prev_start, prev_end)
+        prev_txns = drop_transfer_rows(read_window(transaction_repo, prev_start, prev_end), categories)
         prev_entry = {
             "start": prev_start,
             "end": prev_end,

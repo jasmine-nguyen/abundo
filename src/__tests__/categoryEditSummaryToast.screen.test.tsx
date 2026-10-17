@@ -32,7 +32,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 // The coffee fields an edit-screen save sends (everything but the id).
-const COFFEE_SAVED = { name: COFFEE_RECORD.name, bucket: COFFEE_RECORD.bucket, icon: COFFEE_RECORD.icon };
+const COFFEE_SAVED = { name: COFFEE_RECORD.name, bucket: COFFEE_RECORD.bucket, icon: COFFEE_RECORD.icon, transfer: false };
 
 // The taxonomy /categories answers with; drawEdit() seeds it right before the screen draws.
 let categories: Category[] = [];
@@ -83,7 +83,7 @@ describe('categoryEditSummaryToast', () => {
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category updated, with 2 sub-categories.']));
-    expect(patchBodies('transport')).toEqual([{ name: 'Transport', bucket: 'Living', icon: 'car', parent: null }]);
+    expect(patchBodies('transport')).toEqual([{ name: 'Transport', bucket: 'Living', icon: 'car', parent: null, transfer: false }]);
     expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
     expect(patchBodies('petrol')).toEqual([{ name: 'Petrol', bucket: 'Living', icon: 'car', parent: 'transport' }]);
     expect(routerSpies.back).toHaveBeenCalled();
@@ -261,6 +261,22 @@ describe('categoryEditParentPick', () => {
 
     await waitFor(() => expect(patchBodies('coffee')).toEqual([
       { ...COFFEE_SAVED, parent: 'treats' }]));
+  });
+});
+
+describe('categoryEditTransfer (ABU-83)', () => {
+  beforeEach(() => { resetMocks({ categoryId: 'coffee' }); });
+
+  it('the "Transfer, not spending" switch seeds from the category and is saved', async () => {
+    categories = [{ ...COFFEE, parent: null, transfer: true }];
+    await drawEdit();
+
+    const toggle = await screen.findByRole('switch');
+    expect(toggle.props.value).toBe(true);
+    fireEvent(toggle, 'valueChange', false);
+    await save();
+
+    await waitFor(() => expect(patchBodies('coffee')).toEqual([{ ...COFFEE_SAVED, parent: null, transfer: false }]));
   });
 });
 
@@ -697,7 +713,7 @@ describe('categoryEditLoadGuards', () => {
     expect(screen.getByDisplayValue('Renamed')).toBeTruthy();
 
     await save();
-    await waitFor(() => expect(patchBodies('coffee')).toEqual([{ name: 'Renamed', bucket: 'Lifestyle', icon: 'coffee', parent: null }]));
+    await waitFor(() => expect(patchBodies('coffee')).toEqual([{ name: 'Renamed', bucket: 'Lifestyle', icon: 'coffee', parent: null, transfer: false }]));
   });
 
   // [A10] (P0) REAL BUG — cold open (the list lands after the form mounts, e.g. a deep link). The
@@ -710,7 +726,7 @@ describe('categoryEditLoadGuards', () => {
     await drawEdit();
     expect(screen.getByDisplayValue('Parking')).toBeTruthy();
     await save();
-    await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]));
+    await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport', transfer: false }]));
   });
 
   // [A12] (P0) After the seed, switching bucket still clears a parent from the old bucket.
@@ -723,7 +739,7 @@ describe('categoryEditLoadGuards', () => {
     fireEvent.press(screen.getByText('Lifestyle'));
     await refreshInAct(() => undefined);
     await save();
-    await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Lifestyle', icon: 'car', parent: null }]));
+    await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Lifestyle', icon: 'car', parent: null, transfer: false }]));
   });
 });
 

@@ -16,7 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from constants import (
-    HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
+    CATEGORY_TRANSFER_FIELD, HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
     PENDING_STATUS, POSTED_STATUS,
     ROLLOVER_HISTORY_MAX_CYCLES, ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
@@ -283,6 +283,22 @@ def counts_to_budget(internal_account_id: str, category: str | None) -> bool:
         internal_account_id != HOMELOAN_ACCOUNT_ID
         and category not in NON_BUDGET_CATEGORIES
     )
+
+
+def transfer_category_ids(categories: list[dict]) -> set[str]:
+    """Ids of the categories marked "Transfer, not spending" (ABU-83)."""
+    return {c["id"] for c in categories if c.get(CATEGORY_TRANSFER_FIELD)}
+
+
+def drop_transfer_rows(transactions: list[dict], categories: list[dict]) -> list[dict]:
+    """`transactions` minus the rows filed in a transfer category (ABU-83).
+
+    A transfer category's rows never count to any spend or income total, whatever their
+    `counts_to_budget` (filing turns that back on, WHIT-545), so card repayments aren't
+    counted on top of the card purchases they pay off.
+    """
+    transfer_ids = transfer_category_ids(categories)
+    return [t for t in transactions if t.get("category") not in transfer_ids]
 
 
 def contributes_to_budget(transaction: dict) -> bool:

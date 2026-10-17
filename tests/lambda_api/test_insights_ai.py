@@ -384,6 +384,29 @@ def test_assemble_insight_input_omits_an_excluded_charge(handler):
     assert "500" not in json.dumps(model_input)      # the excluded figure is nowhere
 
 
+def test_assemble_insight_input_leaves_out_a_transfer_category(handler):
+    # ABU-83: a card repayment filed in a "Transfer, not spending" category isn't spending,
+    # in this cycle or the prior ones the trend reads.
+    cycle = FakePayCycleRepo().get_paycycle()
+    start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    from datetime import date, timedelta
+    prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+    prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
+    categories = _FakeCategoryRepo([
+        {"id": "groceries", "name": "Groceries", "bucket": "Living"},
+        {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living", "transfer": True},
+    ])
+    txn_repo = _WindowKeyedTransactionRepo({
+        (start, end): [_txn("groceries", -100), _txn("card-payment", -900)],
+        (prev_start, prev_end): [_txn("card-payment", -800)],
+    })
+
+    model_input, _ = handler.assemble_insight_input(categories, _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
+
+    assert [r["name"] for r in model_input["categories"]] == ["Groceries"]
+    assert "Credit Card Payment" not in json.dumps(model_input)
+
+
 # --- home-loan goal signal (WHIT-134) ---------------------------------------
 
 _VALID_GOAL = {

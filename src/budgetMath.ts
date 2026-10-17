@@ -2,7 +2,7 @@
 // can't drift apart. The spendable is the server's `available` (WHIT-549), read as sent.
 import type { Budget } from './model';
 import { elapsedFrac } from './payCycle';
-import type { Transaction } from './types';
+import type { Category, Transaction } from './types';
 
 // How much of the base target should be spent by now, at an even pace through the cycle.
 export function paceTarget(budget: Pick<Budget, 'budget'>, cycle: { cycleLen: number; daysLeft: number }): number {
@@ -18,15 +18,18 @@ export function pacePct(target: number, den: number): number {
 // counts AND the user hasn't manually excluded it ("mark as transfer", WHIT-296).
 // Single source of truth so the uncategorized tab, its count, the row's actionable
 // "Uncategorized" state, and the "apply to every {merchant}" sweep all drop an
-// excluded transfer the same way the server does.
-export function contributesToBudget(t: Transaction): boolean {
+// excluded transfer the same way the server does. Given a category lookup, a row filed in a
+// "Transfer, not spending" category (ABU-83) doesn't count either, like the server's
+// drop_transfer_rows.
+export function contributesToBudget(t: Transaction, category?: (id: string) => Category | undefined): boolean {
+  if (t.category && category?.(t.category)?.transfer) return false;
   // `!!` so an omitted counts_to_budget (undefined off the wire) returns a real `false`, not
   // `undefined` — otherwise it leaks through to transactionView.tappable, whose type is boolean.
   return !!t.counts_to_budget && !t.budget_excluded;
 }
 
 export function paidInOneGo(transactions: Transaction[]): boolean {
-  return transactions.filter(contributesToBudget).length === 1;
+  return transactions.filter((t) => contributesToBudget(t)).length === 1;
 }
 
 export function nothingLeft(spent: number, available: number): boolean {

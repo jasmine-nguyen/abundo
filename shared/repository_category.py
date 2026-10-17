@@ -11,6 +11,8 @@ from repository_errors import (
     DuplicateCategoryError,
     InvalidCategoryParentError,
 )
+# Safe despite the note below: spend.py already imports shared constants at load.
+from constants import CATEGORY_TRANSFER_FIELD
 from spend import build_category_children
 
 # Category taxonomy data lives here, not in constants.py, on purpose: this module
@@ -189,11 +191,11 @@ _MAX_CHILDREN_PER_CATEGORY = 50
 # and every size assertion would stop being able to fail.
 _MAX_UPDATE_EXPRESSION_BYTES = 4096
 
-# Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
-# leave the stored link untouched" from "caller passed parent=None, detach to
-# top-level". A plain None default cannot tell those apart, which would silently
-# wipe a category's parent on every ordinary name/icon edit.
-_PARENT_UNSET = object()
+# Sentinel for update_category's leave-as-is fields (`parent`, `transfer`): distinguishes
+# "caller omitted it, leave the stored value untouched" from an explicit value (e.g.
+# parent=None, detach to top-level). A plain None default cannot tell those apart, which
+# would silently wipe a category's parent on every ordinary name/icon edit.
+_UNSET = object()
 
 
 def validate_category_parent(items: dict, cat_id: str, parent_id: str, bucket: str) -> None:
@@ -342,16 +344,17 @@ class CategoryRepository(RepositoryBase):
 
     def list_categories(self) -> list[dict]:
         item = self._read_seeded()
-        # Default `parent` to None so every category leaving the repo carries the
-        # field, even seed rows and rows written before sub-categories existed.
+        # Default `parent` (None) and `transfer` (False) so every category leaving the repo
+        # carries both, even seed rows and rows written before those fields existed.
         # The slot goes out as a plain int (DynamoDB hands back a Decimal), None if corrupt.
         return [
-            {"parent": None, **cat, _COLOR_SLOT_FIELD: _coerce_slot(cat.get(_COLOR_SLOT_FIELD))}
+            {"parent": None, CATEGORY_TRANSFER_FIELD: False, **cat, _COLOR_SLOT_FIELD: _coerce_slot(cat.get(_COLOR_SLOT_FIELD))}
             for cat in item["items"].values()
         ]
 
     def create_category(
-        self, cat_id: str, name: str, bucket: str, icon: str, parent: Optional[str] = None
+        self, cat_id: str, name: str, bucket: str, icon: str, parent: Optional[str] = None,
+        transfer: bool = False,
     ) -> dict:
         """Add one category. Seeds first so the 13 defaults are never lost, then
         adds a single map key under an optimistic-lock guard. Raises
@@ -378,7 +381,7 @@ class CategoryRepository(RepositoryBase):
             # a retry we re-read, so two concurrent creates can never be handed the same slot.
             slot = plan_new_category_slot(items)
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
-                       "bucket": bucket, "parent": parent,
+                       "bucket": bucket, "parent": parent, CATEGORY_TRANSFER_FIELD: transfer,
                        _COLOR_SLOT_FIELD: Decimal(slot)}
             update = {
                 # Nested SET adds ONE map key — never rewrites the whole items map.
@@ -400,7 +403,8 @@ class CategoryRepository(RepositoryBase):
             build, action="create category", seed=False, on_conflict=raise_if_duplicate)
 
     def update_category(
-        self, cat_id: str, name: str, bucket: str, icon: str, parent: Any = _PARENT_UNSET
+        self, cat_id: str, name: str, bucket: str, icon: str, parent: Any = _UNSET,
+        transfer: Any = _UNSET,
     ) -> dict:
         """Update a category's editable fields (name, bucket, icon). The id/slug is
         immutable (it's the BankSync vocabulary), and color is server-owned, so
@@ -413,8 +417,9 @@ class CategoryRepository(RepositoryBase):
         re-parent, or pass None to detach to top-level. A re-parent is validated
         against the current tree. A bucket change is refused while the category
         has children, since that would break the same-bucket rule for its subs.
+        `transfer` is leave-as-is too: omit it to keep the stored flag.
         """
-        changing_parent = parent is not _PARENT_UNSET
+        changing_parent = parent is not _UNSET
         def build(item):
             items = item["items"]
             if cat_id not in items:
@@ -447,16 +452,24 @@ class CategoryRepository(RepositoryBase):
                 names["#parent"] = "parent"
                 values[":parent"] = parent
                 set_clause += ", #items.#id.#parent = :parent"
+            if transfer is not _UNSET:
+                names["#transfer"] = CATEGORY_TRANSFER_FIELD
+                values[":transfer"] = transfer
+                set_clause += ", #items.#id.#transfer = :transfer"
             update = {"expression": "SET " + set_clause,
                       "condition": "attribute_exists(#items.#id)",
                       "names": names, "values": values}
             # Build the response from the pre-read item so id/color survive;
             # reflect the resolved parent (new one if changed, else stored).
             resolved_parent = parent if changing_parent else items[cat_id].get("parent")
+            resolved_transfer = items[cat_id].get(CATEGORY_TRANSFER_FIELD, False)
+            if transfer is not _UNSET:
+                resolved_transfer = transfer
             # The stored slot as a plain int, the same value GET returns, so the body
             # carries `2` rather than the `2.0` a Decimal encodes to.
             result = {**items[cat_id], "name": name, "bucket": bucket,
                       "icon": icon, "parent": resolved_parent,
+                      CATEGORY_TRANSFER_FIELD: resolved_transfer,
                       _COLOR_SLOT_FIELD: _coerce_slot(items[cat_id].get(_COLOR_SLOT_FIELD))}
             return update, result
 

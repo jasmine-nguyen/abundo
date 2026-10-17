@@ -533,8 +533,8 @@ export interface AppContext {
   deleteBudget: (categoryId: string) => Promise<boolean>;
   saveSpread: (categoryId: string, amount: number, cycles: number) => Promise<boolean>;
   removeSpread: (categoryId: string) => Promise<boolean>;
-  saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
-  createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
+  saveCategory: (editId: string | null, form: CategoryForm, opts?: { silent?: boolean }) => Promise<boolean>;
+  createCategoryInline: (form: CategoryForm, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite, spread?: boolean) => Promise<void>;
@@ -643,10 +643,15 @@ function ruleFields(pattern: string, categoryId: string, budgetExcluded: boolean
   };
 }
 
-// Send `parent` only when supplied (server leave-as-is otherwise); explicit null = top-level.
-function categoryInput(form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, name: string) {
-  if ('parent' in form) return { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null };
-  return { name, bucket: form.bucket, icon: form.icon };
+type CategoryForm = { name: string; bucket: Bucket; icon: string; parent?: string | null; transfer?: boolean };
+
+// Send `parent` and `transfer` only when supplied (server leave-as-is otherwise); explicit null
+// parent = top-level.
+function categoryInput(form: CategoryForm, name: string) {
+  const input: CategoryForm = { name, bucket: form.bucket, icon: form.icon };
+  if ('parent' in form) input.parent = form.parent ?? null;
+  if (form.transfer !== undefined) input.transfer = form.transfer;
+  return input;
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -1286,7 +1291,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const createCategoryInline = useCallback(
     // WHIT-240: `opts.silent` lets an orchestrated bulk save (category/edit) suppress this
     // writer's own toast so the screen can show ONE summary toast instead of one per write.
-    async (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }): Promise<Category | null> => {
+    async (form: CategoryForm, opts?: { silent?: boolean }): Promise<Category | null> => {
       const name = form.name.trim();
       if (!name) return null;
       const input = categoryInput(form, name);
@@ -1316,7 +1321,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const saveCategory = useCallback(
-    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }): Promise<boolean> => {
+    async (editId: string | null, form: CategoryForm, opts?: { silent?: boolean }): Promise<boolean> => {
       const name = form.name.trim();
       if (!name) return false;
       // Create routes through createCategoryInline (the single source of the cache-mirror);
@@ -2644,7 +2649,7 @@ export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncateg
 export function daySpend(s: Pick<TransactionListInput, 'category'>, items: Transaction[]): number | null {
   let sum = 0;
   for (const t of items) {
-    if (!contributesToBudget(t) || t.category === 'income') continue;
+    if (!contributesToBudget(t, s.category) || t.category === 'income') continue;
     const bucket = s.category(t.category ?? '')?.bucket;
     if (bucket === 'Income' || bucket === 'Savings') continue;
     sum -= t.amount;
@@ -2787,7 +2792,7 @@ export function categoryTransactions(s: TransactionListInput, drillId: string) {
 
   let posted = 0, pending = 0;
   for (const t of txns) {
-    if (!contributesToBudget(t)) continue;
+    if (!contributesToBudget(t, s.category)) continue;
     if (t.status === 'posted') posted += sign * t.amount;
     else if (t.status === 'pending') pending += sign * t.amount;
   }
@@ -2878,7 +2883,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
   // The server already filters to contributing rows; during the optimistic window an
   // excluded row may linger, so gate on contributesToBudget before display (WHIT-525).
-  const relItems = s.transactions.filter(contributesToBudget);
+  const relItems = s.transactions.filter((t) => contributesToBudget(t));
   const daysLeftLabel = `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`;
   const targetPct = Math.round(elapsed * 100);
   // One line for the accumulated buffer — the same sentence as the row's note (WHIT-733).

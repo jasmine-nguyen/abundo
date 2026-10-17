@@ -363,3 +363,30 @@ def test_pending_refund_clamps_pending_only_posted_untouched(handler, monkeypatc
 
 
 # --- cross-sibling aggregate-then-clamp (WHIT-343) ---------------------------
+
+
+def test_a_transfer_sub_category_is_left_out_of_the_list_and_the_header(handler, monkeypatch):
+    # ABU-83: a card repayment filed in a "Transfer, not spending" sub counts_to_budget=True
+    # but isn't spending, so neither the list nor the header counts it.
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
+    categories = [
+        {"id": "living", "bucket": "Living", "parent": None},
+        {"id": "card-payment", "bucket": "Living", "parent": "living", "transfer": True},
+        {"id": "rent", "bucket": "Living", "parent": "living"},
+    ]
+    transactions = [
+        _txn("repayment", "card-payment", -900, "2026-07-10"),
+        _txn("rent", "rent", -500, "2026-07-10"),
+    ]
+
+    header = handler.list_budgets(
+        _FakeBudgetRepo({"living": {"target": Decimal("2000")}}),
+        _DateFilteringTransactionRepo(transactions), _FakePayCycleRepo(), _FakeCategoryRepo(categories),
+    )["living"]
+    resp = handler.get_budget_transactions(
+        _event("living"), _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(), _FakeCategoryRepo(categories))
+
+    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["rent"]
+    assert header["posted"] == Decimal("500")
