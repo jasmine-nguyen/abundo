@@ -94,6 +94,19 @@ it('re-enables the Add budget button so a retry runs after saveBudget throws', a
   expect(errorSpy).toHaveBeenCalled();
 });
 
+// ABU-86: a second dot used to stay on screen ("1.2.3") while Save sent 1.2. The box now keeps
+// one dot, so what's shown is what's saved.
+it('keeps one decimal point in the amount box and saves what it shows', async () => {
+  seedServer([SPEND]);
+  await renderWithQueries(<BudgetEdit />);
+
+  fireEvent.changeText(screen.getByPlaceholderText('0'), '1.2.3');
+  expect(screen.getByPlaceholderText('0').props.value).toBe('1.23');
+  await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
+
+  expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 1.23, false);
+});
+
 // The Save button sits below the amount field, so the keyboard opens over it. The form scroll
 // must inset for the keyboard AND keep taps alive. Fail-on-revert: drop the props in
 // app/budget/edit.tsx → find() returns undefined.

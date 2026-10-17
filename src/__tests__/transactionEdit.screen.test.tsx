@@ -101,6 +101,21 @@ it('adds a tag on a trailing comma', async () => {
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: ['work', 'travel'] });
 });
 
+// ABU-86: pasting "work,travel," used to make ONE tag "work,travel". Each comma-separated part is
+// its own tag, saved in one write; the part after the last comma stays in the box.
+it.each([
+  { case: 'a pasted list with a trailing comma adds each tag', seed: [], typed: 'work,travel,', tags: ['work', 'travel'], left: '' },
+  { case: 'the part after the last comma stays in the box', seed: [], typed: 'a,b', tags: ['a'], left: 'b' },
+  { case: 'a pasted duplicate is skipped', seed: ['work'], typed: 'travel,work,', tags: ['work', 'travel'], left: '' },
+])('pasted tags: $case', async ({ seed, typed, tags, left }) => {
+  seedRow({ tags: seed });
+  await draw();
+  fireEvent.changeText(screen.getByTestId('tag-input'), typed);
+  expect(mockEdit).toHaveBeenCalledTimes(1);
+  expect(mockEdit).toHaveBeenCalledWith('t1', { tags });
+  expect(screen.getByTestId('tag-input').props.value).toBe(left);
+});
+
 it('ignores a duplicate tag (case-insensitive)', async () => {
   await draw();
   const input = screen.getByTestId('tag-input');
@@ -124,6 +139,17 @@ it('at 20 tags, a new tag is refused with a friendly toast and is not saved', as
   fireEvent(input, 'submitEditing');
   expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
   expect(mockEdit).not.toHaveBeenCalled();
+});
+
+// ABU-86: a pasted list that runs past the cap adds tags up to 20, then refuses the rest once.
+it('a pasted list near the cap saves up to 20 tags and toasts once', async () => {
+  withTags(18);
+  await draw();
+  fireEvent.changeText(screen.getByTestId('tag-input'), 'x,y,z,w,');
+  expect(mockEdit).toHaveBeenCalledTimes(1);
+  expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [...Array.from({ length: 18 }, (_, i) => `t${i}`), 'x', 'y'] });
+  expect(mockToast).toHaveBeenCalledTimes(1);
+  expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
 });
 
 // WHIT-296 — the "Exclude from budgets / Mark as transfer" toggle.

@@ -2,7 +2,7 @@
 // form/sheet now routes through (reject blanks / exponents / signs / trailing garbage a paste
 // slips past the decimal-pad keyboard); numText seeds an input from a stored number.
 import { describe, it, expect } from '@jest/globals';
-import { parseAmount, numText } from '../numutil';
+import { parseAmount, numText, cleanAmount } from '../numutil';
 
 describe('parseAmount', () => {
   it('accepts clean decimals (incl. leading-dot and surrounding whitespace)', () => {
@@ -28,5 +28,18 @@ describe('numText', () => {
 
   it('0 seeds as "0", not empty', () => {
     expect(numText(0)).toBe('0');
+  });
+});
+
+// ABU-86: the money boxes keep digits and ONE decimal point, so the text shown is what's saved.
+describe('cleanAmount', () => {
+  it.each([
+    ['1.2.3', '1.23'],
+    ['5.5.5', '5.55'],
+    ['abc12', '12'],
+    ['12', '12'],
+    ['', ''],
+  ])('%p → %p', (input, expected) => {
+    expect(cleanAmount(input)).toBe(expected);
   });
 });

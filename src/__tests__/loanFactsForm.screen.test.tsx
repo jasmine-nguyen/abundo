@@ -64,6 +64,24 @@ it('saves the facts (LVR as a fraction) and navigates back', async () => {
   expect(routerSpies.back).toHaveBeenCalled();
 });
 
+// ABU-86: two taps in one frame used to save twice and call router.back() twice, popping the
+// screen behind Loan too.
+it('a double-tap on Save while the save is in flight saves once and goes back once', async () => {
+  const { saveLoanFacts } = mountSpies();
+  let resolveSave: (v: boolean) => void = () => {};
+  saveLoanFacts.mockImplementation(() => new Promise<boolean>((res) => { resolveSave = res; }));
+  await renderLoaded(<Loan />);
+  fillValid();
+
+  await act(async () => {
+    fireEvent.press(screen.getByText('Save loan details'));
+    fireEvent.press(screen.getByText('Save loan details'));   // same frame, save still pending
+  });
+  expect(saveLoanFacts).toHaveBeenCalledTimes(1);
+  await act(async () => { resolveSave(true); });
+  expect(routerSpies.back).toHaveBeenCalledTimes(1);
+});
+
 it('sends the picked target payoff date, and clears it back to null (WHIT-126)', async () => {
   const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
@@ -172,6 +190,14 @@ describe('saved facts round trip', () => {
 
     expect(saveLoanFacts).toHaveBeenCalledWith(SAVED);
     expect(routerSpies.back).toHaveBeenCalled();
+  });
+
+  // ABU-86: 0.55 * 100 is 55.00000000000001 in floating point, so the LVR box showed the noise.
+  it.each([[0.55, '55'], [0.57, '57']])('a saved LVR of %p shows as %p, with no float noise', async (lvr, shown) => {
+    server.seed('/loanfacts', { original: 600000, homeValue: 770000, lvr, ratePct: 5.74, baseRepay: 1240, extra: 200 });
+    mountSpies();
+    await renderLoaded(<Loan />);
+    expect(screen.getByPlaceholderText('e.g. 80').props.value).toBe(shown);
   });
 
   // WHIT-126: a stale-seed bug would silently wipe an already-saved payoff goal date.

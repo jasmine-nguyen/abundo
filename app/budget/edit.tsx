@@ -11,6 +11,7 @@ import { queryClient } from '../../src/queryClient';
 import { Header } from '../../src/components/Header';
 import { SwitchRow } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { cleanAmount } from '../../src/numutil';
 
 export default function BudgetEdit() {
   const s = useAppContext(); // saveBudget writer stays on the store
@@ -102,7 +103,7 @@ export default function BudgetEdit() {
         <Text style={styles.fieldLabel}>{info.periodLabel} BUDGET</Text>
         <View style={styles.amountBox}>
           <Text style={styles.dollar}>$</Text>
-          <TextInput value={input} onChangeText={(t) => setInput(t.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={C.placeholder} style={styles.amountInput} />
+          <TextInput value={input} onChangeText={(t) => setInput(cleanAmount(t))} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={C.placeholder} style={styles.amountInput} />
         </View>
 
         {info.smoothingShown && (

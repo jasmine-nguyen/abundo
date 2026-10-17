@@ -328,27 +328,38 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
   saveOnLeave.current = deleting ? null : saveNote;
   useEffect(() => () => saveOnLeave.current?.(), []);
 
-  const commitTag = (candidate: string) => {
-    const trimmed = candidate.trim();
-    setTagInput('');
-    if (!trimmed) return;
-    // Dedupe case-insensitively, keeping the existing tags' original casing.
-    if (tags.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return;
-    // Refuse a new tag at the cap with a friendly nudge, rather than adding it
-    // optimistically only for the server to 400 it and roll back (WHIT-280). Dedupe
-    // runs first, so re-typing an existing tag at the cap stays a silent no-op. The
-    // server is still the real gate; two adds in one tick could both pass this check.
-    if (tags.length >= TAG_MAX_COUNT) {
-      showToast(`Up to ${TAG_MAX_COUNT} tags.`);
-      return;
+  // Adds every candidate in one write, so a pasted "a,b," doesn't lose "a" to a stale `tags`.
+  const commitTags = (candidates: string[]) => {
+    const next = [...tags];
+    for (const candidate of candidates) {
+      const trimmed = candidate.trim();
+      if (!trimmed) continue;
+      // Dedupe case-insensitively, keeping the existing tags' original casing.
+      if (next.some((t) => t.toLowerCase() === trimmed.toLowerCase())) continue;
+      // Refuse a new tag at the cap with a friendly nudge, rather than adding it
+      // optimistically only for the server to 400 it and roll back (WHIT-280). Dedupe
+      // runs first, so re-typing an existing tag at the cap stays a silent no-op. The
+      // server is still the real gate; two adds in one tick could both pass this check.
+      if (next.length >= TAG_MAX_COUNT) {
+        showToast(`Up to ${TAG_MAX_COUNT} tags.`);
+        break;
+      }
+      next.push(trimmed);
     }
-    applyTransactionEdit(txId, { tags: [...tags, trimmed] });
+    if (next.length > tags.length) applyTransactionEdit(txId, { tags: next });
   };
 
   const onTagChange = (text: string) => {
-    // A trailing comma commits the tag (alongside the keyboard's return key).
-    if (text.endsWith(',')) commitTag(text.slice(0, -1));
-    else setTagInput(text);
+    // A comma commits everything before it (alongside the keyboard's return key); the text
+    // after the last comma stays in the box.
+    const parts = text.split(',');
+    if (parts.length > 1) commitTags(parts.slice(0, -1));
+    setTagInput(parts[parts.length - 1]);
+  };
+
+  const submitTag = () => {
+    commitTags([tagInput]);
+    setTagInput('');
   };
 
   const removeTag = (tag: string) => {
@@ -403,7 +414,7 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
         style={styles.tagInput}
         value={tagInput}
         onChangeText={onTagChange}
-        onSubmitEditing={() => commitTag(tagInput)}
+        onSubmitEditing={submitTag}
         placeholder="Add a tag"
         placeholderTextColor={C.placeholder}
         autoCapitalize="none"
