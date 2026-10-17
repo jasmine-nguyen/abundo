@@ -7,13 +7,13 @@ import { useLargeText } from '../hooks/useLargeText';
 // A list row's header: icon chip, name, sub-line and a right-hand block (the amount). At very large
 // text it stacks (name, then sub-line, then the right block) instead of squeezing, so no word splits
 // mid-word (WHIT-743). Shared by Budgets, Insights (ABU-63) and Accounts (ABU-75).
-export function StackingRowHeader({ icon, color, chipBg, name, sub, right, iconSize = 23, centered = false }: {
+export function StackingRowHeader({ icon, color, chipBg, name, sub, right, centered = false }: {
   icon: string; color: string; chipBg: string;
   name: React.ReactNode; sub?: React.ReactNode; right: React.ReactNode;
-  iconSize?: number; centered?: boolean;
+  centered?: boolean;
 }) {
   const large = useLargeText();
-  const chip = <View style={[styles.chip, { backgroundColor: chipBg }]}><Icon name={icon} size={iconSize} color={color} /></View>;
+  const chip = <View style={[styles.chip, { backgroundColor: chipBg }]}><Icon name={icon} size={23} color={color} /></View>;
   if (large) {
     return (
       <View>

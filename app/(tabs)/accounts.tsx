@@ -95,7 +95,6 @@ export default function Accounts() {
                   icon={ACCOUNT_KIND_ICON[accountKind(bal)]}
                   color={color}
                   chipBg={tint(color, 0.15)}
-                  iconSize={22}
                   centered
                   name={<Text style={styles.acctName} numberOfLines={large ? undefined : 2} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{a.name}</Text>}
                   sub={<Text style={styles.acctSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{subtitle}</Text>}
