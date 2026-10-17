@@ -85,7 +85,7 @@ CARD_PAYMENT = {"id": "card-payment", "name": "Credit Card Payment", "bucket": "
 def transfer_tree():
     """A budgeted Living parent over the CARD_PAYMENT transfer sub and a Rent sub."""
     return [
-        {"id": "living", "bucket": "Living", "parent": None},
+        {"id": "living", "name": "Living", "bucket": "Living", "parent": None},
         {**CARD_PAYMENT, "parent": "living"},
-        {"id": "rent", "bucket": "Living", "parent": "living"},
+        {"id": "rent", "name": "Rent", "bucket": "Living", "parent": "living"},
     ]

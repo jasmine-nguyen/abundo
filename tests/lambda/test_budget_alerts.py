@@ -18,6 +18,7 @@ from functools import partial
 import pytest
 from _budget_alert_fakes import fail_nth_write, notify_repo, released_markers
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _category_fakes import transfer_tree
 from _dynamo_fakes import _client_error
 from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountPagesTransactionRepo, _AccountTransactionRepo
@@ -866,14 +867,6 @@ def test_rollover_overspend_last_cycle_lowers_the_alert_basis(alerts, monkeypatc
 
 # --- ABU-83: a "Transfer, not spending" category never counts toward an alert ----------------
 
-_LIVING_TREE = [
-    {"id": "living", "name": "Living", "bucket": "Living", "parent": None},
-    {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living", "parent": "living",
-     "transfer": True},
-    {"id": "rent", "name": "Rent", "bucket": "Living", "parent": "living"},
-]
-
-
 @pytest.mark.parametrize("budget, before", [
     # A $900 repayment lands this cycle: counted, Living reads $1400 of $1000 → "Budget hit".
     pytest.param({}, [_txn("rent", "rent", -500, "posted")], id="this-cycle-repayment"),
@@ -889,7 +882,7 @@ def test_a_repayment_in_a_transfer_sub_never_pushes_its_parent(alerts, monkeypat
            else [_txn("new1", "rent", -10, "posted")])
     sent, notify, _ = _run(alerts, monkeypatch,
                            budgets={"living": {"target": Decimal("1000"), **budget}},
-                           before=before, normalised=new, cats=_LIVING_TREE)
+                           before=before, normalised=new, cats=transfer_tree())
     assert sent == []
     assert notify.fired_markers("2026-07-01", 14) == set()
 
