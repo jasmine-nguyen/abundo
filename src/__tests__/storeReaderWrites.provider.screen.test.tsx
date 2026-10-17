@@ -58,7 +58,7 @@ it('persistPayCycle writes [payCycle] optimistically AND invalidates payCycle/bu
   invalidate.mockRestore();
 });
 
-it('deleteCategory MIRRORS the cascade into the caches without invalidating (no resurrection)', async () => {
+it('deleteCategory mirrors the cascade into the caches, and reloads budgets (the server removes the budget too)', async () => {
   const result = await mount();
   // Seed the caches as a mounted screen would have (budgets in the real Record shape).
   queryClient.setQueryData<Category[]>(['categories'], [CAT, OTHER]);
@@ -71,12 +71,13 @@ it('deleteCategory MIRRORS the cascade into the caches without invalidating (no 
   // Dropped from every cache the migrated screens read — the deleted id's KEY is gone from
   // the budgets Record (not filtered as an array, which would throw and abort the cascade).
   expect(queryClient.getQueryData<Category[]>(['categories'])).toEqual([OTHER]);
-  expect(queryClient.getQueryData<Record<string, BudgetRollup>>(['budgets', 14])).toEqual({});
+  expect(queryClient.getQueryData<Record<string, BudgetRollup>>(['budgets', 14])).not.toHaveProperty('coffee');
   expect(readTransactionsCache(queryClient)[0].category).toBeNull();
-  // ...via setQueryData, NOT invalidate — a refetch would resurrect them (server does no cascade).
+  // ABU-85: the server deletes the category's budget and a parent budget's spend changes, so
+  // budgets are reloaded; categories and transactions stay patched by hand.
   const keys = invalidatedKeys(invalidate);
+  expect(keys).toContain('budgets');
   expect(keys).not.toContain('categories');
-  expect(keys).not.toContain('budgets');
   expect(keys).not.toContain('transactions');
   invalidate.mockRestore();
 });

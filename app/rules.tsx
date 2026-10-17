@@ -12,6 +12,7 @@ import { useDebouncedValue } from '../src/hooks/useDebouncedValue';
 import { Header } from '../src/components/Header';
 import { SearchField } from '../src/components/SearchField';
 import { RetryButton, HeaderIconButton } from '../src/components/ui';
+import { confirmDelete } from '../src/confirmDelete';
 
 // How long typing must settle before the filter recomputes. The text box stays instant;
 // only the (potentially large) grouping recompute waits, so fast typing never stutters.
@@ -126,7 +127,11 @@ export default function Rules() {
         <Glyph name="chevron" size={15} color={C.textFaint} />
       </Pressable>
       {item.isNew && <Text style={styles.newBadge}>NEW</Text>}
-      <Pressable testID={`delete-rule-${item.id}`} onPress={() => s.deleteRule(item.id)} style={styles.trash}>
+      <Pressable testID={`delete-rule-${item.id}`} onPress={() => confirmDelete(
+        'Delete this rule?',
+        "Transactions it filed will lose this category: your other rules may re-file them, or they'll be Uncategorized. This can't be undone.",
+        () => s.deleteRule(item.id),
+      )} style={styles.trash}>
         <Glyph name="trash" size={18} color={C.textFaint} />
       </Pressable>
     </View>

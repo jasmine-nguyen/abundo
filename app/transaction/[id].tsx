@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
@@ -12,6 +12,7 @@ import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
 import { SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { confirmDelete } from '../../src/confirmDelete';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by tapping a TransactionRow
@@ -91,13 +92,10 @@ export default function TransactionDetail() {
     }
   });
 
-  const onDelete = () => Alert.alert(
+  const onDelete = () => confirmDelete(
     'Delete this transaction?',
     "It will be removed from your list, budgets and insights. This can't be undone.",
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: onConfirmDelete },
-    ],
+    onConfirmDelete,
   );
 
   return (

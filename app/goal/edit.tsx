@@ -11,6 +11,7 @@ import { Header } from '../../src/components/Header';
 import { NativeDateField } from '../../src/components/NativeDateField';
 import { MoneyField } from '../../src/components/MoneyField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { confirmDelete } from '../../src/confirmDelete';
 import { toISODate } from '../../src/dateutil';
 import { parseAmount, numText } from '../../src/numutil';
 import { sortCheckpointsForDirection, checkpointsError, checkpointOutOfBoundsRows, CHECKPOINT_MAX_COUNT } from '../../src/checkpoints';
@@ -205,7 +206,7 @@ export default function GoalEdit() {
     }
   });
 
-  const onDelete = () => runAction(async () => {
+  const onConfirmDelete = () => runAction(async () => {
     if (!editing || saving) return;
     setSaving(true);
     try {
@@ -219,6 +220,11 @@ export default function GoalEdit() {
       throw error;
     }
   });
+  const onDelete = () => confirmDelete(
+    'Delete this goal?',
+    "The goal and its progress will be removed. Your accounts and transactions stay. This can't be undone.",
+    onConfirmDelete,
+  );
 
   const grow = direction === 'grow';
 

@@ -27,6 +27,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import CategoryEdit from '../../app/category/edit';
 import { COFFEE, COFFEE_RECORD } from './support/categories';
+import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -59,6 +60,15 @@ function resetMocks(params: { categoryId?: string }) {
 }
 
 const save = async () => { await act(async () => { fireEvent.press(screen.getByText('Save category')); }); };
+
+const alerts = spyOnAlert();
+/** Tap Delete category and answer Delete on the pop-up. */
+const deleteAndConfirm = async () => {
+  await act(async () => {
+    fireEvent.press(screen.getByText('Delete category'));
+    pressAlertButton(alerts, 'Delete');
+  });
+};
 
 /** Queue a brand-new inline sub-category (the create half of the child writes). */
 const addNewChild = (name: string) => {
@@ -291,7 +301,7 @@ describe('categoryEditDelete', () => {
   it('pressing Delete category sends one DELETE, says so, and navigates back', async () => {
     await drawEdit();
 
-    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+    await deleteAndConfirm();
 
     await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
@@ -305,13 +315,32 @@ describe('categoryEditDelete', () => {
     server.once('DELETE', '/categories/coffee', { status: 500 });
     await drawEdit();
 
-    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+    await deleteAndConfirm();
     await waitFor(() => expect(shownToasts()).toEqual(['Could not delete category. Please try again.']));
     expect(routerSpies.back).not.toHaveBeenCalled();
 
-    await act(async () => { fireEvent.press(screen.getByText('Delete category')); }); // only fires if re-enabled
+    await deleteAndConfirm(); // only fires if re-enabled
     await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(2);
+  });
+});
+
+describe('ABU-85: Delete category asks first', () => {
+  beforeEach(() => {
+    resetMocks({ categoryId: 'coffee' });
+    categories = [
+      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', parent: null },
+    ];
+  });
+
+  it('shows a Cancel / Delete pop-up, and Cancel sends no DELETE', async () => {
+    await drawEdit();
+    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+
+    expectConfirmDeletePopUp(alerts, 'Delete this category?');
+    await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
+    expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(0);
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
@@ -601,7 +630,7 @@ describe('categoryEditWriterEdges', () => {
     await drawEdit();
     const held = server.hold('/categories/coffee');
 
-    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+    await deleteAndConfirm();
     act(() => setAuthStatus('anon'));
     await act(async () => { settleDelete(held); });
 
@@ -617,25 +646,32 @@ describe('categoryEditWriterEdges', () => {
     categories = [LIVING('coffee', 'Coffee')];
     await drawEdit();
 
-    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+    await deleteAndConfirm();
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category is used by a budget.']));
     expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A4] / [A5] Two taps in one frame (before `submitting` can redraw) → exactly one request.
+  // Delete's guard sits behind the pop-up, so its double-tap is on the pop-up's Delete.
+  const tapSaveTwice = () => {
+    fireEvent.press(screen.getByText('Save category'));
+    fireEvent.press(screen.getByText('Save category'));
+  };
+  const confirmDeleteTwice = () => {
+    fireEvent.press(screen.getByText('Delete category'));
+    pressAlertButton(alerts, 'Delete');
+    pressAlertButton(alerts, 'Delete');
+  };
   it.each([
-    ['Save category', 'PATCH', 'transport', 'Category updated.'],
-    ['Delete category', 'DELETE', 'coffee', 'Category deleted.'],
-  ] as const)('two "%s" taps in one frame send one %s', async (button, method, id, toast) => {
+    ['Save category', 'PATCH', 'transport', 'Category updated.', tapSaveTwice],
+    ['Delete category', 'DELETE', 'coffee', 'Category deleted.', confirmDeleteTwice],
+  ] as const)('two "%s" taps in one frame send one %s', async (_button, method, id, toast, tapTwice) => {
     setParams({ categoryId: id });
     categories = [LIVING(id, id)];
     await drawEdit();
 
-    await act(async () => {
-      fireEvent.press(screen.getByText(button));
-      fireEvent.press(screen.getByText(button));
-    });
+    await act(async () => { tapTwice(); });
 
     await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent(method, `/categories/${id}`)).toHaveLength(1);

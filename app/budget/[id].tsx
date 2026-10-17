@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
@@ -11,6 +11,7 @@ import { TransactionRow } from '../../src/components/TransactionRow';
 import { LoadMoreButton } from '../../src/components/LoadMoreButton';
 import { BudgetBar, SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { confirmDelete } from '../../src/confirmDelete';
 
 // How many related-transaction rows to show before the "Load More" button.
 const BUDGET_TX_PAGE = 7;
@@ -46,13 +47,10 @@ export default function BudgetDetail() {
     }
   });
 
-  const onDelete = () => Alert.alert(
+  const onDelete = () => confirmDelete(
     'Delete this budget?',
     "Its spending limit will be removed. The category and its transactions stay. This can't be undone.",
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: onConfirmDelete },
-    ],
+    onConfirmDelete,
   );
 
   // WHIT-72: a first-load pay-cycle failure would render the detail's pace/projection

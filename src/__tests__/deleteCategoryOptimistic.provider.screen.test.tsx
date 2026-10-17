@@ -157,7 +157,7 @@ it('signing out mid-delete then succeeding returns false (no navigate-back), no 
 });
 
 // [A7]
-it('a successful delete refreshes every cycle of the charge lists but never the budgets or the feed', async () => {
+it('a successful delete refreshes every cycle of the charge lists and the budgets, but never the feed', async () => {
   seed();
   const { result } = renderHook(() => useAppContext(), { wrapper });
   const { request, pending } = await startDelete(result);
@@ -170,11 +170,11 @@ it('a successful delete refreshes every cycle of the charge lists but never the 
   for (const key of [BUDGET_KEY, OTHER_BUDGET_KEY, CATEGORY_KEY, PREV_CYCLE_CATEGORY_KEY, SEARCH_KEY, ['uncategorizedFeed']]) {
     expect([key, invalidated(key)]).toEqual([key, true]);
   }
-  expect(invalidated(BUDGETS_KEY)).toBe(false);
-  expect(invalidated(BUDGETS_KEY_28)).toBe(false);
+  expect(invalidated(BUDGETS_KEY)).toBe(true);
+  expect(invalidated(BUDGETS_KEY_28)).toBe(true);
   expect(invalidated(['transactions'])).toBe(false);
   expect(invalidated(['rules'])).toBe(false);
-  // The dropped rule and budget stay dropped after success.
+  // The dropped rule stays dropped after success, and the deleted category's budget is gone.
   expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([DELETE_GROCERIES_RULE]);
-  expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({});
+  expect(queryClient.getQueryData(BUDGETS_KEY_28)).not.toHaveProperty('dining');
 });
