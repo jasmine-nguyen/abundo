@@ -20,7 +20,8 @@ import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
-import { styleOf } from './support/layout';
+import { styleOf, sharedHost, expectStacked } from './support/layout';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { pinToday } from './support/clock';
@@ -35,6 +36,10 @@ const mockShowToast = jest.fn();
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ showToast: mockShowToast })));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
+
+let mockLarge = false;
+jest.mock('../hooks/useLargeText', () =>
+  require('./support/largeTextMock').largeTextMockModule(() => mockLarge));
 
 import Accounts from '../../app/(tabs)/accounts';
 
@@ -54,6 +59,7 @@ beforeEach(() => {
   resetRouter();
   mockShowToast.mockClear();
   resetAuth();
+  mockLarge = false;
   server.seed('/categories', [GROCERIES_RECORD]);
 });
 
@@ -287,4 +293,36 @@ it('shows the Updated + bank sync line, and each card is a button labelled with 
   const labels = screen.getAllByRole('button').map((b) => b.props.accessibilityLabel as string | undefined);
   expect(labels.find((label) => label?.startsWith('ANZ'))).toContain('$96,270.59');
   expect(labels.find((label) => label?.startsWith('Up Spending'))).toContain('balance not loaded yet');
+});
+
+// ABU-75 — at very large text an account row stacks (like Budgets and Insights) instead of
+// squeezing name and balance side by side, so long names and balances show in full.
+async function showOneAccount() {
+  seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'Altitude Qantas Black' }]);
+  server.seed('/accounts/balances', [bal({ account_id: 'a1', amount: 96270.59 })]);
+  await renderWithQueries(<Accounts />);
+  await waitFor(() => expect(screen.getByText('$96,270.59')).toBeTruthy());
+  return { name: screen.getByText('Altitude Qantas Black'), balance: screen.getByText('$96,270.59') };
+}
+
+it('ABU-75 — at very large text an account row stacks: the balance sits below the name, not squeezed beside it', async () => {
+  mockLarge = true;
+  const { name, balance } = await showOneAccount();
+
+  expectStacked(name, balance);
+  expect(name.props.numberOfLines).toBeUndefined();
+  // The sub-line ("Last spend yesterday") gets the full width too, not squeezed beside the chip.
+  const rowRoot = sharedHost(name, balance);
+  for (let host: ReactTestInstance | null = screen.getByText(/^Last spend/).parent; host && host !== rowRoot; host = host.parent) {
+    if (typeof host.type === 'string') expect(styleOf(host).flexDirection).not.toBe('row');
+  }
+});
+
+it('ABU-75 — at normal text an account row stays side by side, centred, with the name capped at 2 lines', async () => {
+  const { name, balance } = await showOneAccount();
+
+  const row = styleOf(sharedHost(name, balance));
+  expect(row.flexDirection).toBe('row');
+  expect(row.alignItems).toBe('center');
+  expect(name.props.numberOfLines).toBe(2);
 });

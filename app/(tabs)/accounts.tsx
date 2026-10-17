@@ -2,16 +2,17 @@ import { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
-import { Icon, Glyph } from '../../src/icons';
+import { Glyph } from '../../src/icons';
 import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData, useHomeLoanProgress } from '../../src/queries';
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
 import { orderAccounts, accountAccent, accountKind, accountSubtitle, balanceDisplay, ACCOUNT_KIND_ICON } from '../../src/accountDisplay';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
-import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
+import { LARGE_TEXT_MAX_SCALE, useLargeText } from '../../src/hooks/useLargeText';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
+import { StackingRowHeader } from '../../src/components/StackingRowHeader';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
 // tab: it derives one card per account_id from the same transactions query the Transactions
@@ -20,6 +21,7 @@ import { EmptyState } from '../../src/components/EmptyState';
 export default function Accounts() {
   const router = useRouter();
   const { showToast } = useAppContext();
+  const large = useLargeText();
   // Same data source as the old segment — the all-accounts cursor feed — so behaviour and the
   // cold-load/error states are identical to before the move.
   const { transactions, balances, isLoading, isError, error, refreshError, updatedAt, bankSynced, refetch, refetchStale, refetchList, refreshLiveBalances } = useTransactionsScreenData();
@@ -89,19 +91,22 @@ export default function Accounts() {
                 onPress={() => router.push(`/account/${a.id}`)}
                 style={({ pressed }) => [styles.acct, pressed && PRESSED]}
               >
-                <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name={ACCOUNT_KIND_ICON[accountKind(bal)]} size={22} color={color} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.acctName} numberOfLines={2} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{a.name}</Text>
-                  <Text style={styles.acctSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{subtitle}</Text>
-                </View>
-                {display ? (
-                  <View style={styles.acctBalCol}>
-                    <Text style={[styles.acctBal, { color: display.color }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{display.text}</Text>
-                    {display.owed && <Text style={styles.acctOwed} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>owed</Text>}
-                  </View>
-                ) : (
-                  <Text style={styles.acctBalPending} accessibilityLabel="Balance not loaded yet" maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>—</Text>
-                )}
+                <StackingRowHeader
+                  icon={ACCOUNT_KIND_ICON[accountKind(bal)]}
+                  color={color}
+                  chipBg={tint(color, 0.15)}
+                  centered
+                  name={<Text style={styles.acctName} numberOfLines={large ? undefined : 2} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{a.name}</Text>}
+                  sub={<Text style={styles.acctSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{subtitle}</Text>}
+                  right={display ? (
+                    <>
+                      <Text style={[styles.acctBal, { color: display.color }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{display.text}</Text>
+                      {display.owed && <Text style={styles.acctOwed} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>owed</Text>}
+                    </>
+                  ) : (
+                    <Text style={styles.acctBalPending} accessibilityLabel="Balance not loaded yet" maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>—</Text>
+                  )}
+                />
               </Pressable>
             );
           })}
@@ -112,12 +117,9 @@ export default function Accounts() {
 }
 
 const styles = StyleSheet.create({
-  acct: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
-  acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  acct: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
-  // Capped so a big balance shrinks instead of squeezing the name (large text).
-  acctBalCol: { alignItems: 'flex-end', maxWidth: '45%' },
   acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   acctOwed: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, marginTop: 1 },
   acctBalPending: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', color: C.textFaint },
