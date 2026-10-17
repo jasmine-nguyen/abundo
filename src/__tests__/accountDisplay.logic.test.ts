@@ -75,9 +75,8 @@ it('ACCOUNT_ACCENTS: no green, cyan or rose — those are the money colours', ()
   expect(ACCOUNT_ACCENTS.filter((hex) => inMoneyHue(hueDegrees(hex)))).toEqual([]);
 });
 
-it('accountAccent: each account gets a fixed colour from the list', () => {
-  for (const id of ['a1', 'acc-up-spending', 'visa-9912', '']) {
-    expect(ACCOUNT_ACCENTS).toContain(accountAccent(id));
-    expect(accountAccent(id)).toBe(accountAccent(id));
-  }
+it('accountAccent: each account keeps its slot in the colour list', () => {
+  expect(accountAccent('a1')).toBe(C.accent);
+  expect(accountAccent('visa-9912')).toBe(C.accountMagenta);
+  expect(accountAccent('acc-up-spending')).toBe(C.warn);
 });
