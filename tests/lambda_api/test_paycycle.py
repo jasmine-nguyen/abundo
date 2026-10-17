@@ -69,16 +69,6 @@ def test_set_paycycle_last_pay_date_of_melbourne_tomorrow_400(handler, melbourne
     assert table.update_calls == []
 
 
-def test_set_paycycle_future_last_pay_date_400(handler, melbourne_today):
-    table, repo = paycycle_repo()
-    body = json.dumps({"length": 14, "last_pay_date": (melbourne_today + timedelta(days=5)).isoformat()})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 400
-    assert table.update_calls == []  # validation stops it before any write
-
-
 @pytest.mark.parametrize("cycle", [
     {"length": 10, "last_pay_date": "2024-06-05"},
     {"length": True, "last_pay_date": "2024-06-05"},     # bool is an int subclass
