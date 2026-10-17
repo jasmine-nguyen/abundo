@@ -6,7 +6,8 @@ After the cause is fixed (the map updated, a bug shipped), this sweep re-drives
 each failed row through the normal normalise + insert path and deletes it ONLY
 after a successful insert. Rows that still can't process are left in place for a
 later run. Safe to run repeatedly — insert_or_reconcile same-id-resyncs an
-already-stored row, so recovery neither duplicates nor clobbers a user category.
+already-stored row, so recovery neither duplicates nor clobbers a user category, and a
+charge the user deleted stays deleted.
 
 Trigger: invoke the reprocess Lambda manually (AWS console Test button, or
 `aws lambda invoke`). It ignores the event payload.
@@ -16,6 +17,7 @@ import json
 import logging
 
 from banksync import normalise
+from ingest_skip import skip_reason
 from webhook_repository import TransactionRepository
 import rule_ingest
 from repository_rule import RuleRepository
@@ -27,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
     """Re-drive every dead-lettered row and return a summary of what happened:
-    ``{"reprocessed": n, "skipped": n, "errors": n, "dropped_zero": n}``. A $0.00 row is never
-    stored (WHIT-705): its dead-letter is cleared and counted under ``dropped_zero``.
+    ``{"reprocessed": n, "skipped": n, "errors": n, "dropped_zero": n, "dropped_deleted": n}``.
+    A $0.00 row (WHIT-705) or a charge the user deleted (WHIT-654) is never stored: its
+    dead-letter is cleared and counted under ``dropped_zero`` / ``dropped_deleted``.
 
     Never raises for a single bad row — a poison row is skipped (left in place) so
     it can't halt recovery for the rows behind it. A row is deleted ONLY after its
@@ -38,7 +41,7 @@ def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
     delivery. The rules + taxonomy are read ONCE for the whole sweep, not per row.
     """
     rows = repo.get_failed_transactions()
-    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0}
+    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
 
     book = rule_ingest.load_rules(rule_repo, category_repo)
     is_unfiled = None
@@ -66,15 +69,17 @@ def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
             summary["skipped"] += 1
             continue
 
-        # A $0.00 row is never stored (WHIT-705): clear its dead-letter instead of inserting it.
-        # A DB error leaves the row in place to retry next run.
-        if txn["amount"] == 0:
-            try:
+        # A $0.00 row or a charge the user deleted is never stored (WHIT-705, WHIT-654): clear its
+        # dead-letter instead of inserting it. A DB error leaves the row in place to retry next run.
+        try:
+            reason = skip_reason(repo, txn)
+            if reason is not None:
                 repo.delete_failed_transaction(row["sk"])
-                summary["dropped_zero"] += 1
-            except Exception:
-                logger.exception("FAILED $0.00 row %s could not be cleared; leaving in place", row.get("sk"))
-                summary["errors"] += 1
+                summary[f"dropped_{reason}"] += 1
+                continue
+        except Exception:
+            logger.exception("FAILED row %s could not be checked or cleared; leaving in place", row.get("sk"))
+            summary["errors"] += 1
             continue
 
         # File it by the user's rules before inserting, unless they couldn't be read (WHIT-530).

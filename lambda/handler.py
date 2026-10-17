@@ -8,6 +8,7 @@ from models import Transaction
 from webhook_repository import TransactionRepository
 from api_key import get_api_key
 from event_body import raw_body
+from ingest_skip import drop_skipped
 from standardwebhooks.webhooks import Webhook
 
 import budget_alerts
@@ -41,14 +42,6 @@ def verify_and_parse(event) -> dict:
 
     normalized_headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
     return wh.verify(body_text, normalized_headers)
-
-
-def _drop(rows: list, keep, why: str) -> list:
-    """The rows `keep` accepts, logging how many were dropped and why."""
-    kept = [row for row in rows if keep(row)]
-    if len(kept) < len(rows):
-        logger.info("skipped %d %s", len(rows) - len(kept), why)
-    return kept
 
 
 def lambda_handler(event, context) -> dict:
@@ -125,19 +118,8 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # Taken before the deleted/$0 drops: those rows still prove the bank delivered (WHIT-858).
     synced_account_ids = {transaction["account_id"] for transaction in normalised_transactions}
 
-    # A charge the user deleted must not come back through a BankSync re-send (WHIT-654): drop it
-    # before rules, alerts or the write ever see it.
-    normalised_transactions = _drop(
-        normalised_transactions,
-        lambda transaction: not repo.is_deleted(transaction["account_id"], transaction["transaction_id"]),
-        "re-sent transaction(s) the user deleted",
-    )
-
-    # A $0.00 row is information only (WHIT-705): e.g. Westpac's "FOREIGN FEE" rows, whose real fee
-    # is already folded into the purchase. Drop it before rules, alerts or the write see it.
-    normalised_transactions = _drop(
-        normalised_transactions, lambda transaction: transaction["amount"] != 0, "$0.00 transaction(s)",
-    )
+    # Drop $0 rows and charges the user deleted before rules, alerts or the write ever see them.
+    normalised_transactions = drop_skipped(repo, normalised_transactions)
 
     # Apply the user's rules as each charge lands (WHIT-530): BankSync no longer labels charges
     # for us, so our server files each unfiled one by our own rules here, BEFORE the budget
