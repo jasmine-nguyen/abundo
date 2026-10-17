@@ -82,6 +82,22 @@ it('Save resends the FULL manual record with the new balance + as-of today, then
   await waitFor(() => expect(fns.setSheet).toHaveBeenCalledWith(null));
 });
 
+// ABU-86: two taps in one frame used to save the balance twice.
+it('a double-tap on Save while the save is in flight saves once', async () => {
+  let resolveSave: (v: boolean) => void = () => {};
+  fns.saveGoal.mockImplementation(() => new Promise<boolean>((res) => { resolveSave = res; }));
+  await openSheet();
+  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('goal-balance-save'));
+    fireEvent.press(screen.getByTestId('goal-balance-save'));   // same frame, save still pending
+  });
+  expect(fns.saveGoal).toHaveBeenCalledTimes(1);
+  await act(async () => { resolveSave(true); });
+  expect(fns.setSheet).toHaveBeenCalledTimes(1);
+});
+
 it('a $0 balance is valid (a paid-off manual debt)', async () => {
   await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '0');

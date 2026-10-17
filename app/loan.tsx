@@ -10,6 +10,7 @@ import { DetailStates } from '../src/components/DetailStates';
 import { NativeDateField } from '../src/components/NativeDateField';
 import { MoneyField } from '../src/components/MoneyField';
 import { parseAmount, numText } from '../src/numutil';
+import { useInFlightGuard } from '../src/hooks/useInFlightGuard';
 import { LOANFACTS_FIELD_MAX } from '../src/loanLimits';
 import type { LoanFacts, LoanFactsInput } from '../src/api';
 
@@ -52,7 +53,7 @@ function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment
   // Seed each input from the saved facts (empty when unset).
   const [original, setOriginal] = useState(numText(f.original));
   const [homeValue, setHomeValue] = useState(numText(f.homeValue));
-  const [lvr, setLvr] = useState(f.lvr == null ? '' : String(f.lvr * 100));
+  const [lvr, setLvr] = useState(f.lvr == null ? '' : String(Math.round(f.lvr * 10000) / 100));
   const [ratePct, setRatePct] = useState(numText(f.ratePct));
   const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay ?? lastRepayment));
   const prefilledRepay = f.baseRepay == null && lastRepayment != null;
@@ -60,6 +61,7 @@ function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment
   const [payoffGoalDate, setPayoffGoalDate] = useState<string | null>(f.payoffGoalDate ?? null);
   const [depositTarget, setDepositTarget] = useState(numText(f.depositTarget));
   const [saving, setSaving] = useState(false);
+  const runSave = useInFlightGuard();
 
   // The payoff date can't be in the past; midnight so the seed has no time-of-day.
   const payoffMinDate = new Date();
@@ -156,7 +158,7 @@ function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment
 
       <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 100000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
 
-      <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
+      <Pressable onPress={() => runSave(onSave)}disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
         <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
       </Pressable>
     </ScrollView>

@@ -867,6 +867,7 @@ function GoalBalanceSheet() {
   });
   const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => setAsOf(iso));
   const [saving, setSaving] = useState(false);
+  const runSave = useInFlightGuard();
 
   // The goal can be gone (deleted elsewhere) or not yet cached — close cleanly rather than
   // crash, like PickerSheet/ConfirmSheet do for a missing transaction.
@@ -942,7 +943,7 @@ function GoalBalanceSheet() {
         />
       )}
 
-      <Pressable testID="goal-balance-save" onPress={onSave} disabled={saving} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }, saving && { opacity: 0.6 }]}>
+      <Pressable testID="goal-balance-save" onPress={() => runSave(onSave)} disabled={saving} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }, saving && { opacity: 0.6 }]}>
         <Text style={styles.btnPrimaryText}>{saving ? 'Saving…' : 'Save balance'}</Text>
       </Pressable>
     </View>

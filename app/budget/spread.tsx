@@ -9,15 +9,7 @@ import type { Category } from '../../src/types';
 import { useBudgetsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
-
-// Keep only digits and a SINGLE decimal point, so what's shown always matches what parseFloat
-// saves (a stray second dot in "5.5.5" would otherwise display but save 5.5).
-function cleanAmount(text: string): string {
-  const digitsAndDots = text.replace(/[^0-9.]/g, '');
-  const firstDot = digitsAndDots.indexOf('.');
-  if (firstDot === -1) return digitsAndDots;
-  return digitsAndDots.slice(0, firstDot + 1) + digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
-}
+import { cleanAmount } from '../../src/numutil';
 
 // Spread a one-off bill over the coming pay cycles (WHIT-505). Reached from the budget detail
 // screen: "Spread this bill" (over budget, no plan — prefilled with the overspend) or

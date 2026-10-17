@@ -16,3 +16,12 @@ export function parseAmount(text: string): number {
 export function numText(n: number | null | undefined): string {
   return n == null ? '' : String(n);
 }
+
+// Keep only digits and a SINGLE decimal point, so what's shown always matches what parseFloat
+// saves (a stray second dot in "5.5.5" would otherwise display but save 5.5).
+export function cleanAmount(text: string): string {
+  const digitsAndDots = text.replace(/[^0-9.]/g, '');
+  const firstDot = digitsAndDots.indexOf('.');
+  if (firstDot === -1) return digitsAndDots;
+  return digitsAndDots.slice(0, firstDot + 1) + digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
+}

@@ -101,6 +101,21 @@ it('adds a tag on a trailing comma', async () => {
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: ['work', 'travel'] });
 });
 
+// ABU-86: pasting "work,travel," used to make ONE tag "work,travel". Each comma-separated part is
+// its own tag, saved in one write; the part after the last comma stays in the box.
+it.each([
+  { case: 'a pasted list with a trailing comma adds each tag', seed: [], typed: 'work,travel,', tags: ['work', 'travel'], left: '' },
+  { case: 'the part after the last comma stays in the box', seed: [], typed: 'a,b', tags: ['a'], left: 'b' },
+  { case: 'a pasted duplicate is skipped', seed: ['work'], typed: 'travel,work,', tags: ['work', 'travel'], left: '' },
+])('pasted tags: $case', async ({ seed, typed, tags, left }) => {
+  seedRow({ tags: seed });
+  await draw();
+  fireEvent.changeText(screen.getByTestId('tag-input'), typed);
+  expect(mockEdit).toHaveBeenCalledTimes(1);
+  expect(mockEdit).toHaveBeenCalledWith('t1', { tags });
+  expect(screen.getByTestId('tag-input').props.value).toBe(left);
+});
+
 it('ignores a duplicate tag (case-insensitive)', async () => {
   await draw();
   const input = screen.getByTestId('tag-input');
