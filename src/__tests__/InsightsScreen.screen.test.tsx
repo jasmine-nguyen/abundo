@@ -119,6 +119,18 @@ it('caps the first-run AI card text at the shared large-text limit', async () =>
   }
 });
 
+// [A1] The failed-run texts are capped too, both with and without earlier advice on screen.
+it.each([
+  ['a failed re-run', { summary: 'keep me', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false }, [/Couldn’t refresh/]],
+  ['a failed first run', null, [/Couldn’t generate insights/]],
+])('caps the AI card error text at the shared large-text limit after %s', async (_, insights, texts) => {
+  setAi({ insights, isError: true });
+  await renderInsights();
+  for (const text of texts) {
+    expect(screen.getByText(text).props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+  }
+});
+
 it('renders a row per spent category with the pending portion visible', async () => {
   seedBreakdown({ spend: TWO_ROWS });
   await renderInsights();
