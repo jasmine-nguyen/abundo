@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _category_fakes import CARD_PAYMENT
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
 
@@ -136,8 +137,7 @@ def test_a_row_in_a_transfer_category_is_marked_as_not_counting(handler, monkeyp
         _txn("repayment", "2026-07-10", -900, category="card-payment"),
         _txn("rent", "2026-07-10", -500, category="rent"),
     ])
-    categories = [{"id": "card-payment", "bucket": "Living", "transfer": True},
-                  {"id": "rent", "bucket": "Living"}]
+    categories = [CARD_PAYMENT, {"id": "rent", "bucket": "Living"}]
 
     rows = json.loads(_call(handler, monkeypatch, _event(), repo, categories)["body"])["transactions"]
 

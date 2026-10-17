@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
+from _category_fakes import CARD_PAYMENT
 from _budget_endpoint_fakes import _FakeBudgetRepo, _FakeCategoryRepo, _FakePayCycleRepo
 from _job_fakes import FakeChatJobRepo
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
@@ -460,8 +461,7 @@ def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_ch
 def test_load_chat_data_leaves_out_a_transfer_category(ai_chat, monkeypatch):
     # ABU-83: every chat tool reads data.transactions, so a card repayment filed in a
     # "Transfer, not spending" category never reaches an Ask Abundo total.
-    categories = [*CATEGORIES, {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living",
-                                "parent": None, "transfer": True}]
+    categories = [*CATEGORIES, CARD_PAYMENT]
     rows = [_groceries_row("food", "-25", "2026-09-15"),
             {**_groceries_row("repayment", "-900", "2026-09-15"), "category": "card-payment"}]
 

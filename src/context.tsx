@@ -19,7 +19,7 @@ import type { BankSyncedAccount } from './queries';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
 import { paydaysPerYear, elapsedFrac } from './payCycle';
 import { contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
-import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
+import { aiInsightsKey, breakdownKey, budgetsKey, budgetTransactionsKey, categoriesKey, categoryTransactionsKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
 import { runOptimisticSave, type SaveSteps } from './optimisticSave';
@@ -1335,13 +1335,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return runSave({
         send: () => updateCategory(editId, input),
         onSaved: (updated) => {
-          const previousName = cachedCategory(editId)?.name;
+          const previous = cachedCategory(editId);
+          const previousName = previous?.name;
+          const previousTransfer = previous?.transfer === true;
           queryClient.setQueryData<Category[]>(categoriesKey, (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
           // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
           // pickers; the invalidate then reconciles with the server.
           queryClient.invalidateQueries({ queryKey: categoriesKey });
           // WHIT-576: a rename changes the category text a search matches on.
           if (updated.name !== previousName) queryClient.invalidateQueries({ queryKey: transactionsSearchKey });
+          // ABU-83: "Transfer, not spending" moves the server's spend totals, so refetch them.
+          if (toCategory(updated).transfer !== previousTransfer) {
+            for (const queryKey of [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, aiInsightsKey]) queryClient.invalidateQueries({ queryKey });
+          }
           if (!opts?.silent) showToast('Category updated.');
           return true;
         },

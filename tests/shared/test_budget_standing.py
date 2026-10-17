@@ -13,6 +13,8 @@ from decimal import Decimal as D
 
 import pytest
 
+from _category_fakes import transfer_tree
+
 
 @pytest.fixture
 def budget_standing(shared):
@@ -259,11 +261,7 @@ def test_window_widens_only_for_rollover_and_stops_at_the_12_cycle_cap(budget_st
 def test_a_transfer_sub_category_does_not_count_toward_its_budgeted_parent(budget_standing):
     # ABU-83: a card repayment filed in a "Transfer, not spending" sub-category counts
     # (counts_to_budget=True after filing) but isn't spending. Rent paid by transfer still counts.
-    cats = [
-        {"id": "living", "bucket": "Living", "parent": None},
-        {"id": "card-payment", "bucket": "Living", "parent": "living", "transfer": True},
-        {"id": "rent", "bucket": "Living", "parent": "living"},
-    ]
+    cats = transfer_tree()
     targets = {"living": {"target": D("2000")}, "rent": {"target": D("500")}}
     charges = [charge("card-payment", "2026-09-18", "-900"), charge("rent", "2026-09-18", "-500")]
 

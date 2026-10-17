@@ -19,6 +19,7 @@ import pytest
 from _anthropic_fakes import capture_urlopen, messages_payload, text_payload
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _category_fakes import CARD_PAYMENT
 from _insight_fakes import insight_puts, insight_repo
 from _transaction_range_fakes import _WindowKeyedTransactionRepo
 
@@ -394,7 +395,7 @@ def test_assemble_insight_input_leaves_out_a_transfer_category(handler):
     prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
     categories = _FakeCategoryRepo([
         {"id": "groceries", "name": "Groceries", "bucket": "Living"},
-        {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living", "transfer": True},
+        CARD_PAYMENT,
     ])
     txn_repo = _WindowKeyedTransactionRepo({
         (start, end): [_txn("groceries", -100), _txn("card-payment", -900)],

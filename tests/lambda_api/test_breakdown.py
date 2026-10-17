@@ -14,6 +14,7 @@ import pytest
 
 from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _category_fakes import CARD_PAYMENT
 from _transaction_range_fakes import _DateFilteringTransactionRepo, _QueuedTransactionRepo
 
 
@@ -913,7 +914,7 @@ def test_breakdown_leaves_out_a_repayment_filed_in_a_transfer_category(handler, 
     # "Transfer, not spending", so the card repayment isn't spending. Rent paid by transfer
     # and filed under Rent still counts.
     cats = _FakeCategoryRepo([
-        {**_category("card-payment", "Living", "Credit Card Payment"), "transfer": True},
+        CARD_PAYMENT,
         _category("rent", "Living"),
     ])
     txns = _QueuedTransactionRepo([

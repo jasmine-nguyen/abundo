@@ -864,6 +864,36 @@ def test_rollover_overspend_last_cycle_lowers_the_alert_basis(alerts, monkeypatc
     assert "80%" in sent[0][1]
 
 
+# --- ABU-83: a "Transfer, not spending" category never counts toward an alert ----------------
+
+_LIVING_TREE = [
+    {"id": "living", "name": "Living", "bucket": "Living", "parent": None},
+    {"id": "card-payment", "name": "Credit Card Payment", "bucket": "Living", "parent": "living",
+     "transfer": True},
+    {"id": "rent", "name": "Rent", "bucket": "Living", "parent": "living"},
+]
+
+
+@pytest.mark.parametrize("budget, before", [
+    # A $900 repayment lands this cycle: counted, Living reads $1400 of $1000 → "Budget hit".
+    pytest.param({}, [_txn("rent", "rent", -500, "posted")], id="this-cycle-repayment"),
+    # Last cycle's $900 repayment would shrink the sealed leftover to $100 (basis $1100), so
+    # this cycle's $910 would cross 80%. Left out, the leftover is $1000 (basis $2000) → silent.
+    pytest.param(_ROLLOVER, [_txn("prior", "card-payment", -900, "posted", date="2026-06-20"),
+                             _txn("rent", "rent", -900, "posted", date="2026-07-05")],
+                 id="last-cycle-repayment-in-rollover"),
+])
+def test_a_repayment_in_a_transfer_sub_never_pushes_its_parent(alerts, monkeypatch, budget, before):
+    # [A1] Rule-filed repayments arrive with counts_to_budget=True (WHIT-545).
+    new = ([_txn("repay", "card-payment", -900, "posted")] if not budget
+           else [_txn("new1", "rent", -10, "posted")])
+    sent, notify, _ = _run(alerts, monkeypatch,
+                           budgets={"living": {"target": Decimal("1000"), **budget}},
+                           before=before, normalised=new, cats=_LIVING_TREE)
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
 # --- WHIT-545: the crossing preview mirrors the write's settlement carry gate ----------------
 
 def _bal_bank_row(txn_id, amount, *, pending, category, date="2026-07-10"):

@@ -22,6 +22,7 @@ from _budget_endpoint_fakes import (
     _event,
     _txn,
 )
+from _category_fakes import transfer_tree
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 
 
@@ -370,11 +371,7 @@ def test_a_transfer_sub_category_is_left_out_of_the_list_and_the_header(handler,
     # but isn't spending, so neither the list nor the header counts it.
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
-    categories = [
-        {"id": "living", "bucket": "Living", "parent": None},
-        {"id": "card-payment", "bucket": "Living", "parent": "living", "transfer": True},
-        {"id": "rent", "bucket": "Living", "parent": "living"},
-    ]
+    categories = transfer_tree()
     transactions = [
         _txn("repayment", "card-payment", -900, "2026-07-10"),
         _txn("rent", "rent", -500, "2026-07-10"),

@@ -16,6 +16,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 import { installFakeServer, type LoggedRequest } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { DELETE_GROCERIES } from './support/deleteCategorySeed';
+import { invalidatedKeys } from './support/queryClient';
 import { colesTxn } from './factory';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
@@ -481,6 +482,20 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
     { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
     { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
   ]);
+});
+
+it('[A2] saveCategory that flips "Transfer, not spending" refreshes Budgets and Insights (ABU-83)', async () => {
+  // The flag changes the server's totals, so the cached budgets, breakdown and budget-detail
+  // lists must refetch — else Insights keeps showing the repayment as spending.
+  server.once('PATCH', '/categories/groceries', { body: { ...DELETE_GROCERIES, transfer: true } });
+  seed();
+  const result = mount();
+  const spy = jest.spyOn(queryClient, 'invalidateQueries');
+
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', transfer: true }); });
+
+  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions']));
+  spy.mockRestore();
 });
 
 it('saveCategory returns false + toasts on failure', async () => {
