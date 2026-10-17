@@ -58,7 +58,8 @@ class BudgetRepository(RepositoryBase):
         item = self._read_seeded()
         return dict(item["items"])
 
-    def _merge_entry(self, cat_id: str, fields: dict, drop: tuple = ()) -> dict:
+    def _merge_entry(self, cat_id: str, fields: dict, drop: tuple = (),
+                     expected: Optional[dict] = None) -> Optional[dict]:
         """Read-modify-write ONE category entry: merge `fields` over the existing entry
         (or an empty one), minus any keys in `drop`, and write the whole entry back under
         the optimistic-lock guard.
@@ -71,8 +72,14 @@ class BudgetRepository(RepositoryBase):
         applied on EVERY attempt, so a retry after a version race re-strips whatever the
         competing writer merged in. Retries once on a version race; raises
         VersionConflictError if it can't converge.
+
+        Skipped (returns None) when `expected` is given and the saved entry no longer equals
+        it, so a read-path settle never overwrites an edit made after the read. Re-checked on
+        every attempt.
         """
         def build(item):
+            if expected is not None and item["items"].get(cat_id) != expected:
+                return None
             existing = {k: v for k, v in item["items"].get(cat_id, {}).items() if k not in drop}
             entry = {**existing, **fields}
             # SET the whole entry for ONE map key — never rewrites the other keys.
@@ -112,7 +119,8 @@ class BudgetRepository(RepositoryBase):
 
     def settle_carryover(self, cat_id: str, carryover: Decimal, carryover_from: str,
                          carryover_len: int, carryover_paydate: str,
-                         carryover_history: Optional[list] = None) -> dict:
+                         carryover_history: Optional[list] = None, *,
+                         expected: Optional[dict] = None) -> Optional[dict]:
         """Persist a rollover category's sealed carryover balance + anchor (the write-on-read
         step of the /budgets settlement). Preserves `target`/`rollover` via _merge_entry.
 
@@ -123,6 +131,8 @@ class BudgetRepository(RepositoryBase):
         Called best-effort from the read path: the caller swallows a VersionConflictError so
         a settle that loses the race never fails the GET — the balance simply re-seals on the
         next read (the displayed number is always recomputed live, not read from the store).
+        Skipped (returns None) when `expected` is given and the saved entry no longer equals
+        it, so a read-path settle never overwrites an edit made after the read.
         """
         fields = {
             "carryover": carryover,
@@ -132,7 +142,7 @@ class BudgetRepository(RepositoryBase):
         }
         if carryover_history is not None:
             fields["carryover_history"] = carryover_history
-        return self._merge_entry(cat_id, fields)
+        return self._merge_entry(cat_id, fields, expected=expected)
 
     def delete_budget(self, cat_id: str) -> None:
         """Remove a category's budget target, if any — the cascade run when a
@@ -153,7 +163,8 @@ class BudgetRepository(RepositoryBase):
         self._versioned_update(build, action="delete budget", seed=False)
 
     def set_spread(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
-                   spread_len: int, spread_paydate: str) -> dict:
+                   spread_len: int, spread_paydate: str, *,
+                   expected: Optional[dict] = None) -> Optional[dict]:
         """Record (upsert) a bill spread on a category's budget entry (WHIT-504): cover
         `amount` this cycle and take it back in equal slices over the next `cycles` cycles.
         The anchor is the current cycle start plus the pay cycle it was captured under, so a
@@ -164,11 +175,14 @@ class BudgetRepository(RepositoryBase):
         check-then-act, so this write strips any rollover fields in the SAME write: a
         category has rollover OR a spread, never both, even after a lost race (last writer
         wins; the mirror strip lives in set_budget). Raises VersionConflictError if it
-        can't converge.
+        can't converge. Skipped (returns None) when `expected` is given and the saved entry no
+        longer equals it, so a read-path settle never overwrites an edit made after the read.
         """
         entry = self._merge_entry(
             cat_id, _spread_fields(amount, cycles, spread_from, spread_len, spread_paydate),
-            drop=_ROLLOVER_FIELDS)
+            drop=_ROLLOVER_FIELDS, expected=expected)
+        if entry is None:
+            return None
         return {"id": cat_id, "amount": entry["spread_amount"], "cycles": cycles}
 
     def set_spread_if_absent(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
@@ -212,27 +226,32 @@ class BudgetRepository(RepositoryBase):
         """
         self._strip_fields(cat_id, _ROLLOVER_FIELDS, "clear rollover")
 
-    def clear_spread(self, cat_id: str) -> None:
+    def clear_spread(self, cat_id: str, *, expected: Optional[dict] = None) -> None:
         """Strip the bill-spread fields (see SPREAD_ENTRY_FIELDS) from a category's budget entry,
         KEEPING its `target` and rollover fields — run when the user removes the spread, when
         a plan has run its course or been settled after a pay-cycle change (best-effort from
-        the read path), and on a reclassify out of spend. No-op/lock semantics per _strip_fields.
+        the read path), and on a reclassify out of spend. No-op/lock/`expected` semantics per
+        _strip_fields.
         """
-        self._strip_fields(cat_id, SPREAD_ENTRY_FIELDS, "clear spread")
+        self._strip_fields(cat_id, SPREAD_ENTRY_FIELDS, "clear spread", expected=expected)
 
-    def _strip_fields(self, cat_id: str, fields: tuple, operation: str) -> None:
+    def _strip_fields(self, cat_id: str, fields: tuple, operation: str,
+                      expected: Optional[dict] = None) -> None:
         """Remove `fields` from ONE category's budget entry, keeping everything else.
 
         Idempotent no-op (no seed, no version bump) when the category has no budget entry or
         the entry carries none of `fields` — the common case, so a plain edit of an
         Income/Savings category is cheap. Writes the whole stripped entry back under the same
         optimistic-lock guard as set_budget, retrying once on a race. `operation` names the
-        caller in the error it raises.
+        caller in the error it raises. Skipped when `expected` is given and the saved entry no
+        longer equals it, so a read-path settle never overwrites an edit made after the read.
         """
         def build(item):
             if item is None or cat_id not in item["items"]:
                 return None  # no budget for this id -> nothing to clear
             entry = item["items"][cat_id]
+            if expected is not None and entry != expected:
+                return None
             stripped = {k: v for k, v in entry.items() if k not in fields}
             if stripped == entry:
                 return None  # none of the fields present -> no-op, don't bump the version

@@ -46,18 +46,19 @@ def recording_budget_repo(budgets=None):
         return real_set(cat_id, target, rollover=rollover, anchor=anchor)
 
     def settle_carryover(cat_id, carryover, carryover_from, carryover_len, carryover_paydate,
-                         carryover_history=None):
+                         carryover_history=None, expected=None):
         repo.settle_calls.append((cat_id, carryover, carryover_from, carryover_len, carryover_paydate))
         return real_settle(cat_id, carryover, carryover_from, carryover_len, carryover_paydate,
-                           carryover_history=carryover_history)
+                           carryover_history=carryover_history, expected=expected)
 
-    def set_spread(cat_id, amount, cycles, spread_from, spread_len, spread_paydate):
+    def set_spread(cat_id, amount, cycles, spread_from, spread_len, spread_paydate, expected=None):
         repo.set_spread_calls.append((cat_id, amount, cycles, spread_from, spread_len, spread_paydate))
-        return real_set_spread(cat_id, amount, cycles, spread_from, spread_len, spread_paydate)
+        return real_set_spread(cat_id, amount, cycles, spread_from, spread_len, spread_paydate,
+                               expected=expected)
 
-    def clear_spread(cat_id):
+    def clear_spread(cat_id, expected=None):
         repo.clear_spread_calls.append(cat_id)
-        return real_clear_spread(cat_id)
+        return real_clear_spread(cat_id, expected=expected)
 
     def delete_budget(cat_id):
         repo.delete_calls.append(cat_id)

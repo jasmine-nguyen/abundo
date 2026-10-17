@@ -2040,38 +2040,47 @@ def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     return {**cycle, "days_left": (next_payday - date.fromisoformat(today)).days}
 
 
-def _persist_spread_settlements(budget_repo: BudgetRepository, finished: list, reanchored: dict) -> None:
+def _persist_spread_settlements(budget_repo: BudgetRepository, targets: dict, finished: list,
+                                reanchored: dict) -> None:
     """Write each spread's read-side outcome back — clear the finished ones, re-save the
     settled ones — BEST-EFFORT, same posture as the rollover settle: the row is recomputed
     live on every read (a finished plan contributes 0, a settle re-derives the same plan), so
     a lost race or DB blip must never 500 the GET; it just lands on the next read. Each write
-    is its own attempt so one failing can't skip the rest."""
+    is its own attempt so one failing can't skip the rest.
+
+    Each write is skipped if the budget changed since the read (`expected=targets[cat_id]`),
+    so a spread edit made during the GET is never overwritten; it lands on the next read. If
+    the same category also got a rollover settle in this read (legacy rollover+spread
+    co-state), that write already changed the entry, so the spread write is skipped too and
+    lands on a later read."""
     for cat_id in finished:
         try:
-            budget_repo.clear_spread(cat_id)
+            budget_repo.clear_spread(cat_id, expected=targets[cat_id])
         except Exception as e:
             logger.warning("spread clear failed for %s (recomputes next read): %s", cat_id, e)
     for cat_id, plan in reanchored.items():
         try:
             budget_repo.set_spread(
                 cat_id, plan["spread_amount"], int(plan["spread_cycles"]), plan["spread_from"],
-                int(plan["spread_len"]), plan["spread_paydate"],
+                int(plan["spread_len"]), plan["spread_paydate"], expected=targets[cat_id],
             )
         except Exception as e:
             logger.warning("spread settle failed for %s (recomputes next read): %s", cat_id, e)
 
 
-def _persist_rollover_settlements(budget_repo: BudgetRepository, settlements: dict,
+def _persist_rollover_settlements(budget_repo: BudgetRepository, targets: dict, settlements: dict,
                                   length: int, last_pay_date: str) -> None:
     """Write each rollover seal/re-anchor back — BEST-EFFORT. The displayed carryover is
     always recomputed live, so persistence is only a cost bound (it lets the next read skip
     already-sealed cycles). A lost version race or any DB blip must never 500 the GET, so
-    every write is swallowed-and-logged (same posture as the WHIT-447 mint-migration)."""
+    every write is swallowed-and-logged (same posture as the WHIT-447 mint-migration).
+    A write is skipped if the budget changed since the read (`expected=targets[cat_id]`),
+    so an edit made during the GET survives; the seal lands on the next read."""
     for cat_id, payload in settlements.items():
         try:
             budget_repo.settle_carryover(
                 cat_id, payload["carryover"], payload["carryover_from"], length, last_pay_date,
-                payload.get("carryover_history"),
+                payload.get("carryover_history"), expected=targets[cat_id],
             )
         except Exception as e:
             logger.warning("rollover settle failed for %s (recomputes next read): %s", cat_id, e)
@@ -2134,8 +2143,10 @@ def list_budgets(
     categories = category_repo.list_categories()
     transactions = read_window(transaction_repo, window.fetch_start, window.today)
     rows, settlements = budget_standing(targets, window, categories, transactions)
-    _persist_rollover_settlements(budget_repo, settlements["rollover"], window.length, window.last_pay_date)
-    _persist_spread_settlements(budget_repo, settlements["spread_finished"], settlements["spread_reanchored"])
+    _persist_rollover_settlements(budget_repo, targets, settlements["rollover"], window.length,
+                                  window.last_pay_date)
+    _persist_spread_settlements(budget_repo, targets, settlements["spread_finished"],
+                                settlements["spread_reanchored"])
     return rows
 
 
@@ -3609,11 +3620,9 @@ def set_paycycle(event: dict, repo: PayCycleRepository) -> dict:
     past payday. Both fields are required and validated here (the repository just
     persists): length must be one the client offers, last_pay_date must be a valid ISO
     date that isn't in the future — a future last_pay_date has no cycle_start <= today,
-    which would break the payday-window math in Slice 2.
+    which would collapse the payday window.
 
-    The "not in the future" ceiling is today + 1 day, matching the +1-day slack
-    the rest of the API uses because AEST dates run up to a day ahead of UTC; the
-    precise Australia/Melbourne reset lands with the window math in Slice 2.
+    "Today" is Melbourne today, the same clock the budget window uses (melbourne_today).
     """
     body, error = _parse_json_body(event)
     if error:
@@ -3632,7 +3641,7 @@ def set_paycycle(event: dict, repo: PayCycleRepository) -> dict:
         pay_date = date.fromisoformat(last_pay_date)
     except ValueError:
         return _json_response(400, {"error": "last_pay_date must be a valid YYYY-MM-DD date"})
-    if pay_date > datetime.now(timezone.utc).date() + timedelta(days=1):
+    if pay_date > melbourne_today():
         return _json_response(400, {"error": "last_pay_date cannot be in the future"})
 
     saved = repo.set_paycycle(length, last_pay_date)

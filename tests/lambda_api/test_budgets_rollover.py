@@ -18,7 +18,7 @@ from functools import partial
 import pytest
 
 from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, _put_budget_event, _spend_cat, pin_cycle_window
-from _budget_fakes import recording_budget_repo
+from _budget_fakes import recording_budget_repo, stored_budgets
 from _lambda_api_constants import constants_namespace
 from _transaction_range_fakes import _QueuedTransactionRepo
 
@@ -95,6 +95,54 @@ def test_a_pay_cycle_length_change_freezes_the_buffer_and_re_anchors(handler):
 
     assert result["sink"]["carryover"] == Decimal(40)   # frozen, not re-folded
     assert budget_repo.settle_calls == [("sink", Decimal(40), CYCLE_START, LENGTH, PAYDATE)]
+
+
+def test_re_picking_the_payday_on_the_same_schedule_keeps_the_unsealed_leftover(handler):
+    # (ABU-88) The buffer was sealed when the payday was saved as 2025-12-02; the user has since
+    # re-picked 2026-01-01 — a whole cycle later, same 30-day schedule. Not a cycle change:
+    # the completed-but-unsealed cycle (2026-07-07..08-05, nothing spent, target 100) still
+    # counts live (+100), and nothing re-anchors.
+    budget_repo = recording_budget_repo({"sink": _entry(
+        100, carryover=Decimal(0), carryover_from="2026-07-07", carryover_paydate="2025-12-02")})
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
+
+    assert result["sink"]["carryover"] == Decimal(100)
+    assert budget_repo.settle_calls == []
+
+
+def test_a_legacy_buffer_with_no_saved_payday_still_re_anchors(handler):
+    entry = _entry(100, carryover=Decimal(40), carryover_from="2026-05-08")
+    del entry["carryover_paydate"]
+    budget_repo = recording_budget_repo({"sink": entry})
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
+
+    assert result["sink"]["carryover"] == Decimal(40)
+    assert budget_repo.settle_calls == [("sink", Decimal(40), CYCLE_START, LENGTH, PAYDATE)]
+
+
+# --- a budget read never undoes an edit made while it runs --------------------
+
+
+def test_a_spread_created_during_the_read_is_not_overwritten_by_its_rollover_settle(handler):
+    # (ABU-88) The read snapshots a rollover budget that needs sealing; before it saves the
+    # seal, the user swaps rollover for a bill spread (which strips the rollover fields). The
+    # read's seal must not land carryover fields back next to the new spread.
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
+    snapshot_read = budget_repo.list_budgets
+
+    def list_budgets_then_user_edits():
+        snapshot = snapshot_read()
+        budget_repo._merge_entry("sink", {"rollover": False})
+        type(budget_repo).set_spread(budget_repo, "sink", Decimal("300.00"), 3, CYCLE_START, LENGTH, PAYDATE)
+        return snapshot
+
+    budget_repo.list_budgets = list_budgets_then_user_edits
+    handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
+
+    stored = stored_budgets(budget_repo)["sink"]
+    assert stored["spread_amount"] == Decimal("300.00")
+    assert "carryover" not in stored
+    assert "carryover_from" not in stored
 
 
 # --- scope: rollover is spend-only -------------------------------------------

@@ -434,3 +434,20 @@ def test_set_spread_if_absent_strips_lingering_rollover_fields_on_create(
     assert stored["spread_amount"] == Decimal("600.00")
     assert "carryover" not in stored and "carryover_from" not in stored
     assert stored["target"] == Decimal(250)
+
+
+@pytest.mark.parametrize("write, args", [
+    pytest.param("settle_carryover", (Decimal(40), "2026-09-05", 30, "2026-01-01"), id="settle"),
+    pytest.param("set_spread", (Decimal("600.00"), 2, "2026-09-05", 30, "2026-01-01"), id="set-spread"),
+    pytest.param("clear_spread", (), id="clear-spread"),
+])
+def test_a_write_given_a_stale_expected_entry_is_skipped(shared, budget_repo, config_item_table, write, args):
+    # The read-path settle passes the entry it read; an edit since then must survive untouched.
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()}, version=3)
+    _with_table(budget_repo, table)
+
+    getattr(budget_repo, write)("insurance", *args, expected={"target": Decimal(250)})
+
+    assert len(table.update_calls) == 0
+    assert table.store[_KEY]["version"] == Decimal(3)
+    assert table.store[_KEY]["items"] == {"insurance": _spread_entry()}

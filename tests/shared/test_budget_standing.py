@@ -217,6 +217,32 @@ def test_spread_settles_after_a_pay_cycle_change(budget_standing):
     assert rows["insurance"]["available"] == D("100") + rows["insurance"]["spread"]["adjustment"]
 
 
+@pytest.mark.parametrize("spread_paydate", [
+    "2026-09-03",   # saved a cycle before the current payday: the user re-picked a later one
+    "2026-10-01",   # saved a cycle after it: the user re-picked an earlier one
+])
+def test_spread_is_not_settled_when_the_payday_is_re_picked_on_the_same_schedule(budget_standing, spread_paydate):
+    # (ABU-88) $300 over 3 fortnightly cycles, anchored 2026-09-03 (index 1 now: -100). The
+    # payday moved by a whole fortnight, so the grid is unchanged: no settle, no clear, and the
+    # row still takes one $100 slice — not the whole $300 at once.
+    targets = {"insurance": {"target": D("100"), **spread("300", "3", "2026-09-03", spread_paydate=spread_paydate)}}
+    cats = [{"id": "insurance", "bucket": "Living", "parent": None}]
+    rows, settlements = standing(budget_standing, targets, cats, [])
+
+    assert settlements["spread_reanchored"] == {}
+    assert settlements["spread_finished"] == []
+    assert rows["insurance"]["spread"] == {"amount": D("300"), "cycles": 3, "index": 1, "adjustment": D("-100")}
+
+
+def test_spread_still_settles_when_the_payday_moves_off_the_schedule(budget_standing):
+    # Same length, payday a day off the grid: the old slices are fictional, so it settles.
+    targets = {"insurance": {"target": D("100"), **spread("300", "3", "2026-09-03", spread_paydate="2026-09-16")}}
+    cats = [{"id": "insurance", "bucket": "Living", "parent": None}]
+    _, settlements = standing(budget_standing, targets, cats, [])
+
+    assert list(settlements["spread_reanchored"]) == ["insurance"]
+
+
 def test_stale_spread_on_an_income_category_is_ignored(budget_standing):
     # [A3] (P1) A spread left on a category since moved to Income: no `spread` key, available is
     # the plain target, nothing to save.

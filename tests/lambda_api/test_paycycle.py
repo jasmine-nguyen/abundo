@@ -21,8 +21,15 @@ from _api_event import api_event
 from _paycycle_fakes import paycycle_repo, stored_cycle
 
 
-def _today_utc():
-    return datetime.now(timezone.utc).date()
+@pytest.fixture(params=[0, 1], ids=["melbourne-same-date-as-utc", "melbourne-a-day-ahead-of-utc"])
+def melbourne_today(handler, monkeypatch, request):
+    """Pin the handler's Melbourne "today" — the clock the payday ceiling must use — at both
+    hours of the Melbourne day: on the UTC date (a UTC ceiling with a day of slack wrongly
+    lets Melbourne-tomorrow through) and a day ahead of it (a plain UTC ceiling wrongly
+    rejects Melbourne-today). [A1]"""
+    today = datetime.now(timezone.utc).date() + timedelta(days=request.param)
+    monkeypatch.setattr(handler, "melbourne_today", lambda: today)
+    return today
 
 
 def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_b64=False):
@@ -42,24 +49,25 @@ def test_set_paycycle_success(handler):
     assert stored_cycle(table) == (7, "2024-06-05")
 
 
-def test_set_paycycle_last_pay_date_at_future_ceiling_accepted(handler):
-    # The ceiling is today + 1 day (AEST-runs-ahead-of-UTC slack); exactly that is OK.
+def test_set_paycycle_last_pay_date_of_melbourne_today_accepted(handler, melbourne_today):
     _, repo = paycycle_repo()
-    body = json.dumps({"length": 30, "last_pay_date": (_today_utc() + timedelta(days=1)).isoformat()})
+    body = json.dumps({"length": 30, "last_pay_date": melbourne_today.isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 200
 
 
-def test_set_paycycle_future_last_pay_date_400(handler):
+def test_set_paycycle_last_pay_date_of_melbourne_tomorrow_400(handler, melbourne_today):
+    # ABU-88: a "tomorrow" payday collapses the window (days left reads 14, budgets show only
+    # today's spend). The ceiling is Melbourne today, at any hour.
     table, repo = paycycle_repo()
-    body = json.dumps({"length": 14, "last_pay_date": (_today_utc() + timedelta(days=5)).isoformat()})
+    body = json.dumps({"length": 30, "last_pay_date": (melbourne_today + timedelta(days=1)).isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 400
-    assert table.update_calls == []  # validation stops it before any write
+    assert table.update_calls == []
 
 
 @pytest.mark.parametrize("cycle", [

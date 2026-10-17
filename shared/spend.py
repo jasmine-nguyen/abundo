@@ -149,6 +149,15 @@ def spread_index(spread_from: str, current_start: str, length: int) -> int:
     return (date.fromisoformat(current_start) - date.fromisoformat(spread_from)).days // length
 
 
+def same_pay_cycle(stored_len, stored_paydate, length: int, last_pay_date: str) -> bool:
+    """Whether a plan saved under (stored_len, stored_paydate) sits on the CURRENT pay-cycle grid:
+    same length, and the payday moved by a whole number of cycles (re-picking a later or earlier
+    payday on the same schedule is not a change)."""
+    if stored_paydate is None or int(stored_len) != length:
+        return False
+    return (date.fromisoformat(last_pay_date) - date.fromisoformat(stored_paydate)).days % length == 0
+
+
 def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
     """The signed amount a bill spread adds to a category's spendable in the cycle at
     `index` (see spread_index): the full `+amount` cushion in the anchor cycle (index 0),
@@ -234,7 +243,8 @@ def spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str,
 
     Aligned (the plan was created under the CURRENT pay cycle): index 0 shows the `+amount`
     cushion, cycles 1..N take back a slice each, and past N the plan is finished — nothing
-    shown, fields cleared. Alignment is the exact length+payday, as _rollover_windows checks.
+    shown, fields cleared. Alignment is the same length and the payday a whole number of
+    cycles from the stored one (same_pay_cycle), as rollover_windows checks.
     Misaligned: the settle plan is computed and then read exactly like an aligned one.
 
     An entry missing any of the five fields (a hand-edited item — every write sets and
@@ -246,7 +256,7 @@ def spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str,
         return None, True, None
     amount, cycles, spread_from, stored_len, stored_paydate = fields
     cycles = int(cycles)
-    if int(stored_len) != length or stored_paydate != last_pay_date:
+    if not same_pay_cycle(stored_len, stored_paydate, length, last_pay_date):
         reanchor = _settle_spread(entry, cycle_start, length, last_pay_date, today)
         if reanchor is None:
             return None, True, None
@@ -575,15 +585,12 @@ def rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: 
     Returns (windows, reanchor). `windows` is the completed-cycle [(start, end), ...]
     since the stored anchor (oldest-first, capped). `reanchor` is a
     {carryover, carryover_from} payload when the stored anchor is missing or was sealed
-    under a DIFFERENT pay cycle (length or payday changed); `windows` is then [] (a
+    under a different pay-cycle grid (see same_pay_cycle); `windows` is then [] (a
     changed cycle makes the old windows fictional).
     """
     anchor = entry.get("carryover_from")
-    aligned = (
-        anchor is not None
-        and int(entry.get("carryover_len", 0)) == length
-        and entry.get("carryover_paydate") == last_pay_date
-    )
+    aligned = anchor is not None and same_pay_cycle(
+        entry.get("carryover_len", 0), entry.get("carryover_paydate"), length, last_pay_date)
     if not aligned:
         reanchor = {"carryover": entry.get("carryover", Decimal(0)), "carryover_from": cycle_start}
         return [], reanchor
