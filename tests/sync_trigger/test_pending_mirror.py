@@ -204,7 +204,8 @@ def test_a_failed_delete_after_the_carry_is_retried_without_carrying_twice(repo,
     assert stored(repo, "settled") == carried_twin
     assert second["failed"] == 0
     assert second["carried"] == 0
-    assert second["kept"] == 1
+    assert second["kept"] == 0
+    assert stored_ids(repo) == {"kept", "settled"}
 
 
 def test_a_notes_only_retry_after_a_failed_delete_finishes_the_job(repo, mirror):
@@ -224,6 +225,25 @@ def test_a_notes_only_retry_after_a_failed_delete_finishes_the_job(repo, mirror)
     assert stored(repo, "settled")["notes"] == "dinner with Sam"
     assert second["carried"] == 1
     assert second["failed"] == 0
+
+
+def test_a_failed_settle_delete_then_retry_leaves_one_charge(repo, mirror):
+    # ABU-90: settle wrote the posted row (with the pending's category and notes) but its
+    # delete of the pending twin failed, and the bank retry left it. The mirror must remove
+    # the edited pending, since the settled copy already holds the same edit.
+    repo._table.seed(
+        pending_row("kept"),
+        pending_row("edited", category="groceries", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", category="groceries", notes="dinner with Sam", **GUZMAN),
+    )
+    settled_before = dict(stored(repo, "settled"))
+
+    result = run_mirror(mirror, repo, bank_rows("kept"), unfiled_except("groceries"))
+
+    assert stored_ids(repo) == {"kept", "settled"}
+    assert result["removed"] == 1
+    assert result["kept"] == 0
+    assert stored(repo, "settled") == settled_before
 
 
 def test_two_edited_pendings_with_one_settled_twin_carry_only_once(repo, mirror):

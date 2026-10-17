@@ -62,6 +62,7 @@ lambda/*
 !lambda/banksync.py
 !lambda/merchant.py
 !lambda/reprocess.py
+!lambda/ingest_skip.py
 !lambda/age_out.py
 !lambda/reconcile.py
 !lambda/budget_alerts.py

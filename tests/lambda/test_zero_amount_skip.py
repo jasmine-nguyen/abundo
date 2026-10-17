@@ -82,7 +82,7 @@ def test_a_dead_lettered_zero_dollar_row_is_cleared_not_stored(lam, repo):
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 1}
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 1, "dropped_deleted": 0}
     stored = _txn_rows(repo)
     assert "TXN#charge" in stored
     assert "TXN#fee-zero" not in stored
