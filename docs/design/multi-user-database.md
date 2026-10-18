@@ -90,12 +90,12 @@ These are looked up before the owner is known, or they are an ops queue across a
 | # | Old `pk` \| `sk` | New `pk` \| `sk` | Owner link |
 |---|---|---|---|
 | 21 | `FAILED` \| `<sk>` | unchanged | `owner` attribute when known. A row dead-lettered because the bank account is unknown has no owner. Already expires via `expires_at`. |
-| 22 | `EVENT#<envelope>` \| `EVENT` | unchanged | No owner, no personal data (only the envelope id). **New:** written with `expires_at` = now + 30 days. |
+| 22 | `EVENT#<envelope>` \| `EVENT` | unchanged | No owner, no personal data (only the envelope id). Written with `expires_at` = now + 30 days (ABU-46). |
 | 23 | `PUSHRECEIPT#PENDING` \| `<receipt_id>` | unchanged | `owner` attribute. |
 | new | — | `BANKACCT#<provider>#<provider_account_id>` \| `BANKACCT` | `{owner, account_id}`. `provider` is `banksync` or `up`. |
 | new | — | `USERS` \| `USER#<owner_id>` | The registry scheduled jobs loop over. `{created_at}`. |
 
-- EVENT rows today have no `expires_at` (`lambda/webhook_repository.py:256-258`), so they live forever. Dedup only needs to cover BankSync's retry window (hours to a few days). 30 days is a safe margin. Old EVENT rows get `expires_at` in the migration.
+- EVENT rows written before ABU-46 have no `expires_at`, so they live forever. Dedup only needs to cover BankSync's retry window (hours to a few days). 30 days is a safe margin. Old EVENT rows get `expires_at` in the migration.
 
 ## 2. Lookup indexes (GSIs, the side-tables that find rows by another key)
 
