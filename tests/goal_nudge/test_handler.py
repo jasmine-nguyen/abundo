@@ -49,7 +49,8 @@ def test_heartbeat_alarm_pages_when_the_sweep_goes_silent():
     # No heartbeat at all (crash, timeout, stopped schedule) must count as failing.
     text = MONITORING_TF.read_text()
     heartbeat_metric = filter_metrics(text)["goal_nudge_runs"]
-    for name, metric in alarm_metrics(text).items():
-        if metric == heartbeat_metric:
-            alarm = tf_block(text, "aws_cloudwatch_metric_alarm", name)
-            assert tf_attr(alarm, "treat_missing_data") == '"breaching"'
+    watching = [name for name, metric in alarm_metrics(text).items() if metric == heartbeat_metric]
+    assert "goal_nudge_health" in watching
+    for name in watching:
+        alarm = tf_block(text, "aws_cloudwatch_metric_alarm", name)
+        assert tf_attr(alarm, "treat_missing_data") == '"breaching"'

@@ -174,7 +174,7 @@ resource "aws_cloudwatch_metric_alarm" "goal_nudge_health" {
   threshold           = 1
   comparison_operator = "LessThanThreshold"
   treat_missing_data  = "breaching"
-  alarm_description   = "Goal-behind-pace reminders haven't run cleanly for 2 days. Check /aws/lambda/abundo-goal-nudge. 'goal-nudge sweep failed' lines = the sweep hit an error (the line names it: DynamoDB/IAM/pay cycle). 'Task timed out' / 'Runtime.' errors = the lambda crashed, timed out or ran out of memory. No log lines at all = the abundo-goal-nudge schedule is off or missing. After fixing, re-run abundo-goal-nudge. Missed reminders resend on the next run."
+  alarm_description   = "Goal-behind-pace reminders haven't run cleanly for 2 days. Check /aws/lambda/${var.project_name}-goal-nudge. 'goal-nudge sweep failed' lines = the sweep hit an error (the line names it: DynamoDB/IAM/pay cycle). 'Task timed out' / 'Runtime.' errors = the lambda crashed, timed out or ran out of memory. No log lines at all = the ${var.project_name}-goal-nudge schedule is off or missing. After fixing, re-run ${var.project_name}-goal-nudge. Missed reminders resend on the next run."
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
@@ -197,7 +197,7 @@ resource "aws_cloudwatch_metric_alarm" "transaction_trigger_errors" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "The hourly BankSync sync has failed 3 hours in a row, so no transactions are arriving. Check /aws/lambda/abundo-transaction-trigger. 'HTTP Error 401' means BankSync rejected our key: make a new key in the BankSync dashboard and save it to /abundo/banksync-api-key in SSM (the next hourly run picks it up). The daily balance poll also uses this key; if Accounts balances look stale the next day, re-run abundo-balance-poller. 'HTTP Error 404' means a feed was deleted: update SYNC_FEED_IDS in shared/constants.py."
+  alarm_description   = "The hourly BankSync sync has failed 3 hours in a row, so no transactions are arriving. Check /aws/lambda/${var.project_name}-transaction-trigger. 'HTTP Error 401' means BankSync rejected our key: make a new key in the BankSync dashboard and save it to /abundo/banksync-api-key in SSM (the next hourly run picks it up). The daily balance poll also uses this key; if Accounts balances look stale the next day, re-run ${var.project_name}-balance-poller. 'HTTP Error 404' means a feed was deleted: update SYNC_FEED_IDS in shared/constants.py."
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
@@ -235,7 +235,7 @@ resource "aws_cloudwatch_metric_alarm" "balance_poll_stale" {
   threshold           = 1
   comparison_operator = "LessThanThreshold"
   treat_missing_data  = "breaching"
-  alarm_description   = "Account balances haven't all refreshed for 2 days. Check /aws/lambda/abundo-balance-poller for 'balance poll failed' lines, which name the account. If the transaction-trigger alarm is also firing, it's the BankSync key: fix that first. 404 = an account ID changed: update BALANCE_SOURCES / ACCOUNT_ID_MAP in shared/constants.py. No log lines = the schedule is off or the lambda is crashing. After fixing, re-run abundo-balance-poller."
+  alarm_description   = "Account balances haven't all refreshed for 2 days. Check /aws/lambda/${var.project_name}-balance-poller for 'balance poll failed' lines, which name the account. If the transaction-trigger alarm is also firing, it's the BankSync key: fix that first. 404 = an account ID changed: update BALANCE_SOURCES / ACCOUNT_ID_MAP in shared/constants.py. No log lines = the schedule is off or the lambda is crashing. After fixing, re-run ${var.project_name}-balance-poller."
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
@@ -306,7 +306,7 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_push" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "The instant home-loan repayment push may be down. Search both /aws/lambda/abundo-up-webhook and /aws/lambda/abundo-balance-poller for these markers. In /aws/lambda/abundo-up-webhook: 'up webhook: processing failed' = a validly-signed Up delivery failed to fetch/push (Up retries, so a self-healing blip can page once). UP_WEBHOOK_TOKEN_REJECTED = Up rejected our personal access token (401/403): replace /abundo/up-personal-access-token in SSM and check Up returns 404 (not 401) for a fake transaction id. UP_WEBHOOK_NO_DEVICE_TOKENS = a qualifying repayment arrived but no phone is registered for push: open the app on a phone to register it. In /aws/lambda/abundo-balance-poller: UP_WEBHOOK_REPAYMENT_MISSED = a repayment landed with no push (silent webhook failure: rotated signing secret, re-linked account or deregistered webhook); source=txn marks the transaction-based check."
+  alarm_description   = "The instant home-loan repayment push may be down. Search both /aws/lambda/${var.project_name}-up-webhook and /aws/lambda/${var.project_name}-balance-poller for these markers. In /aws/lambda/${var.project_name}-up-webhook: 'up webhook: processing failed' = a validly-signed Up delivery failed to fetch/push (Up retries, so a self-healing blip can page once). UP_WEBHOOK_TOKEN_REJECTED = Up rejected our personal access token (401/403): replace /abundo/up-personal-access-token in SSM and check Up returns 404 (not 401) for a fake transaction id. UP_WEBHOOK_NO_DEVICE_TOKENS = a qualifying repayment arrived but no phone is registered for push: open the app on a phone to register it. In /aws/lambda/${var.project_name}-balance-poller: UP_WEBHOOK_REPAYMENT_MISSED = a repayment landed with no push (silent webhook failure: rotated signing secret, re-linked account or deregistered webhook); source=txn marks the transaction-based check."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
