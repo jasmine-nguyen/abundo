@@ -339,6 +339,33 @@ def test_a_spread_flag_from_an_old_app_saves_a_plain_rule(handler, monkeypatch):
         assert not [key for key in row if key.startswith("spread")]
 
 
+def test_a_rule_saved_with_spread_details_before_the_release_still_works(handler, monkeypatch):
+    # [A1] Until the clean-up script runs, saved rule rows still carry the old spread fields.
+    # Re-saving the same rule is the usual idempotent 201 (no "already has a spread rule"
+    # clash), the client never sees the old fields, and an edit still saves.
+    from decimal import Decimal
+
+    repo = Repos(rules=[_rule("COLES", "groceries")])
+    rule_id = repo.rule_id("COLES")
+    legacy = {**repo.stored_rules()[0], "spread": True, "spread_amount": Decimal("42.50"),
+              "spread_gap_days": 30, "spread_seeded": True}
+    repo.table.seed(legacy)
+    _inject(handler, monkeypatch, repo)
+
+    again = _post(handler, {"value": "COLES", "categoryId": "groceries"})
+    assert again["statusCode"] == 201
+    assert repo.minted_rules() == []
+
+    listed = handler.lambda_handler(api_event("GET", "/rules"), None)
+    assert listed["statusCode"] == 200
+    assert set(json.loads(listed["body"])[0]) == _CLIENT_KEYS
+
+    edited = _put(handler, rule_id, {"value": "COLES", "categoryId": "petrol"})
+    assert edited["statusCode"] == 200
+    assert set(json.loads(edited["body"])) == _CLIENT_KEYS | {"remaining"}
+    assert repo.stored_rules()[0]["category_id"] == "petrol"
+
+
 # --- PUT /rules/{id} ----------------------------------------------------------
 
 
