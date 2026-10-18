@@ -191,7 +191,6 @@ it('shows the plain "not counted" line, not the manual toggle, when the bank aut
   bankExcluded();
   await draw();
   expect(screen.getByText('Transfer or card payment. Not counted in budgets or insights.')).toBeTruthy();
-  expect(screen.queryByText('Excluded (transfer)')).toBeNull();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
 });
 

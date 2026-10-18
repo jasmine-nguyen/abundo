@@ -158,7 +158,6 @@ it('shows the read-only note (not the toggle) when counts_to_budget is undefined
   seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: undefined })]);
   await draw();
   expect(screen.getByText('Transfer or card payment. Not counted in budgets or insights.')).toBeTruthy();
-  expect(screen.queryByText('Excluded (transfer)')).toBeNull();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
 });
 

@@ -229,7 +229,7 @@ export default function TransactionDetail() {
 
 // WHIT-539: read-only note naming the rule that auto-filed this charge's category
 // ("Filed by your rule: contains \"COLES\""), or a generic fallback when the rule can't be
-// named. Same card as BudgetExcludedNote, but a single legible line (toggleTitle weight, not
+// named. Same card as the toggle row, but a single legible line (toggleTitle weight, not
 // the dim sub) — it stands alone, so a faint line would read as unbalanced. No numberOfLines
 // cap, so a long merchant wraps rather than truncating.
 function RuleFiledNote({ text }: { text: string }) {
