@@ -32,7 +32,7 @@ export interface NativeDateFieldProps {
   maximumDate?: Date;
   placeholder?: string;                      // shown when unset (defaults to "Not set")
   clearable?: boolean;                       // render a "Clear" affordance once a value is set
-  alwaysShowPillIOS?: boolean;               // iOS: show the pill always (loan) vs only while picking (everywhere else)
+  alwaysShowPillIOS?: boolean;               // iOS: show the pill always (loan, pay-cycle and goal-balance sheets) vs only while picking (everywhere else)
 }
 
 // The inline field row: the current value (or placeholder), an optional Clear, and the
@@ -42,7 +42,7 @@ export function NativeDateField({
   value, onChange, minimumDate, maximumDate, placeholder, clearable, alwaysShowPillIOS,
 }: NativeDateFieldProps) {
   const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => onChange(iso));
-  // iOS shows the compact pill inline. Loan shows it always (alwaysShowPillIOS). Everywhere else
+  // iOS shows the compact pill inline. Loan and the pay-cycle + goal-balance sheets show it always (alwaysShowPillIOS). Everywhere else
   // the pill appears ONLY while actively picking: once a value is set we show it as the row text
   // with a "Change" affordance, so the same date isn't printed twice (the row text AND the pill
   // both showed it before). An unset field still shows "Set date", never a pre-filled pill that
