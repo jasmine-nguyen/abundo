@@ -192,6 +192,24 @@ def test_settlement_reads_the_pending_pool_once_bounded_to_recent_dates(lam, mon
     assert ("account_id", "eq", "up-spending") in pending_reads[0]["KeyConditionExpression"].conditions
 
 
+def test_pending_pool_read_failure_fails_the_message_without_writing(lam, monkeypatch):
+    # The pool read sits outside the best-effort alert block: if it fails, the message must
+    # 500 (BankSync retries), nothing is written and the event stays unmarked.
+    # Fail-on-revert: swallow the read error (or move it into the alert try) and this acks 200.
+    repo = _ingest_repo(lam, monkeypatch)
+
+    def failing_read(*_args):
+        raise lam.age_out.DatabaseError("Database read failed: throttled")
+
+    monkeypatch.setattr(repo, "get_transactions_by_date_range", failing_read)
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_pool", "data": [
+        _delivery_row("s1", "3zVQJ8Btz_IRmqp78VrQnQ")]})
+
+    assert handler.lambda_handler({}, None)["statusCode"] == 500
+    assert ("ACCOUNT#up-spending", "TXN#s1") not in repo._table.store
+    assert repo.has_event("evt_pool") is False
+
+
 # --- observability: per-delivery log line ------------------------------------
 
 
@@ -313,7 +331,7 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
 
     handler = lam.handler
 
-    def raising_insert(txns, *, is_unfiled=None):
+    def raising_insert(txns, *, is_unfiled=None, pending_pools=None):
         raise botocore.exceptions.ClientError()
 
     repo = _real_repo(lam)

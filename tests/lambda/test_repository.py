@@ -41,6 +41,7 @@ def test_get_pending_pools_keeps_recent_pendings_across_pages(repo):
     # today 2026-10-18 → lookback starts 2026-09-18. Pages of 2 force the cursor to be followed.
     for txn_id, status, swiped in [
         ("old_pend", "pending", "2026-09-08"),     # 40 days old: outside the lookback
+        ("edge_pend", "pending", "2026-09-18"),    # exactly 30 days old: inside (the bound is inclusive)
         ("recent_pend", "pending", "2026-09-19"),  # 29 days old: inside
         ("posted", "posted", "2026-10-13"),
         ("new_pend", "pending", "2026-10-15"),
@@ -58,7 +59,7 @@ def test_get_pending_pools_keeps_recent_pendings_across_pages(repo):
     pools = repo.get_pending_pools(message, today=date(2026, 10, 18))
 
     assert set(pools) == {"acc"}
-    assert sorted(row["transaction_id"] for row in pools["acc"]) == ["new_pend", "recent_pend"]
+    assert sorted(row["transaction_id"] for row in pools["acc"]) == ["edge_pend", "new_pend", "recent_pend"]
 
 
 # --- WHIT-554: the shared _paginated_query helper, on the FAILED (no-filter) call site ---
