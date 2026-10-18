@@ -62,7 +62,7 @@ it('builds a two-condition rule and saves it directly (no preview step)', async 
       { field: 'amount', operator: 'less_than', value: '30' },
     ],
     logic: 'all',
-  }, false);
+  });
   // A multi rule never routes through the single-rule preview/confirm sheet.
   expect(fns.setSheet).not.toHaveBeenCalledWith(expect.objectContaining({ mode: 'addRuleConfirm' }));
 });
@@ -76,7 +76,7 @@ it('the logic toggle sets "any" in the saved payload', async () => {
   fireEvent.press(screen.getByTestId('rule-logic-any'));
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByText('Add rule'));
-  expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, expect.objectContaining({ logic: 'any' }), false);
+  expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, expect.objectContaining({ logic: 'any' }));
 });
 
 it.each([
@@ -97,7 +97,7 @@ it.each([
   if (pick) fireEvent.press(screen.getByTestId(pick));
   fireEvent.press(screen.getByText(category));
   fireEvent.press(screen.getByText('Add rule'));
-  expect(fns.saveManualRule).toHaveBeenCalledWith(value, categoryId, false, { conditions: [condition], logic: 'all' }, false);
+  expect(fns.saveManualRule).toHaveBeenCalledWith(value, categoryId, false, { conditions: [condition], logic: 'all' });
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
 
@@ -143,7 +143,7 @@ it('editing a multi-condition rule round-trips its conditions and logic', async 
       { field: 'amount', operator: 'greater_than', value: '100' },
     ],
     logic: 'any',
-  }, false);
+  });
 });
 
 // [G1] Switch a row's field after typing: the old text must not leak into the new field, and the
@@ -161,7 +161,7 @@ it('switching a row field clears the stale value and resets the operator to the 
   expect(fns.saveManualRule).toHaveBeenCalledWith('30', 'groceries', false, {
     conditions: [{ field: 'amount', operator: 'less_than', value: '30' }],
     logic: 'all',
-  }, false);
+  });
 });
 
 // [G3] Editing an account rule whose account_id isn't in the recent-transactions set: the picker must
@@ -182,7 +182,7 @@ it('an editing rule account not in the recent set is surfaced and round-trips', 
   expect(fns.updateRule).toHaveBeenCalledWith('a1', 'acc-gone', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'acc-gone' }],
     logic: 'all',
-  }, false);
+  });
 });
 
 // [G4] Add a second row then remove it: the draft is back to a single description/contains row, so a
@@ -216,7 +216,7 @@ it.each([
   expect(fns.updateRule).toHaveBeenCalledWith(rule.id, rule.value, 'groceries', false, {
     conditions: [{ field: rule.field, operator: rule.operator, value: rule.value }],
     logic: 'all',
-  }, false);
+  });
 });
 
 // [G7] Reducing a MULTI rule down to one classic description/contains row on EDIT must save via the
@@ -237,7 +237,7 @@ it('editing a multi rule down to one classic row saves via the flat path (no con
   });
   fireEvent.press(screen.getByTestId('rule-remove-1')); // drop the amount row → one description/contains row
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('m2', 'NETFLIX', 'subs', false, undefined, false);
+  expect(fns.updateRule).toHaveBeenCalledWith('m2', 'NETFLIX', 'subs', false);
 });
 
 // --- WHIT-562 overlap warning ----------------------------------------------------
@@ -275,7 +275,7 @@ it('"Save anyway" saves the rule despite the overlap', async () => {
       { field: 'amount', operator: 'less_than', value: '40' },
     ],
     logic: 'all',
-  }, false);
+  });
 });
 
 it('"Cancel" dismisses the warning and does not save', async () => {
@@ -293,7 +293,7 @@ it('a non-overlapping multi rule saves directly (no warning)', async () => {
   buildColesUnder40();
   fireEvent.press(screen.getByText('Add rule'));
   expect(screen.queryByTestId('rule-overlap')).toBeNull();
-  expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'subs', false, expect.objectContaining({ logic: 'all' }), false);
+  expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'subs', false, expect.objectContaining({ logic: 'all' }));
 });
 
 // WHIT-670 [A1] An account known only from the balances read (no recent charge on it) is still offered.
@@ -309,5 +309,5 @@ it('[A1] offers an account that only the /accounts/balances read knows, named fr
   expect(fns.saveManualRule).toHaveBeenCalledWith('home-loan', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'home-loan' }],
     logic: 'all',
-  }, false);
+  });
 });

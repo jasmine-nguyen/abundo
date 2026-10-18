@@ -1,7 +1,7 @@
 """WHIT-622 — "budget standing this cycle" worked out once, in shared/budget_standing.py.
 
 Plain input → output tables: budget targets + pay cycle + categories + charges in → each
-budget's row (target, posted, pending, carryover, spread, available) plus the settlements to
+budget's row (target, posted, pending, carryover, available) plus the settlements to
 save. The same function feeds /budgets, the budget alerts and the chat, so these rows are
 exactly the /budgets wire shape (key order included).
 """
@@ -38,7 +38,6 @@ CATEGORIES = [
     {"id": "fun", "bucket": "Lifestyle", "parent": None},
     {"id": "gifts", "bucket": "Lifestyle", "parent": None},
     {"id": "insurance", "bucket": "Essentials", "parent": None},
-    {"id": "car", "bucket": "Essentials", "parent": None},
     {"id": "holiday", "bucket": "Savings", "parent": None},
 ]
 
@@ -79,16 +78,6 @@ MIXED_TARGETS = {
     },
     # Rollover with no anchor yet: re-anchored at the current cycle start, keeping its balance.
     "gifts": {"target": D("80"), "rollover": True, "carryover": D("25")},
-    # Bill spread one cycle past its anchor: the first slice is taken back.
-    "insurance": {
-        "target": D("100"), "spread_amount": D("300"), "spread_cycles": D("3"),
-        "spread_from": "2026-09-03", "spread_len": D("14"), "spread_paydate": "2026-09-17",
-    },
-    # Bill spread whose plan has run its course: nothing shown, cleared.
-    "car": {
-        "target": D("50"), "spread_amount": D("120"), "spread_cycles": D("2"),
-        "spread_from": "2026-07-09", "spread_len": D("14"), "spread_paydate": "2026-09-17",
-    },
     # Stale rollover flag on a category since moved to Savings: ignored.
     "holiday": {"target": D("300"), "rollover": True, "carryover": D("999")},
 }
@@ -124,16 +113,10 @@ MIXED_ROWS = {
         "rollover": True, "carryover": D("25"), "carryover_cycles": [], "carryover_earlier": D("25"),
         "available": D("105"),
     },
-    "insurance": {
-        "target": D("100"), "posted": D("0"), "pending": D("0"),
-        "spread": {"amount": D("300"), "cycles": 3, "index": 1, "adjustment": D("-100")},
-        "available": D("0"),
-    },
-    "car": {"target": D("50"), "posted": D("0"), "pending": D("0"), "available": D("50")},
     "holiday": {"target": D("300"), "posted": D("100"), "pending": D("0"), "available": D("300")},
 }
 
-NO_SETTLEMENTS = {"rollover": {}, "spread_finished": [], "spread_reanchored": {}}
+NO_SETTLEMENTS = {"rollover": {}}
 
 MIXED_SETTLEMENTS = {
     "rollover": {
@@ -143,8 +126,6 @@ MIXED_SETTLEMENTS = {
         ]},
         "gifts": {"carryover": D("25"), "carryover_from": "2026-09-17"},
     },
-    "spread_finished": ["car"],
-    "spread_reanchored": {},
 }
 
 
@@ -152,7 +133,7 @@ MIXED_SETTLEMENTS = {
     pytest.param(PLAIN_TARGETS, PLAIN_CHARGES, "2026-09-17", PLAIN_ROWS, NO_SETTLEMENTS,
                  id="plain spend + income budgets read only this cycle"),
     pytest.param(MIXED_TARGETS, MIXED_CHARGES, "2026-08-20", MIXED_ROWS, MIXED_SETTLEMENTS,
-                 id="rollup, rollover, spread and a stale flag"),
+                 id="rollup, rollover and a stale flag"),
 ])
 def test_each_budget_standing_this_cycle_is_worked_out_from_targets_cycle_categories_and_charges(
     budget_standing, targets, charges, fetch_start, expected_rows, expected_settlements,
@@ -179,80 +160,9 @@ ALIGNED_ROLLOVER = {
 }
 
 
-def spread(amount, cycles, spread_from, spread_len=14, spread_paydate="2026-09-17"):
-    return {
-        "spread_amount": D(amount), "spread_cycles": D(cycles), "spread_from": spread_from,
-        "spread_len": D(spread_len), "spread_paydate": spread_paydate,
-    }
-
-
 def standing(module, targets, categories, charges):
     window = module.standing_window(targets, PAY_CYCLE, today=TODAY)
     return module.budget_standing(targets, window, categories, charges)
-
-
-def test_rollover_wins_when_a_corrupt_row_has_both_cushions(budget_standing):
-    # [A1] (P0) Rollover + an anchor-cycle spread on one row: `spread` is still shown, but
-    # available = target + carryover only — never both cushions summed.
-    targets = {"fun": {"target": D("100"), **ALIGNED_ROLLOVER, **spread("300", "3", "2026-09-17")}}
-    cats = [{"id": "fun", "bucket": "Lifestyle", "parent": None}]
-    rows, _ = standing(budget_standing, targets, cats, [charge("fun", "2026-09-10", "-60")])
-
-    assert rows["fun"]["carryover"] == D("40")
-    assert rows["fun"]["spread"]["adjustment"] == D("300")
-    assert rows["fun"]["available"] == D("140")
-
-
-def test_spread_settles_after_a_pay_cycle_change(budget_standing):
-    # [A2] (P0) The plan was laid under a 7-day cycle; the cycle is now 14 days. The spread is
-    # settled into a one-cycle plan: returned for saving AND shown on the row.
-    targets = {"insurance": {"target": D("100"),
-                             **spread("300", "3", "2026-09-10", spread_len=7, spread_paydate="2026-09-10")}}
-    cats = [{"id": "insurance", "bucket": "Living", "parent": None}]
-    rows, settlements = standing(budget_standing, targets, cats, [])
-
-    assert list(settlements["spread_reanchored"]) == ["insurance"]
-    assert settlements["spread_finished"] == []
-    assert "spread" in rows["insurance"]
-    assert rows["insurance"]["available"] == D("100") + rows["insurance"]["spread"]["adjustment"]
-
-
-@pytest.mark.parametrize("spread_paydate", [
-    "2026-09-03",   # saved a cycle before the current payday: the user re-picked a later one
-    "2026-10-01",   # saved a cycle after it: the user re-picked an earlier one
-])
-def test_spread_is_not_settled_when_the_payday_is_re_picked_on_the_same_schedule(budget_standing, spread_paydate):
-    # (ABU-88) $300 over 3 fortnightly cycles, anchored 2026-09-03 (index 1 now: -100). The
-    # payday moved by a whole fortnight, so the grid is unchanged: no settle, no clear, and the
-    # row still takes one $100 slice — not the whole $300 at once.
-    targets = {"insurance": {"target": D("100"), **spread("300", "3", "2026-09-03", spread_paydate=spread_paydate)}}
-    cats = [{"id": "insurance", "bucket": "Living", "parent": None}]
-    rows, settlements = standing(budget_standing, targets, cats, [])
-
-    assert settlements["spread_reanchored"] == {}
-    assert settlements["spread_finished"] == []
-    assert rows["insurance"]["spread"] == {"amount": D("300"), "cycles": 3, "index": 1, "adjustment": D("-100")}
-
-
-def test_spread_still_settles_when_the_payday_moves_off_the_schedule(budget_standing):
-    # Same length, payday a day off the grid: the old slices are fictional, so it settles.
-    targets = {"insurance": {"target": D("100"), **spread("300", "3", "2026-09-03", spread_paydate="2026-09-16")}}
-    cats = [{"id": "insurance", "bucket": "Living", "parent": None}]
-    _, settlements = standing(budget_standing, targets, cats, [])
-
-    assert list(settlements["spread_reanchored"]) == ["insurance"]
-
-
-def test_stale_spread_on_an_income_category_is_ignored(budget_standing):
-    # [A3] (P1) A spread left on a category since moved to Income: no `spread` key, available is
-    # the plain target, nothing to save.
-    targets = {"salary": {"target": D("3000"), **spread("300", "3", "2026-09-17")}}
-    cats = [{"id": "salary", "bucket": "Income", "parent": None}]
-    rows, settlements = standing(budget_standing, targets, cats, [charge("salary", "2026-09-18", "2500")])
-
-    assert rows == {"salary": {"target": D("3000"), "posted": D("2500"), "pending": D("0"),
-                               "available": D("3000")}}
-    assert settlements == {"rollover": {}, "spread_finished": [], "spread_reanchored": {}}
 
 
 def test_orphan_rollover_budget_still_rolls_over_like_before(budget_standing):
@@ -271,12 +181,11 @@ def test_orphan_rollover_budget_still_rolls_over_like_before(budget_standing):
 
 
 def test_window_widens_only_for_rollover_and_stops_at_the_12_cycle_cap(budget_standing):
-    # [A6] (P1) A spread-only budget reads just this cycle; a rollover anchored years ago reads
+    # [A6] (P1) A plain budget reads just this cycle; a rollover anchored years ago reads
     # back exactly 12 cycles (168 days), not to the anchor.
-    spread_only = budget_standing.standing_window(
-        {"insurance": {"target": D("100"), **spread("300", "3", "2026-09-03")}}, PAY_CYCLE, today=TODAY)
-    assert spread_only.fetch_start == "2026-09-17"
-    assert spread_only.windows_by_id == {}
+    plain = budget_standing.standing_window({"insurance": {"target": D("100")}}, PAY_CYCLE, today=TODAY)
+    assert plain.fetch_start == "2026-09-17"
+    assert plain.windows_by_id == {}
 
     ancient = {**ALIGNED_ROLLOVER, "carryover_from": "2024-10-31"}
     capped = budget_standing.standing_window({"fun": {"target": D("100"), **ancient}}, PAY_CYCLE, today=TODAY)

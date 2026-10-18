@@ -145,26 +145,25 @@ def test_a_legacy_buffer_with_no_saved_payday_still_re_anchors(handler):
 # --- a budget read never undoes an edit made while it runs --------------------
 
 
-def test_a_spread_created_during_the_read_is_not_overwritten_by_its_rollover_settle(handler):
+def test_an_edit_made_during_the_read_is_not_overwritten_by_its_rollover_settle(handler):
     # (ABU-88) The read snapshots a rollover budget that needs sealing; before it saves the
-    # seal, the user swaps rollover for a bill spread (which strips the rollover fields). The
-    # read's seal must not land carryover fields back next to the new spread.
+    # seal, the user turns rollover off. The read's seal must not overwrite that edit.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-06")})
     snapshot_read = budget_repo.list_budgets
+    edited = {}
 
     def list_budgets_then_user_edits():
         snapshot = snapshot_read()
-        budget_repo._merge_entry("sink", {"rollover": False})
-        type(budget_repo).set_spread(budget_repo, "sink", Decimal("300.00"), 3, CYCLE_START, LENGTH, PAYDATE)
+        budget_repo.set_budget("sink", Decimal(100), rollover=False)
+        edited.update(stored_budgets(budget_repo)["sink"])
         return snapshot
 
     budget_repo.list_budgets = list_budgets_then_user_edits
     handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     stored = stored_budgets(budget_repo)["sink"]
-    assert stored["spread_amount"] == Decimal("300.00")
-    assert "carryover" not in stored
-    assert "carryover_from" not in stored
+    assert stored["rollover"] is False
+    assert stored == edited
 
 
 # --- scope: rollover is spend-only -------------------------------------------

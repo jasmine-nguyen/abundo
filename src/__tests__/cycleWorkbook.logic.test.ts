@@ -340,7 +340,7 @@ describe('buildXlsx', () => {
 
 // WHIT-703 slice 2 — the Budgets tab is filled from the server's `budgets`, in Budgets-screen
 // order (Savings and unknown categories last). Spent = posted + pending, Left to spend =
-// Available − Spent, Carry-over = rollover buffer or spread adjustment; last cycle →
+// Available − Spent, Carry-over = rollover buffer; last cycle →
 // 'Budget (current)', blank carry-over, Available = today's target.
 describe('buildCycleWorkbook — Budgets tab', () => {
   const PAST_BUDGET_HEADER = [
@@ -362,8 +362,7 @@ describe('buildCycleWorkbook — Budgets tab', () => {
     coffee: { target: 50, posted: 40, pending: 15 },                                           // over by 5
     groceries: { target: 100, posted: 100, pending: 0, rollover: true, carryover: 30, available: 130 },
     nest_egg: { target: 300, posted: 0, pending: 0 },                                           // Savings → last
-    food: { target: 500, posted: 300.5, pending: 15, available: 700,
-      spread: { amount: 800, cycles: 4, index: 0, adjustment: 200 } },
+    food: { target: 500, posted: 300.5, pending: 15, rollover: true, carryover: 200, available: 700 },
     mystery: { target: 20, posted: 5, pending: 0 },                                             // unknown category → last
     salary: { target: 4000, posted: 4100, pending: 0 },                                         // Income earn-target
   };

@@ -29,8 +29,6 @@ def test_a_route_commented_out_in_api_gateway_is_switched_off():
 
 
 @pytest.mark.parametrize("key", [
-    "PUT /budgets/{category}/spread",
-    "DELETE /budgets/{category}/spread",
     "PUT /rules/{id}",
     "DELETE /rules/{id}",
     "DELETE /transactions/{id}",
@@ -59,9 +57,6 @@ _DISPATCH = [
     ("PATCH", "/transactions", "patch_transactions_batch"),
     ("PATCH", "/transactions/t1", "patch_transaction"),
     ("GET", "/categories/c1/transactions", "get_category_transactions"),
-    ("PUT", "/budgets/c1/spread", "set_spread"),
-    # A category whose id is literally "spread" is a budget item, not a spread.
-    ("PUT", "/budgets/spread", "set_budget"),
     # Method-gated: a known path with the wrong method reaches no route.
     ("POST", "/transactions/feed", None),
     ("GET", "/nope", None),

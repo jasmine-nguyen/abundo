@@ -79,7 +79,7 @@ export function buildBudgetRows(
   const cells = screenOrder(budgets, category).map((budget): Cell[] => {
     const [parentName, categoryName] = categoryColumns(budget.id, category);
     const spent = budget.posted + budget.pending;
-    let carryOver: number | null = budget.rollover ? budget.carryover : budget.spreadAdjustment;
+    let carryOver: number | null = budget.rollover ? budget.carryover : 0;
     let available = budget.available;
     if (isPastCycle) {
       carryOver = null;

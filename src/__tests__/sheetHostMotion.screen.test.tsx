@@ -280,7 +280,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
       fireEvent.press(screen.getByText('Groceries'));
 
-      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false });
       // the live field still reflects it — the collapse didn't decouple state from the input
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
     });

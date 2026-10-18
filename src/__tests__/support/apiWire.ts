@@ -49,8 +49,6 @@ export const WIRE: Record<string, [() => Promise<unknown>, Wire]> = {
   setPayCycle: [() => api.setPayCycle({ length: 14, last_pay_date: '2026-07-01' }), ['PUT', '/paycycle', 15000, '{"length":14,"last_pay_date":"2026-07-01"}']],
   setBudget: [() => api.setBudget('groceries', 100), ['PUT', '/budgets/groceries', 15000, '{"target":100}']],
   deleteBudget: [() => api.deleteBudget('groceries'), ['DELETE', '/budgets/groceries', 15000, undefined]],
-  setSpread: [() => api.setSpread('groceries', 100, 3), ['PUT', '/budgets/groceries/spread', 15000, '{"amount":100,"cycles":3}']],
-  deleteSpread: [() => api.deleteSpread('groceries'), ['DELETE', '/budgets/groceries/spread', 15000, undefined]],
   listRules: [() => api.listRules(), [null, '/rules', 15000, undefined]],
   createRule: [() => api.createRule({ value: 'COLES', categoryId: 'groceries' }), ['POST', '/rules', 15000, '{"value":"COLES","categoryId":"groceries"}']],
   updateRule: [() => api.updateRule('r1', { value: 'COLES', categoryId: 'groceries' }), ['PUT', '/rules/r1', 15000, '{"value":"COLES","categoryId":"groceries"}']],

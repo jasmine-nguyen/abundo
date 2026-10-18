@@ -24,7 +24,6 @@ from _feed_fakes import (
     SPENDING, WESTPAC, FakeCategoryRepo, Repos, charge_writes, fail_writes, on_write, _row,
     set_category, stored,
 )
-from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _coles_rows():
@@ -105,8 +104,7 @@ class _Run(Repos):
 def _call(handler, body, run=None, categories=frozenset({"groceries", "petrol"})):
     if run is None:
         run = _Run()
-    resp = apply_rules_to_uncategorized(
-        handler,
+    resp = handler.apply_rules_to_uncategorized(
         apply_rules_event(body), run.transaction_repo, FakeCategoryRepo(categories), run.rule_repo)
     return resp, json.loads(resp["body"]), run
 

@@ -40,7 +40,7 @@ def _before_next_update(table, mutate):
 
 def budget_repo(budgets=None):
     """The REAL BudgetRepository over its own FakeTable holding ``budgets`` ({id: entry}), so the
-    delete cascade and the rollover/spread clears run as production wrote them (WHIT-625)."""
+    delete cascade and the rollover clear run as production wrote them (WHIT-625)."""
     from repository_budget import BudgetRepository
 
     repo = BudgetRepository()

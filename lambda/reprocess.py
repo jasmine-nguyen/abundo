@@ -84,7 +84,7 @@ def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
 
         # File it by the user's rules before inserting, unless they couldn't be read (WHIT-530).
         if book is not None:
-            book.file_charges([txn], None, counts_to_budget=counts_to_budget)
+            book.file_charges([txn], counts_to_budget=counts_to_budget)
 
         # Insert, THEN delete the dead-letter — the delete only ever follows a durable
         # insert. A DB error here leaves the row untouched to retry next run.

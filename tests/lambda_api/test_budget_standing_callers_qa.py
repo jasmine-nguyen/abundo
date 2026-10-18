@@ -39,8 +39,7 @@ BUDGETS = {
     "groceries": {"target": D("500")},
     "food": {"target": D("300")},
     "fun": {"target": D("200"), **ALIGNED_ROLLOVER},
-    "insurance": {"target": D("100"), "spread_amount": D("300"), "spread_cycles": D("3"),
-                  "spread_from": "2026-08-27", "spread_len": D("14"), "spread_paydate": "2026-09-10"},
+    "insurance": {"target": D("100")},
     # A rollover flag left on a category since moved to Income. It widens the read.
     "salary": {"target": D("3000"), **ALIGNED_ROLLOVER},
 }
@@ -76,11 +75,6 @@ class _Budgets:
     def settle_carryover(self, *args):
         self.writes.append(("settle_carryover", args))
 
-    def clear_spread(self, *args):
-        self.writes.append(("clear_spread", args))
-
-    def set_spread(self, *args):
-        self.writes.append(("set_spread", args))
 
 
 _PayCycle = partial(_FakePayCycleRepo, **PAY_CYCLE)
@@ -97,7 +91,7 @@ def pinned_today(handler, monkeypatch):
 
 def test_budgets_screen_and_chat_show_the_same_rows(handler, pinned_today):
     # [B1] (P0) Same stored data → the chat's budget rows equal GET /budgets' rows exactly
-    # (rollover carryover, spread cushion, parent refund netting, stale Income flag).
+    # (rollover carryover, parent refund netting, stale Income flag).
     import ai_chat
 
     screen = handler.list_budgets(_Budgets(BUDGETS), _AccountTransactionRepo(ROWS), _PayCycle(), _Categories())

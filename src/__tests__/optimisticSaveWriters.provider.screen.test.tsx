@@ -1,5 +1,5 @@
 // WHIT-628 QA — the writers moved onto runSave that had no sign-out test of their own
-// (saveSpread, removeSpread, deleteBudget), plus the undo/settle wiring of the optimistic
+// (deleteBudget), plus the undo/settle wiring of the optimistic
 // writers when the save fails or succeeds while still signed in. Harness mirrors
 // sessionGuardRollbacks.provider.screen.test.tsx: live miniature auth store, the fake server,
 // the real queryClient.
@@ -31,23 +31,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
-  // [B1]
-  it('saveSpread SUCCESS after sign-out returns false and shows no toast', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Rego')]);
-    const held = server.hold('/budgets/c1/spread');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveSpread('c1', 600, 6); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(returned).toBe(false);
-    expect(result.current.toast).toBeNull();
-  });
-
+describe('WHIT-628 — budget writers settling after sign-out', () => {
   // [B3]
   it('deleteBudget FAILURE after sign-out cannot overwrite the NEXT account\'s budgets', async () => {
     queryClient.setQueryData(['budgets'], { c1: rollup(100) });
@@ -72,46 +56,6 @@ describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
 });
 
 describe('WHIT-628 — writers still signed in', () => {
-  // [B7]
-  it('saveSpread success refreshes budgets, toasts, returns true; failure toasts and returns false', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Rego')]);
-    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let ok!: boolean;
-    await act(async () => { ok = await result.current.saveSpread('c1', 600, 6); });
-    expect(ok).toBe(true);
-    expect(server.sent('PUT', '/budgets/c1/spread').map((request) => request.body)).toEqual([{ amount: 600, cycles: 6 }]);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['budgets'] });
-    expect(result.current.toast).toBe('Bill spread set for Rego.');
-
-    server.once('PUT', '/budgets/c1/spread', 'dropped');
-    let failed!: boolean;
-    await act(async () => { failed = await result.current.saveSpread('c1', 600, 6); });
-    expect(failed).toBe(false);
-    expect(result.current.toast).toBe('Could not set the bill spread. Please try again.');
-  });
-
-  // [B8]
-  it('removeSpread success refreshes budgets and toasts; failure toasts', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Rego')]);
-    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let ok!: boolean;
-    await act(async () => { ok = await result.current.removeSpread('c1'); });
-    expect(ok).toBe(true);
-    expect(server.sent('DELETE', '/budgets/c1/spread')).toHaveLength(1);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['budgets'] });
-    expect(result.current.toast).toBe('Bill spread removed for Rego.');
-
-    server.once('DELETE', '/budgets/c1/spread', 'dropped');
-    let failed!: boolean;
-    await act(async () => { failed = await result.current.removeSpread('c1'); });
-    expect(failed).toBe(false);
-    expect(result.current.toast).toBe('Could not remove the bill spread. Please try again.');
-  });
-
   // [B9]
   it('saveManualRule shows the temp rule instantly, removes it on failure, and toasts the error', async () => {
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);

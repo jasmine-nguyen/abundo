@@ -20,7 +20,7 @@ from _rule_pairs import PAIR_VALUE, RULE_PAIRS
 _CATEGORIES = ("groceries", "petrol", "transport")
 
 _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
-                "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
+                "conditions", "logic"}
 
 
 def _flat(value, field="description", operator="contains", category_id="groceries"):
@@ -238,7 +238,6 @@ def test_create_rule_missing_fields_400(handler, monkeypatch, body, missing):
     _multi([_amount("lots")]),
     _multi([_amount("0")]),
     _multi([_amount(True)]),                                      # a JSON bool is not an amount
-    _flat("NETFLIX") | {"spread": "yes"},                         # spread must be a real bool
     _multi([_text("sideways", field="direction", operator="is")]),
     _multi([]),
     _multi([_text(42, field="merchant")]),                        # text value must be a string
@@ -315,6 +314,56 @@ def test_a_case_and_spacing_variant_dedups_onto_the_existing_rule(handler, monke
 
     assert resp["statusCode"] == 201
     assert repo.minted_rules() == []
+
+
+def test_a_spread_flag_from_an_old_app_saves_a_plain_rule(handler, monkeypatch):
+    # ABU-91: bill spread is gone. An old app may still send spread: true; it is ignored — no
+    # recurring-bill lookup (422), no one-spread-rule clash (409), no spread fields stored.
+    repo = Repos()
+    _inject(handler, monkeypatch, repo)
+
+    created = _post(handler, {"value": "NETFLIX", "categoryId": "groceries", "spread": True})
+    created_body = json.loads(created["body"])
+    assert created["statusCode"] == 201
+    assert set(created_body) == _CLIENT_KEYS
+
+    second = _post(handler, {"value": "SPOTIFY", "categoryId": "groceries", "spread": True})
+    assert second["statusCode"] == 201
+
+    updated = _put(handler, created_body["id"],
+                   {"value": "NETFLIX", "categoryId": "petrol", "spread": True})
+    assert updated["statusCode"] == 200
+    assert set(json.loads(updated["body"])) == _CLIENT_KEYS | {"remaining"}
+
+    for row in repo.stored_rules():
+        assert not [key for key in row if key.startswith("spread")]
+
+
+def test_a_rule_saved_with_spread_details_before_the_release_still_works(handler, monkeypatch):
+    # [A1] Until the clean-up script runs, saved rule rows still carry the old spread fields.
+    # Re-saving the same rule is the usual idempotent 201 (no "already has a spread rule"
+    # clash), the client never sees the old fields, and an edit still saves.
+    from decimal import Decimal
+
+    repo = Repos(rules=[_rule("COLES", "groceries")])
+    rule_id = repo.rule_id("COLES")
+    legacy = {**repo.stored_rules()[0], "spread": True, "spread_amount": Decimal("42.50"),
+              "spread_gap_days": 30, "spread_seeded": True}
+    repo.table.seed(legacy)
+    _inject(handler, monkeypatch, repo)
+
+    again = _post(handler, {"value": "COLES", "categoryId": "groceries"})
+    assert again["statusCode"] == 201
+    assert repo.minted_rules() == []
+
+    listed = handler.lambda_handler(api_event("GET", "/rules"), None)
+    assert listed["statusCode"] == 200
+    assert set(json.loads(listed["body"])[0]) == _CLIENT_KEYS
+
+    edited = _put(handler, rule_id, {"value": "COLES", "categoryId": "petrol"})
+    assert edited["statusCode"] == 200
+    assert set(json.loads(edited["body"])) == _CLIENT_KEYS | {"remaining"}
+    assert repo.stored_rules()[0]["category_id"] == "petrol"
 
 
 # --- PUT /rules/{id} ----------------------------------------------------------

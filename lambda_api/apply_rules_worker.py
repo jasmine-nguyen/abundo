@@ -18,15 +18,12 @@ import time
 from api_constants import (
     APPLY_RULES_WORKER_DEADLINE_MARGIN_SECONDS, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
 )
-from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError, RuleClashError
-from repository_paycycle import PayCycleRepository
 from repository_rule import RuleRepository
 from repository_job import COUNT_FIELDS, STATUS_FAILED, STATUS_SUCCEEDED, JobRepository
 from repository_transaction import TransactionRepository, read_window
-from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
-from rule_spreading import SpreadSeeder
+from rule_book import RuleBook, WriteLimit, rule_from_row
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +66,6 @@ def lambda_handler(event: dict, context=None) -> dict:
     category_repo = CategoryRepository()
     rule_repo = RuleRepository()
     job_repo = JobRepository()
-    budget_repo = BudgetRepository()
-    paycycle_repo = PayCycleRepository()
 
     created_rule = None
     try:
@@ -83,7 +78,7 @@ def lambda_handler(event: dict, context=None) -> dict:
                 inline_rule["value"], inline_rule["categoryId"],
                 budget_excluded=inline_rule["budgetExcluded"],
             )
-            created_rule = rule_reply(rule_from_row(row))
+            created_rule = rule_from_row(row)
             book = book.only(inline_rule, field=DEFAULT_RULE_FIELD, operator=DEFAULT_RULE_OPERATOR)
 
         if not book.rules:
@@ -118,7 +113,6 @@ def lambda_handler(event: dict, context=None) -> dict:
             inline_stamp=(created_rule["id"] if inline_rule is not None else None),
             inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
             run_reconcile=(inline_rule is None),
-            seeder=SpreadSeeder(budget_repo, paycycle_repo, rule_repo),
             on_progress=on_progress,
         )
 

@@ -86,19 +86,19 @@ export function rule(over: Partial<Rule> = {}): Rule {
 
 // The server's 'available to spend' (WHIT-549 unified formula), test-side only so fixtures carry
 // the figure the server would send. The app reads it, never computes it (WHIT-840).
-export function serverAvailable(parts: { target: number; rollover?: boolean; carryover?: number; spreadAdjustment?: number }): number {
-  return parts.target + (parts.rollover ? parts.carryover ?? 0 : 0) + (parts.spreadAdjustment ?? 0);
+export function serverAvailable(parts: { target: number; rollover?: boolean; carryover?: number }): number {
+  return parts.target + (parts.rollover ? parts.carryover ?? 0 : 0);
 }
 
 export function budget(over: Partial<Budget> = {}): Budget {
-  const merged = { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, spreadAdjustment: 0, ...over };
+  const merged = { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, ...over };
   return { ...merged, available: over.available ?? serverAvailable({ ...merged, target: merged.budget }) };
 }
 
-// A /budgets wire row with the server's `available` filled in from its target/rollover/spread.
+// A /budgets wire row with the server's `available` filled in from its target/rollover.
 export function budgetRow(over: Partial<BudgetRollup> = {}): BudgetRollup {
   const row = { target: 100, posted: 0, pending: 0, ...over };
-  return { ...row, available: over.available ?? serverAvailable({ ...row, spreadAdjustment: row.spread?.adjustment }) };
+  return { ...row, available: over.available ?? serverAvailable(row) };
 }
 
 export function spend(over: Partial<CategorySpend> = {}): CategorySpend {

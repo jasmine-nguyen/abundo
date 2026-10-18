@@ -65,13 +65,11 @@ from constants import (
     RULE_LOGIC,
     RULE_OPERATORS,
     SAVINGS_BUCKET,
-    SPREAD_MAX_CYCLES,
-    SPREAD_MIN_CYCLES,
 )
 from collections import deque
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from repository_balance import AccountBalanceRepository
 from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
@@ -92,11 +90,9 @@ from repository_milestone import MilestoneRepository
 from repository_paycycle import PayCycleRepository
 from repository_rule import RuleRepository
 from repository_job import STATUS_RUNNING, STATUS_FAILED, JobRepository
-from rule_engine import rule_identity
 from repository_transaction import TransactionRepository, read_window
 from budget_standing import budget_spend, budget_standing, standing_window
-from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
-from rule_spreading import SpreadSeeder
+from rule_book import RuleBook, WriteLimit, rule_from_row
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -132,10 +128,7 @@ from merchant_groups import (
 from filing_habits import suggest_rules_from_filing_habits
 from transaction_search import SEARCH_QUERY_MAX_LEN, search_transactions
 from milestones import notify_homeloan_milestone
-from rule_engine import (
-    is_unfiled_category, existing_at_least_as_specific, rule_matches,
-    rule_id_for)
-from recurring_bills import detect_recurring_bills
+from rule_engine import is_unfiled_category, existing_at_least_as_specific, rule_id_for
 from repository_notify import NotifyRepository
 from goal_checkpoints import check_goal_checkpoints, notify_goal_checkpoint_crossing
 import base64
@@ -158,11 +151,6 @@ def get_api_key() -> str:
     by path). Kept as a one-line wrapper passing this lambda's own SSM path (AGENTS.md landmine);
     the balance refresh and its tests monkeypatch `handler.get_api_key`."""
     return _fetch_api_key(BANKSYNC_API_KEY_PATH)
-
-
-def _is_budget_spread_path(path: str) -> bool:
-    """Exactly /budgets/{id}/spread, so a category id "spread" stays an item route."""
-    return path.startswith(f"{BUDGET_PATH}/") and path.endswith("/spread") and path.count("/") == 3
 
 
 def _under(prefix: str, suffix: str = ""):
@@ -206,8 +194,7 @@ _EXACT_ROUTES = {
         CategoryRepository()),
     # Previews unless the body says {"dryRun": false} (WHIT-502).
     ("POST", UNCATEGORIZED_APPLY_RULES_PATH): lambda event: apply_rules_to_uncategorized(
-        event, TransactionRepository(), CategoryRepository(), RuleRepository(),
-        BudgetRepository(), PayCycleRepository()),
+        event, TransactionRepository(), CategoryRepository(), RuleRepository()),
     # Async apply-rules job (WHIT-537): 202 + jobId; the {id} GET reports progress.
     ("POST", UNCATEGORIZED_APPLY_RULES_JOBS_PATH): lambda event: start_apply_rules_job(
         event, CategoryRepository(), RuleRepository(), JobRepository()),
@@ -251,7 +238,7 @@ _EXACT_ROUTES = {
     ("GET", GOALS_PATH): lambda event: _json_response(200, list_goals(GoalsRepository())),
     ("GET", RULES_PATH): lambda event: list_rules_route(RuleRepository()),
     ("POST", RULES_PATH): lambda event: create_rule_route(
-        event, RuleRepository(), CategoryRepository(), TransactionRepository()),
+        event, RuleRepository(), CategoryRepository()),
     # Device push-token registration (it controls who receives the user's notifications).
     ("POST", DEVICES_PATH): lambda event: register_device(event, DeviceRepository()),
 }
@@ -274,11 +261,6 @@ _PREFIX_ROUTES = [
     # The transactions behind one budget's total, so the detail list reconciles with the header.
     ("GET", _under(BUDGET_PATH, "/transactions"), lambda event: get_budget_transactions(
         event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
-    # A bill spread on one budget (WHIT-504). MUST sit above the budget item PUT/DELETE,
-    # which would otherwise swallow "/budgets/{id}/spread" as a target write.
-    ("PUT", _is_budget_spread_path, lambda event: set_spread(
-        event, BudgetRepository(), CategoryRepository(), PayCycleRepository())),
-    ("DELETE", _is_budget_spread_path, lambda event: delete_spread(event, BudgetRepository())),
     ("PUT", _under(BUDGET_PATH), lambda event: set_budget(
         event, BudgetRepository(), CategoryRepository(), PayCycleRepository())),
     ("DELETE", _under(BUDGET_PATH), lambda event: delete_budget(event, BudgetRepository())),
@@ -940,19 +922,17 @@ def update_category(
     except InvalidCategoryParentError as e:
         return _json_response(400, {"error": str(e)})
 
-    # Rollover and a bill spread are spend-only. Reclassifying a category OUT of a spend
-    # bucket must clear both (keeping the target) so a stale carryover anchor can't re-fold
-    # on a later move back to spend (WHIT-474), and a stale spread can't keep adjusting.
-    # Best-effort, category-first — like the delete cascade below: a failed clear only
-    # leaves a recoverable stale field (inert while the category is non-spend, as the read
-    # path ignores both on a non-spend bucket), never a corrupt entry, so it must not fail
-    # the bucket edit. Each clear is its own attempt so one failing can't skip the other.
+    # Rollover is spend-only. Reclassifying a category OUT of a spend bucket must clear it
+    # (keeping the target) so a stale carryover anchor can't re-fold on a later move back to
+    # spend (WHIT-474). Best-effort, category-first — like the delete cascade below: a failed
+    # clear only leaves a recoverable stale field (inert while the category is non-spend, as
+    # the read path ignores it on a non-spend bucket), never a corrupt entry, so it must not
+    # fail the bucket edit.
     if bucket in (INCOME_BUCKET, SAVINGS_BUCKET):
-        for clear in (budget_repo.clear_rollover, budget_repo.clear_spread):
-            try:
-                clear(cat_id)
-            except (VersionConflictError, DatabaseError) as e:
-                logger.warning("%s failed for re-bucketed category %s: %s", clear.__name__, cat_id, e)
+        try:
+            budget_repo.clear_rollover(cat_id)
+        except (VersionConflictError, DatabaseError) as e:
+            logger.warning("clear_rollover failed for re-bucketed category %s: %s", cat_id, e)
 
     return _json_response(200, updated)
 
@@ -1079,18 +1059,7 @@ def _validate_rule_body(event: dict):
     if not isinstance(budget_excluded, bool):
         return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
 
-    spread = body.get("spread", False)
-    if not isinstance(spread, bool):
-        return None, _json_response(400, {"error": "spread must be a boolean"})
-
-    # A rule can't both keep a charge OUT of the budget and spread it INTO it (WHIT-559) — the two
-    # actions contradict, so the combo is refused rather than stored for a later path to reconcile.
-    if spread and budget_excluded:
-        return None, _json_response(
-            400, {"error": "a rule can't both spread a bill and keep it out of the budget"})
-
-    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded,
-            "spread": spread}
+    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded}
 
     if "conditions" in body:
         conditions, logic, error = _validate_conditions(body)
@@ -1188,101 +1157,18 @@ def list_rules_route(rule_repo: RuleRepository) -> dict:
         rules = rule_repo.list_rules()
     except DatabaseError:
         return _json_response(500, {"error": "could not read your rules"})
-    return _json_response(200, [rule_reply(rule_from_row(row)) for row in rules])
-
-
-def _spread_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
-    """Does another rule already auto-spread this category? At most one spread rule per category
-    (WHIT-559 — spreading is one plan per category, so two would fight). `exclude_id` skips the rule
-    being edited so re-saving it is not a self-clash.
-
-    Read-then-write, not a locked invariant: two near-simultaneous spread-rule creates on one category
-    could both pass this read and both persist. Accepted for a single-user app — rule writes are a
-    deliberate, rare user action, not a concurrent workload — and the create-only spread write means
-    even two spread rules can only ever seed ONE plan between them, never clobber."""
-    return any(rule.get("spread") and rule.get("category_id") == category_id
-               and rule.get("id") != exclude_id
-               for rule in rules)
-
-
-def _capture_spread_bill(parsed: dict, transaction_repo: TransactionRepository):
-    """Find the recurring bill a spread rule will spread, returning (amount, gap_days, None), or
-    (None, None, error) with a 400/409 when it can't.
-
-    The amount + cadence are grounded in the charges THIS rule matches — not the merchant name — so
-    any rule shape (description, amount, multi-condition) maps cleanly: run the same predicate the
-    apply paths use over full history, then the WHIT-568 detector over that matched set. A rule that
-    matches no recurring bill, or more than one, is rejected — there is no single amount to capture.
-    """
-    engine_rule = {"field": parsed["field"], "operator": parsed["operator"],
-                   "value": parsed["value"], "conditions": parsed["conditions"],
-                   "logic": parsed["logic"]}
-    transactions = read_window(transaction_repo, None, None)
-    matched = [transaction for transaction in transactions if rule_matches(engine_rule, transaction)]
-    bills = detect_recurring_bills(matched)["bills"]
-    if not bills:
-        return None, None, _json_response(
-            422, {"error": "we can't find a recurring bill for this rule yet"})
-    if len(bills) > 1:
-        return None, None, _json_response(
-            422, {"error": "this rule matches more than one recurring bill; make it more specific"})
-    bill = bills[0]
-    return bill["typicalAmount"], bill["medianGapDays"], None
-
-
-def _parsed_rule_id(parsed: dict) -> str:
-    """The id a parsed rule body would store — the store's own identity function, so the handler's
-    self-exclude / preserve id compare can never drift from the id the row is written under."""
-    return rule_identity(parsed["field"], parsed["operator"], parsed["value"],
-                         parsed["conditions"], parsed["logic"])
-
-
-def _resolve_spread(parsed: dict, rule_repo: RuleRepository,
-                    transaction_repo: TransactionRepository, exclude_id: str | None,
-                    preserved: tuple | None = None):
-    """The (spread_amount, spread_gap_days, None) a spread rule stores, or (None, None, error).
-
-    (None, None, None) for a non-spread rule — nothing to capture. For a spread rule: reject a second
-    spread rule on the same category, then either REUSE a `preserved` (amount, gap) — the caller
-    passes the stored capture when an edit leaves the rule's match text unchanged, so the amount is
-    frozen at create and an unrelated edit (e.g. a category change) neither re-detects nor 422s when
-    the bill history has aged out — or capture the bill afresh. One place so POST and PUT resolve a
-    spread rule identically.
-    """
-    if not parsed["spread"]:
-        return None, None, None
-    try:
-        existing_rules = rule_repo.list_rules()
-    except DatabaseError:
-        return None, None, _json_response(500, {"error": "could not read your rules"})
-    if _spread_rule_on_category(existing_rules, parsed["category_id"], exclude_id):
-        return None, None, _json_response(
-            409, {"error": "a spread rule already covers this category"})
-    if preserved is not None:
-        return preserved[0], preserved[1], None
-    return _capture_spread_bill(parsed, transaction_repo)
+    return _json_response(200, [rule_from_row(row) for row in rules])
 
 
 def create_rule_route(event: dict, rule_repo: RuleRepository,
-                      category_repo: CategoryRepository,
-                      transaction_repo: TransactionRepository) -> dict:
+                      category_repo: CategoryRepository) -> dict:
     """POST /rules — create a rule in our store.
 
     Returns 201 with the rule, whether it was newly created or the SAME text already existed
     (parity with the old proxy; the app checks only response.ok). A same-text/different-category
-    write is a 409 carrying the existing rule. A `spread` rule (WHIT-559) captures the recurring
-    bill it will spread at create time; a rule that matches no single recurring bill is a 422.
+    write is a 409 carrying the existing rule.
     """
     parsed, error = _validate_rule_write(event, category_repo)
-    if error:
-        return error
-
-    # Exclude the rule being created from the one-spread-rule-per-category check: its id is the
-    # rule TEXT, so re-POSTing the SAME spread rule matches itself and would wrongly 409 an idempotent
-    # create. A DIFFERENT-text second spread rule still 409s; a same-text-but-flag-differs write
-    # still clashes inside create_rule.
-    spread_amount, spread_gap_days, error = _resolve_spread(
-        parsed, rule_repo, transaction_repo, exclude_id=_parsed_rule_id(parsed))
     if error:
         return error
 
@@ -1290,14 +1176,13 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
         rule, _created = rule_repo.create_rule(
             parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
-            conditions=parsed["conditions"], logic=parsed["logic"],
-            spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
+            conditions=parsed["conditions"], logic=parsed["logic"])
     except RuleClashError as e:
         return _rule_clash_response(rule_from_row(e.existing))
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    return _json_response(201, rule_reply(rule_from_row(rule)))
+    return _json_response(201, rule_from_row(rule))
 
 
 def _apply_rules_limit(started: float) -> WriteLimit:
@@ -1329,25 +1214,11 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     if error:
         return error
 
-    # Preserve the amount/cadence captured at create when this edit leaves the rule's MATCH TEXT
-    # unchanged (its id is unchanged) and it was already spreading — so a category or unrelated edit
-    # keeps the frozen bill rather than re-detecting (and 422-ing when the history has aged out). A
-    # text change (id moves) or turning spreading on afresh re-captures against the new match.
-    prior = rule_repo.get_rule(rule_id)
-    preserved = None
-    if prior is not None and prior.get("spread") and _parsed_rule_id(parsed) == rule_id:
-        preserved = (prior.get("spread_amount"), prior.get("spread_gap_days"))
-    spread_amount, spread_gap_days, error = _resolve_spread(
-        parsed, rule_repo, transaction_repo, exclude_id=rule_id, preserved=preserved)
-    if error:
-        return error
-
     try:
         rule = rule_repo.update_rule(
             rule_id, parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
-            conditions=parsed["conditions"], logic=parsed["logic"],
-            spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
+            conditions=parsed["conditions"], logic=parsed["logic"])
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1357,7 +1228,7 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
 
     edited = rule_from_row(rule)
     remaining = RuleBook.refile_touched(rule_id, edited, transaction_repo, _apply_rules_limit(started))
-    return _json_response(200, {**rule_reply(edited), "remaining": remaining})
+    return _json_response(200, {**edited, "remaining": remaining})
 
 
 def delete_rule_route(event: dict, rule_repo: RuleRepository,
@@ -1549,7 +1420,7 @@ def _rule_clash_response(existing: dict) -> dict:
     rule. One definition so the pre-scan clash and the mint-time race clash can't drift apart."""
     return _json_response(409, {
         "error": f"you already have a rule for that filing to '{existing['categoryId']}'",
-        "existingRule": rule_reply(existing),
+        "existingRule": existing,
     })
 
 
@@ -1701,7 +1572,7 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
 
 def apply_rules_to_uncategorized(
     event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository,
-    rule_repo: RuleRepository, budget_repo: BudgetRepository, paycycle_repo: PayCycleRepository,
+    rule_repo: RuleRepository,
 ) -> dict:
     """POST /transactions/uncategorized/apply-rules — file charges already stored that a rule
     covers, across ALL history.
@@ -1790,16 +1661,14 @@ def apply_rules_to_uncategorized(
             return _rule_clash_response(rule_from_row(e.existing))
         except DatabaseError:
             return _json_response(500, {"error": "could not save your rule"})
-        created_rule = rule_reply(rule_from_row(row))
+        created_rule = rule_from_row(row)
 
-    seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     filed, vanished, failed, already_filed, matched_remaining = book.sweep(
         transaction_repo, transactions, plan,
         limit=_apply_rules_limit(started),
         inline_stamp=(created_rule["id"] if inline_rule is not None else None),
         inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
         run_reconcile=(inline_rule is None),
-        seeder=seeder,
     )
 
     return _apply_rules_response(
@@ -2041,34 +1910,6 @@ def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     return {**cycle, "days_left": days_left, "cycle_days": cycle_days}
 
 
-def _persist_spread_settlements(budget_repo: BudgetRepository, targets: dict, finished: list,
-                                reanchored: dict) -> None:
-    """Write each spread's read-side outcome back — clear the finished ones, re-save the
-    settled ones — BEST-EFFORT, same posture as the rollover settle: the row is recomputed
-    live on every read (a finished plan contributes 0, a settle re-derives the same plan), so
-    a lost race or DB blip must never 500 the GET; it just lands on the next read. Each write
-    is its own attempt so one failing can't skip the rest.
-
-    Each write is skipped if the budget changed since the read (`expected=targets[cat_id]`),
-    so a spread edit made during the GET is never overwritten; it lands on the next read. If
-    the same category also got a rollover settle in this read (legacy rollover+spread
-    co-state), that write already changed the entry, so the spread write is skipped too and
-    lands on a later read."""
-    for cat_id in finished:
-        try:
-            budget_repo.clear_spread(cat_id, expected=targets[cat_id])
-        except Exception as e:
-            logger.warning("spread clear failed for %s (recomputes next read): %s", cat_id, e)
-    for cat_id, plan in reanchored.items():
-        try:
-            budget_repo.set_spread(
-                cat_id, plan["spread_amount"], int(plan["spread_cycles"]), plan["spread_from"],
-                int(plan["spread_len"]), plan["spread_paydate"], expected=targets[cat_id],
-            )
-        except Exception as e:
-            logger.warning("spread settle failed for %s (recomputes next read): %s", cat_id, e)
-
-
 def _persist_rollover_settlements(budget_repo: BudgetRepository, targets: dict, settlements: dict,
                                   length: int, last_pay_date: str) -> None:
     """Write each rollover seal/re-anchor back — BEST-EFFORT. The displayed carryover is
@@ -2128,14 +1969,6 @@ def list_budgets(
     before (bar the two always-present keys). Rollover applies to SPEND categories only: a
     flag left on a category later re-bucketed to Income/Savings is ignored (its earnings are
     never folded as a spend buffer).
-
-    Bill spread (WHIT-504): a category with a spread plan carries a `spread` object —
-    {amount, cycles, index, adjustment} — whose signed `adjustment` the client adds to the
-    cycle's spendable: the full cushion in the anchor cycle, then an equal slice taken back
-    each of the next `cycles` cycles (see spread_state). A plan that has finished, or was
-    settled after a pay-cycle change, is cleared best-effort here. Like rollover it is
-    spend-only, ignored on a re-bucketed category, and a plain budget's wire shape is
-    unchanged. A category has rollover OR a spread, never both (enforced on write).
     """
     targets = budget_repo.list_budgets()  # {id: entry}
     if not targets:
@@ -2146,8 +1979,6 @@ def list_budgets(
     rows, settlements = budget_standing(targets, window, categories, transactions)
     _persist_rollover_settlements(budget_repo, targets, settlements["rollover"], window.length,
                                   window.last_pay_date)
-    _persist_spread_settlements(budget_repo, targets, settlements["spread_finished"],
-                                settlements["spread_reanchored"])
     return rows
 
 
@@ -2445,8 +2276,8 @@ def get_cycle_transactions(
     follows the budget's own rule. Returns {start, end, transactions, budgets} so the app
     can name the file after the window.
 
-    `budgets` has the same shape as GET /budgets. Cycle 0 IS /budgets' maths (rollover and
-    spread included); a past cycle is that cycle's posted/pending against today's targets.
+    `budgets` has the same shape as GET /budgets. Cycle 0 IS /budgets' maths (rollover
+    included); a past cycle is that cycle's posted/pending against today's targets.
     Read-only: no settlement is saved.
     """
     cycle, cycle_error = _parse_breakdown_cycle(event)
@@ -3238,11 +3069,6 @@ def set_budget(
     anchor = None
     if rollover:
         existing = repo.list_budgets().get(cat_id)
-        # A category has rollover OR a bill spread, never both — the two would both move the
-        # same cycle's spendable and double-count one overspend (WHIT-504). set_spread holds
-        # the mirror guard.
-        if existing and "spread_amount" in existing:
-            return _json_response(400, {"error": "remove this category's bill spread before turning on rollover"})
         if not (existing and existing.get("rollover")):
             cycle = paycycle_repo.get_paycycle()
             cycle_start, _ = current_cycle_window(cycle["last_pay_date"], cycle["length"])
@@ -3268,83 +3094,6 @@ def delete_budget(event: dict, repo: BudgetRepository) -> dict:
     if not cat_id:
         return _json_response(404, {"error": "budget not found"})
     repo.delete_budget(cat_id)
-    return _json_response(200, {"id": cat_id})
-
-
-def set_spread(
-    event: dict, repo: BudgetRepository, category_repo: CategoryRepository,
-    paycycle_repo: PayCycleRepository,
-) -> dict:
-    """PUT /budgets/{category}/spread — spread a one-off bill over the coming pay cycles
-    (WHIT-504): cover `amount` in the current cycle, take it back in `cycles` equal slices.
-
-    Body: {"amount": <number > 0>, "cycles": <whole number in [SPREAD_MIN_CYCLES,
-    SPREAD_MAX_CYCLES]>}. `amount` is stored as a Decimal quantised to cents, so the slices
-    (worked out in whole cents) always sum back to exactly the stored amount. Creating a
-    spread on a category that already has one replaces it, anchored afresh to the current
-    cycle.
-
-    Spend-only, like rollover: an Income earn-target or a Savings category is rejected. The
-    category must already carry a budget target (the spread adjusts that target's cycle
-    spendable), and must not have rollover on — a category has one or the other, never both
-    (set_budget holds the mirror guard). Cheap numeric checks run before any repo read.
-    """
-    cat_id = (event.get("pathParameters") or {}).get("category")
-    if not cat_id:
-        return _json_response(404, {"error": "budget not found"})
-
-    body, error = _parse_json_body(event)
-    if error:
-        return error
-
-    amount = body.get("amount")
-    if not _finite_number(amount, low=-math.inf):
-        return _json_response(400, {"error": "amount must be a number"})
-    # Cap the raw float first (set_budget's order): quantising a huge value like 1e27 would
-    # raise InvalidOperation (past the 28-digit Decimal context) and 500 instead of 400.
-    if amount > _BUDGET_TARGET_MAX:
-        return _json_response(400, {"error": "amount too large"})
-    # Quantise to cents BEFORE the > 0 check — the slices are split in whole cents, so a
-    # sub-cent amount (0.004) would otherwise pass and store a $0.00 plan. Half-up is the
-    # same rounding the read-side slice math uses, so the two never disagree.
-    stored_amount = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if stored_amount <= 0:
-        return _json_response(400, {"error": "amount must be at least 0.01"})
-
-    cycles = body.get("cycles")
-    if isinstance(cycles, bool) or not isinstance(cycles, int):
-        return _json_response(400, {"error": "cycles must be a whole number"})
-    if not SPREAD_MIN_CYCLES <= cycles <= SPREAD_MAX_CYCLES:
-        return _json_response(
-            400, {"error": f"cycles must be between {SPREAD_MIN_CYCLES} and {SPREAD_MAX_CYCLES}"})
-
-    bucket_by_id = {c["id"]: c.get("bucket") for c in category_repo.list_categories()}
-    if bucket_by_id.get(cat_id) in (INCOME_BUCKET, SAVINGS_BUCKET):
-        return _json_response(400, {"error": "a bill spread is only for spend categories"})
-
-    existing = repo.list_budgets().get(cat_id)
-    if existing is None:
-        return _json_response(400, {"error": "set a budget before spreading a bill"})
-    if existing.get("rollover"):
-        return _json_response(400, {"error": "turn off rollover before spreading a bill"})
-
-    cycle = paycycle_repo.get_paycycle()
-    cycle_start, _ = current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    saved = repo.set_spread(
-        cat_id, stored_amount, cycles, cycle_start, cycle["length"], cycle["last_pay_date"],
-    )
-    return _json_response(200, saved)
-
-
-def delete_spread(event: dict, repo: BudgetRepository) -> dict:
-    """DELETE /budgets/{category}/spread — remove a category's bill spread, keeping its
-    budget target. Idempotent: an id with no spread (or no budget at all) still returns 200,
-    as the repo's clear_spread is a no-op then — mirroring delete_budget.
-    """
-    cat_id = (event.get("pathParameters") or {}).get("category")
-    if not cat_id:
-        return _json_response(404, {"error": "budget not found"})
-    repo.clear_spread(cat_id)
     return _json_response(200, {"id": cat_id})
 
 

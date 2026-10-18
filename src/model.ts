@@ -1,6 +1,6 @@
 // WHIT-630: the client model shapes and the converters from the server payloads, moved out of
 // context.tsx so queries.ts can use them without importing the store.
-import type { BreakdownRollup, BudgetRollup, CarryoverCycle, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord, SpreadPlan } from './api';
+import type { BreakdownRollup, BudgetRollup, CarryoverCycle, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord } from './api';
 import type { Category } from './types';
 import { chartCategoryColor, normalizeColorSlot } from './chartColors';
 
@@ -12,12 +12,6 @@ export interface Budget {
   rollover: boolean; carryover: number;
   // The cycles behind `carryover` (newest first) and the older remainder (WHIT-742).
   carryoverCycles?: CarryoverCycle[]; carryoverEarlier?: number;
-  // Bill spread (WHIT-504): `spreadAdjustment` is the signed dollars this cycle's spendable
-  // moves by (a positive cushion in the anchor cycle, a negative slice in a payback cycle);
-  // default 0 for a non-spread budget. `spread` carries the plan detail for the status line.
-  // A category has rollover OR a spread, never both, so at most one of carryover/spreadAdjustment
-  // is ever non-zero.
-  spreadAdjustment: number; spread?: SpreadPlan;
   // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549).
   // Always set: toBudget fills the target when the server omits it (past-cycle rows only).
   available: number;
@@ -26,7 +20,7 @@ export interface Budget {
 // server facts (default description/contains for app-authored rules) so a rule
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; spread?: boolean; spreadAmount?: number | null; spreadGapDays?: number | null; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
 // WHIT-563: the multi-condition payload a rule writer sends when the builder produced more than a
 // plain "description contains" rule. Absent on the classic single-condition path (which stays a
 // flat value write, preserving the WHIT-538 preview flow and pattern-based conflict detection).
@@ -88,7 +82,6 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
     id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
     rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
     carryoverCycles: rollup.carryover_cycles ?? [], carryoverEarlier: rollup.carryover_earlier ?? 0,
-    spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
     // The server's spendable (WHIT-549). Only past-cycle export rows omit it, and a past cycle
     // exports the plain target, so that's the fill (WHIT-840).
     available: rollup.available ?? rollup.target,
@@ -99,7 +92,7 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
 // (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
 export function toRule(raw: RuleRecord): Rule {
-  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, spread: raw.spread, spreadAmount: raw.spreadAmount, spreadGapDays: raw.spreadGapDays, conditions: raw.conditions, logic: raw.logic };
+  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, conditions: raw.conditions, logic: raw.logic };
 }
 
 // The sentinel category id the /breakdown endpoint uses for spend that counts to

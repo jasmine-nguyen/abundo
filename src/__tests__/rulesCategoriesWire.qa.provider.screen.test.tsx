@@ -50,7 +50,7 @@ it('a rule id with a slash is escaped in the path, so the edit reaches that rule
   expect(server.requests()).toEqual([{
     method: 'PUT',
     path: '/rules/a%2Fb',
-    body: { value: 'DISNEY', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: false, spread: false },
+    body: { value: 'DISNEY', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: false },
   }]);
   expect(rules()?.[0]).toMatchObject({ id: 'a/b', pattern: 'DISNEY' });
 });

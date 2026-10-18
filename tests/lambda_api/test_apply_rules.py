@@ -20,7 +20,6 @@ from _feed_fakes import (
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, charge_writes, date_queries, fail_writes,
     on_write, real_repos, _row, _rule, set_category, stored, vanish_on_write,
 )
-from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _rule_ids(rule_repo):
@@ -29,8 +28,7 @@ def _rule_ids(rule_repo):
 
 
 def _call(handler, repo, rule_repo, body, categories=frozenset({"groceries", "coffee"})):
-    resp = apply_rules_to_uncategorized(
-        handler,
+    resp = handler.apply_rules_to_uncategorized(
         apply_rules_event(body), repo, FakeCategoryRepo(categories), rule_repo)
     return resp, json.loads(resp["body"])
 
@@ -56,8 +54,7 @@ def test_dry_run_is_the_default_and_writes_nothing(handler):
 def test_a_non_boolean_dry_run_is_rejected_rather_than_guessed(handler, bad):
     table, repo, rule_repo = real_repos(
         {SPENDING: [_row(SPENDING, "2026-07-01", "t1")]}, rules=[_rule("coles")])
-    resp = apply_rules_to_uncategorized(
-        handler,
+    resp = handler.apply_rules_to_uncategorized(
         apply_rules_event({"dryRun": bad}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 400
@@ -67,8 +64,7 @@ def test_a_non_boolean_dry_run_is_rejected_rather_than_guessed(handler, bad):
 def test_a_missing_body_is_rejected_not_treated_as_a_write(handler):
     table, repo, rule_repo = real_repos(
         {SPENDING: [_row(SPENDING, "2026-07-01", "t1")]}, rules=[_rule("coles")])
-    resp = apply_rules_to_uncategorized(
-        handler,
+    resp = handler.apply_rules_to_uncategorized(
         apply_rules_event(), repo, FakeCategoryRepo({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 400
@@ -363,8 +359,7 @@ def test_a_rules_read_failure_reads_no_history_and_writes_nothing(handler):
     # untouched — nothing scanned, nothing written.
     table, repo, rule_repo = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "t1")]})
     table.fail("query")
-    resp = apply_rules_to_uncategorized(
-        handler,
+    resp = handler.apply_rules_to_uncategorized(
         apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 500

@@ -163,11 +163,6 @@ export interface RuleRecord {
   categoryId: string;
   /** When true, a charge this rule files is also kept out of the budget (WHIT-558). */
   budgetExcluded?: boolean;
-  // WHIT-559: when true, matching this rule auto-creates the category's bill-spread plan. The
-  // amount + gap are captured server-side from the matched recurring bill (read-only here).
-  spread?: boolean;
-  spreadAmount?: number | null;
-  spreadGapDays?: number | null;
   // WHIT-541: multi-condition rules carry these; a single-condition rule has null and the engine
   // falls back to the flat field/operator/value.
   conditions?: RuleCondition[] | null;
@@ -186,8 +181,6 @@ export interface RuleWriteInput {
   field?: string;
   operator?: string;
   budgetExcluded?: boolean;
-  /** WHIT-559: when true, the server auto-creates the category's bill-spread plan on a match. */
-  spread?: boolean;
   conditions?: RuleCondition[];
   logic?: RuleLogic;
 }
@@ -673,16 +666,6 @@ export const deleteCategory = endpoint(
   { withReason: true },
 );
 
-/** A bill spread's shape on a budget (WHIT-504/505). `adjustment` is the signed dollars this
- * cycle's spendable moves by — a positive cushion in the anchor cycle, a negative slice in a
- * payback cycle. Shared by the wire `BudgetRollup.spread` and the client `Budget.spread`. */
-export interface SpreadPlan {
-  amount: number;
-  cycles: number;
-  index: number;
-  adjustment: number;
-}
-
 /** One completed cycle behind a rollover carryover (WHIT-742). `leftover` is signed (target −
  * spent); `settling` = still inside the settle lag, not yet sealed; `rebuilt` = recomputed later
  * from saved transactions rather than recorded when it sealed. */
@@ -710,11 +693,8 @@ export interface BudgetRollup {
   // (WHIT-742). Together they add up to `carryover`. Rollover rows only.
   carryover_cycles?: CarryoverCycle[];
   carryover_earlier?: number;
-  // Bill spread (WHIT-504): present only for a spend category with an active plan (see SpreadPlan).
-  // A category has rollover OR a spread, never both. Absent = no plan; the client defaults it.
-  spread?: SpreadPlan;
   // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549):
-  // target + this-cycle cushion (rollover carryover OR spread adjustment). Absent on past-cycle
+  // target + rollover carryover. Absent on past-cycle
   // /transactions/cycle budgets — toBudget fills it with the target there.
   available?: number;
 }
@@ -1241,33 +1221,6 @@ export const deleteBudget = endpoint((send, categoryId: string): Promise<{ id: s
   send({ path: `/budgets/${encodeURIComponent(categoryId)}`, method: "DELETE" }));
 
 /**
- * Spread a one-off bill over the coming pay cycles (WHIT-504): cushion `amount` this cycle,
- * take it back in `cycles` equal slices. Creating a plan on a category that already has one
- * replaces it. Spend-only, and rejected (400) while the category has rollover on.
- *
- * @param categoryId - The spend category to spread the bill on.
- * @param amount - The bill amount (must be > 0). Stored rounded to cents server-side.
- * @param cycles - How many cycles to pay it back over (1..24).
- * @returns The saved id, amount and cycle count.
- * @throws If the response status is not OK (e.g. 400 on a bad amount/cycles, rollover on, or no budget).
- */
-export const setSpread = endpoint(
-  (send, categoryId: string, amount: number, cycles: number): Promise<{ id: string; amount: number; cycles: number }> =>
-    send({ path: `/budgets/${encodeURIComponent(categoryId)}/spread`, method: "PUT", body: { amount, cycles } }),
-);
-
-/**
- * Remove a category's bill spread (WHIT-504). Idempotent — a category with no plan (or an
- * unknown id) still returns 200. Only the plan is removed; the budget target is untouched.
- *
- * @param categoryId - The category whose spread to remove.
- * @returns The id whose spread was removed.
- * @throws If the response status is not OK.
- */
-export const deleteSpread = endpoint((send, categoryId: string): Promise<{ id: string }> =>
-  send({ path: `/budgets/${encodeURIComponent(categoryId)}/spread`, method: "DELETE" }));
-
-/**
  * List every categorisation rule from the /rules API. Auth-gated.
  *
  * @returns The rules currently held in our own rule store.
@@ -1283,9 +1236,7 @@ export const listRules = endpoint((send): Promise<RuleRecord[]> =>
  *
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The created rule, including its store-assigned id.
- * @throws {ApiError} If the response status is not OK — carrying `.status` so the caller can
- *   tell a spread rule's 409 (category already spread) / 422 (no recurring bill) apart (WHIT-559),
- *   from a 400 (invalid) or 401 (auth).
+ * @throws {ApiError} If the response status is not OK.
  */
 export const createRule = endpoint((send, input: RuleWriteInput): Promise<RuleRecord> =>
   send({ path: "/rules", method: "POST", body: input }));
@@ -1297,8 +1248,7 @@ export const createRule = endpoint((send, input: RuleWriteInput): Promise<RuleRe
  * @param id - The id of the rule to update.
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The updated rule.
- * @throws {ApiError} If the response status is not OK — carrying `.status` so an edit that turns
- *   spread on can surface its 409/422 (WHIT-559), apart from 404 (unknown id) / 400 / 401.
+ * @throws {ApiError} If the response status is not OK.
  */
 export const updateRule = endpoint((send, id: string, input: RuleWriteInput): Promise<RuleRecord> =>
   send({ path: `/rules/${encodeURIComponent(id)}`, method: "PUT", body: input }));

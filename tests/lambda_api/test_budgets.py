@@ -329,21 +329,18 @@ def test_delete_budget_success(handler):
 @pytest.mark.parametrize("method, path", [
     ("PUT", "/budgets/coffee"),
     ("DELETE", "/budgets/coffee"),
-    ("PUT", "/budgets/coffee/spread"),
-    ("DELETE", "/budgets/coffee/spread"),
 ])
 def test_a_write_conflict_on_any_budget_route_is_409(handler, monkeypatch, method, path):
     # A repo that exhausts its retry budget raises VersionConflictError; the shared dispatch
-    # wrapper must map it to 409 on every write route. The stored spread makes the spread
-    # DELETE really write (clearing an absent spread is a no-op, no race).
-    repo = recording_budget_repo({"coffee": {"target": Decimal("58"), "spread_amount": Decimal("100")}})
+    # wrapper must map it to 409 on every write route.
+    repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
     repo._table.always_race()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: _SpendCategoryRepo(_spend_cat("coffee")))
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
 
     resp = handler.lambda_handler(api_event(
-        method, path, raw='{"target": 58, "amount": 100, "cycles": 2}',
+        method, path, raw='{"target": 58}',
         path_params={"category": "coffee"}, is_base64=False), None)
 
     assert resp["statusCode"] == 409

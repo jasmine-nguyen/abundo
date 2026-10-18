@@ -6,7 +6,6 @@ from decimal import Decimal
 from typing import Optional
 
 from repository_base import RepositoryBase, remove_map_entry, set_map_entry
-from spend import SPREAD_ENTRY_FIELDS
 
 _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 
@@ -17,19 +16,6 @@ _ROLLOVER_FIELDS = (
 )
 
 
-def _spread_fields(amount: Decimal, cycles: int, spread_from: str, spread_len: int,
-                   spread_paydate: str) -> dict:
-    """A bill spread's stored fields (WHIT-504): the amount, how many cycles it is paid back
-    over, and the anchor cycle plus the pay cycle that anchor was captured under."""
-    return {
-        "spread_amount": amount,
-        "spread_cycles": Decimal(cycles),
-        "spread_from": spread_from,
-        "spread_len": Decimal(spread_len),
-        "spread_paydate": spread_paydate,
-    }
-
-
 class BudgetRepository(RepositoryBase):
     """Stores per-category budget targets as a single DynamoDB config item.
 
@@ -38,9 +24,7 @@ class BudgetRepository(RepositoryBase):
     once a category opts into rollover (WHIT budget-rollover), the optional fields
     `rollover` (bool), `carryover` (signed Decimal buffer), `carryover_from` (ISO cycle
     start the buffer is sealed as of), `carryover_len`/`carryover_paydate` (the pay-cycle
-    the buffer was sealed under, so a cycle-config change can re-anchor), or — instead of
-    rollover, never alongside it — a bill spread's `spread_*` fields (see SPREAD_ENTRY_FIELDS,
-    WHIT-504). All optional fields are absent on a legacy/plain budget and default to off/0. Kept separate from
+    the buffer was sealed under, so a cycle-config change can re-anchor). All optional fields are absent on a legacy/plain budget and default to off/0. Kept separate from
     the CATEGORIES item on purpose: an independent version means budget writes and
     category edits never contend on the same lock. Unlike the taxonomy there is no
     server seed — a target exists only once the user sets one, so the map seeds
@@ -58,19 +42,17 @@ class BudgetRepository(RepositoryBase):
         item = self._read_seeded()
         return dict(item["items"])
 
-    def _merge_entry(self, cat_id: str, fields: dict, drop: tuple = (),
+    def _merge_entry(self, cat_id: str, fields: dict,
                      expected: Optional[dict] = None) -> Optional[dict]:
         """Read-modify-write ONE category entry: merge `fields` over the existing entry
-        (or an empty one), minus any keys in `drop`, and write the whole entry back under
+        (or an empty one), and write the whole entry back under
         the optimistic-lock guard.
 
         Merge — not a per-field nested SET — for two reasons: it PRESERVES the entry's
         other fields (so an amount edit can't wipe a stored `carryover`/`rollover`, and a
         settle can't wipe `target`), and it works when the entry doesn't exist yet (a
         nested `SET #items.#id.#field` errors on a missing parent map, but `SET #items.#id
-        = :val` is valid because the `items` map itself is always seeded). `drop` is
-        applied on EVERY attempt, so a retry after a version race re-strips whatever the
-        competing writer merged in. Retries once on a version race; raises
+        = :val` is valid because the `items` map itself is always seeded). Retries once on a version race; raises
         VersionConflictError if it can't converge.
 
         Skipped (returns None) when `expected` is given and the saved entry no longer equals
@@ -80,8 +62,7 @@ class BudgetRepository(RepositoryBase):
         def build(item):
             if expected is not None and item["items"].get(cat_id) != expected:
                 return None
-            existing = {k: v for k, v in item["items"].get(cat_id, {}).items() if k not in drop}
-            entry = {**existing, **fields}
+            entry = {**item["items"].get(cat_id, {}), **fields}
             # SET the whole entry for ONE map key — never rewrites the other keys.
             return set_map_entry(cat_id, entry), {"id": cat_id, **entry}
 
@@ -102,19 +83,13 @@ class BudgetRepository(RepositoryBase):
         left untouched (frozen-then-resumed), so toggling OFF then ON keeps the buffer but
         never seals the cycles that elapsed while it was off. Raises VersionConflictError
         if it can't converge within the retry budget.
-
-        A category has rollover OR a bill spread, never both (WHIT-504). The handler 400s
-        the co-state up front, but that is check-then-act; this write is where the rule is
-        made structural — turning rollover ON strips any spread fields in the SAME write,
-        so a lost race can never leave both stored (last writer wins).
         """
         fields: dict = {"target": target}
         if rollover is not None:
             fields["rollover"] = rollover
         if anchor is not None:
             fields.update(anchor)
-        drop = SPREAD_ENTRY_FIELDS if rollover else ()
-        entry = self._merge_entry(cat_id, fields, drop=drop)
+        entry = self._merge_entry(cat_id, fields)
         return {"id": cat_id, "target": entry["target"]}
 
     def settle_carryover(self, cat_id: str, carryover: Decimal, carryover_from: str,
@@ -162,58 +137,6 @@ class BudgetRepository(RepositoryBase):
 
         self._versioned_update(build, action="delete budget", seed=False)
 
-    def set_spread(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
-                   spread_len: int, spread_paydate: str, *,
-                   expected: Optional[dict] = None) -> Optional[dict]:
-        """Record (upsert) a bill spread on a category's budget entry (WHIT-504): cover
-        `amount` this cycle and take it back in equal slices over the next `cycles` cycles.
-        The anchor is the current cycle start plus the pay cycle it was captured under, so a
-        later cycle-config change is detectable (as with the rollover anchor).
-
-        Preserves `target` via _merge_entry. The handler has already quantised `amount` to
-        cents and enforced that a target exists and rollover is off — but that check is
-        check-then-act, so this write strips any rollover fields in the SAME write: a
-        category has rollover OR a spread, never both, even after a lost race (last writer
-        wins; the mirror strip lives in set_budget). Raises VersionConflictError if it
-        can't converge. Skipped (returns None) when `expected` is given and the saved entry no
-        longer equals it, so a read-path settle never overwrites an edit made after the read.
-        """
-        entry = self._merge_entry(
-            cat_id, _spread_fields(amount, cycles, spread_from, spread_len, spread_paydate),
-            drop=_ROLLOVER_FIELDS, expected=expected)
-        if entry is None:
-            return None
-        return {"id": cat_id, "amount": entry["spread_amount"], "cycles": cycles}
-
-    def set_spread_if_absent(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
-                             spread_len: int, spread_paydate: str) -> Optional[dict]:
-        """Create a bill spread on a category ONLY when it is safe to — the create-only sibling of
-        set_spread, for a rule that auto-spreads a recurring bill (WHIT-559).
-
-        A no-op (returns None, no version bump) unless the category has a target, carries NO spread
-        already, and has rollover off. So a rule firing on every matching charge — on the webhook AND
-        the "apply my rules" sweep — is safe to run repeatedly: it creates the plan once and never
-        re-anchors, and it never overwrites a spread the user set or edited (contrast set_spread,
-        which unconditionally replaces — the user's deliberate re-anchor). The "already spread
-        once, don't re-seed after the user deletes it" guarantee lives on the RULE, not here; this
-        method only refuses to clobber a spread that currently exists.
-
-        The presence check is re-read inside the optimistic-lock loop, so a competing writer that
-        seeds a spread makes this converge to a no-op rather than a clobber. Strips any rollover
-        fields in the same write (a category has rollover OR a spread, never both), mirroring
-        set_spread. Raises VersionConflictError if it can't converge.
-        """
-        def build(item):
-            entry = item["items"].get(cat_id)
-            if (entry is None or "target" not in entry
-                    or "spread_amount" in entry or entry.get("rollover")):
-                return None
-            kept = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
-            merged = {**kept, **_spread_fields(amount, cycles, spread_from, spread_len, spread_paydate)}
-            return set_map_entry(cat_id, merged), {"id": cat_id, "amount": amount, "cycles": cycles}
-
-        return self._versioned_update(build, action="set spread if absent")
-
     def clear_rollover(self, cat_id: str) -> None:
         """Strip the rollover fields (see _ROLLOVER_FIELDS) from a category's budget entry,
         KEEPING its `target` — run when the category is reclassified out of a spend bucket
@@ -222,39 +145,17 @@ class BudgetRepository(RepositoryBase):
         cycle since — inflating the buffer with money that was never budgeted (WHIT-474).
 
         The buffer itself is discarded: it is meaningless on an Income earn-target, and
-        re-enabling rollover later starts fresh. No-op/lock semantics per _strip_fields.
-        """
-        self._strip_fields(cat_id, _ROLLOVER_FIELDS, "clear rollover")
-
-    def clear_spread(self, cat_id: str, *, expected: Optional[dict] = None) -> None:
-        """Strip the bill-spread fields (see SPREAD_ENTRY_FIELDS) from a category's budget entry,
-        KEEPING its `target` and rollover fields — run when the user removes the spread, when
-        a plan has run its course or been settled after a pay-cycle change (best-effort from
-        the read path), and on a reclassify out of spend. No-op/lock/`expected` semantics per
-        _strip_fields.
-        """
-        self._strip_fields(cat_id, SPREAD_ENTRY_FIELDS, "clear spread", expected=expected)
-
-    def _strip_fields(self, cat_id: str, fields: tuple, operation: str,
-                      expected: Optional[dict] = None) -> None:
-        """Remove `fields` from ONE category's budget entry, keeping everything else.
-
-        Idempotent no-op (no seed, no version bump) when the category has no budget entry or
-        the entry carries none of `fields` — the common case, so a plain edit of an
-        Income/Savings category is cheap. Writes the whole stripped entry back under the same
-        optimistic-lock guard as set_budget, retrying once on a race. `operation` names the
-        caller in the error it raises. Skipped when `expected` is given and the saved entry no
-        longer equals it, so a read-path settle never overwrites an edit made after the read.
+        re-enabling rollover later starts fresh. A no-op (no seed, no version bump) when the
+        category has no budget entry or carries no rollover fields; otherwise writes the stripped
+        entry back under the same optimistic-lock guard as set_budget, retrying once on a race.
         """
         def build(item):
             if item is None or cat_id not in item["items"]:
                 return None  # no budget for this id -> nothing to clear
             entry = item["items"][cat_id]
-            if expected is not None and entry != expected:
-                return None
-            stripped = {k: v for k, v in entry.items() if k not in fields}
+            stripped = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
             if stripped == entry:
-                return None  # none of the fields present -> no-op, don't bump the version
+                return None  # no rollover fields present -> no-op, don't bump the version
             return set_map_entry(cat_id, stripped), None
 
-        self._versioned_update(build, action=operation, seed=False)
+        self._versioned_update(build, action="clear rollover", seed=False)

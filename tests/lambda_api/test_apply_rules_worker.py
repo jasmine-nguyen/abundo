@@ -129,9 +129,8 @@ def test_worker_with_an_inline_rule_mints_it_and_records_created_rule(apply_rule
     assert job["createdRule"] is not None and job["createdRule"]["categoryId"] == "groceries"
 
 
-def test_worker_saves_created_rule_in_the_app_shape_without_spread_seeded(apply_rules_worker, monkeypatch):
-    # WHIT-623: the job row's createdRule is what the app reads, so it keeps the reply shape — the
-    # internal spreadSeeded flag the matcher's shape carries must not leak into it.
+def test_worker_saves_created_rule_in_the_app_shape(apply_rules_worker, monkeypatch):
+    # WHIT-623: the job row's createdRule is what the app reads, so it keeps the reply shape.
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES")]
     _, _, job_repo = wire_apply_rules_worker(
@@ -141,8 +140,7 @@ def test_worker_saves_created_rule_in_the_app_shape_without_spread_seeded(apply_
         {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries", "budgetExcluded": False}})
 
     assert set(job_repo.get_job("job1")["createdRule"]) == {
-        "id", "field", "operator", "value", "categoryId", "budgetExcluded",
-        "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
+        "id", "field", "operator", "value", "categoryId", "budgetExcluded", "conditions", "logic"}
 
 
 def test_worker_succeeds_with_no_rules(apply_rules_worker, monkeypatch):

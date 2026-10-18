@@ -242,12 +242,9 @@ def test_update_unknown_id_returns_404(handler):
     assert resp["statusCode"] == 404
 
 
-# A budget entry carrying rollover fields, and one carrying a bill spread — what the re-bucket
-# cascade strips (keeping the target).
+# A budget entry carrying rollover fields — what the re-bucket cascade strips (keeping the target).
 _ROLLOVER = {"rollover": True, "carryover": Decimal("5"), "carryover_from": "2026-07-01",
              "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01"}
-_SPREAD = {"spread_amount": Decimal(100), "spread_cycles": Decimal(4), "spread_from": "2026-07-01",
-           "spread_len": Decimal(14), "spread_paydate": "2026-07-01"}
 
 
 def test_update_rebucket_to_savings_while_budgeted_rejected_400(handler):
@@ -322,40 +319,6 @@ def test_update_rebucket_clear_rollover_is_best_effort(handler):
     assert budget._table.update_calls != []                   # it attempted the clear
     assert "rollover" in stored_budgets(budget)["coffee"]     # which lost the race
     assert repo.update_calls == [("coffee", "Coffee", "Income", "tag")]  # the re-bucket stuck
-
-
-def test_update_rebucket_to_income_clears_the_bill_spread_too(handler):
-    # A bill spread is spend-only like rollover (WHIT-504): moving the category to Income
-    # strips it, so a stale plan can't keep adjusting a spendable on a later move back.
-    repo = FakeCategoryRepo()
-    budget = budget_repo({"coffee": {"target": 58, **_SPREAD}})
-
-    resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
-
-    assert resp["statusCode"] == 200
-    assert stored_budgets(budget) == {"coffee": {"target": 58}}
-
-
-def test_update_rebucket_still_attempts_the_spread_clear_when_the_rollover_clear_fails(handler):
-    # Each clear is its own best-effort attempt: a failing rollover clear must not skip the
-    # spread clear (or vice-versa), and neither may fail the bucket edit. The rollover clear
-    # runs first; only that first write fails (a DB fault), so the spread clear must still land.
-    repo = FakeCategoryRepo()
-    budget = budget_repo({"coffee": {"target": 58, **_ROLLOVER, **_SPREAD}})
-    writes = []
-
-    def first_write(key):
-        writes.append(key)
-        return len(writes) == 1
-
-    budget._table.fail("update_item", when=first_write)
-
-    resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
-
-    assert resp["statusCode"] == 200
-    assert stored_budgets(budget) == {"coffee": {"target": 58, **_ROLLOVER}}   # spread cleared
 
 
 def test_update_dispatch_rejects_rebucket_to_savings_when_budgeted(handler, monkeypatch):

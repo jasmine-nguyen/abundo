@@ -141,12 +141,9 @@ describe('budget rows and detail — today tick and slim rows', () => {
 
     expect(budgetRowFor({ budget: 100, posted: 0, pending: 0 }).unspent).toBe(true);
     expect(budgetRowFor({ budget: 100, posted: 0.01, pending: 0 }).unspent).toBe(false);
-    // $41 target − $700 spread payback → a −$659 budget: $0 spent is still over, so not slim.
-    const payback = budgetRowFor({
-      budget: 41, posted: 0, pending: 0, spreadAdjustment: -700,
-      spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 },
-    });
-    expect(payback.unspent).toBe(false);
+    // $41 target − $700 carried-over overspend → a −$659 budget: $0 spent is still over, so not slim.
+    const deficit = budgetRowFor({ budget: 41, posted: 0, pending: 0, rollover: true, carryover: -700 });
+    expect(deficit.unspent).toBe(false);
 
     const income = budgetRowsFor([SALARY], [budget({ id: 'salary', budget: 5000, posted: 0, pending: 0 })])[0];
     expect(income.unspent).toBe(false);
@@ -183,9 +180,6 @@ describe('budget rows and detail — today tick and slim rows', () => {
     expect(budgetRowFor({ budget: 100, posted: 10, pending: 0, rollover: true, carryover: -60 }).targetPct).toBe(100);
     // Drained envelope: the bar falls back to the base budget, so the tick is at elapsed.
     expect(budgetRowFor({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: -100 }).targetPct).toBe(50);
-    // Spread cushion: $160 envelope, $50 pace.
-    const cushion = budgetRowFor({ budget: 100, posted: 30, pending: 0, spreadAdjustment: 60, spread: { amount: 120, cycles: 2, index: 1, adjustment: 60 } });
-    expect(cushion.targetPct).toBe(31);
   });
 
   // Across envelopes and clocks: "Over plan" on the detail is always in muted ink, and the row and
@@ -195,7 +189,6 @@ describe('budget rows and detail — today tick and slim rows', () => {
       {},
       { rollover: true, carryover: 100 },
       { rollover: true, carryover: -30 },
-      { spreadAdjustment: 60, spread: { amount: 120, cycles: 2, index: 1, adjustment: 60 } },
     ];
     const clocks = [{ cycleLen: 14, daysLeft: 13 }, { cycleLen: 14, daysLeft: 7 }, { cycleLen: 14, daysLeft: 1 }, { cycleLen: 30, daysLeft: 0 }];
     let warned = 0, quiet = 0;
@@ -217,25 +210,13 @@ describe('budget rows and detail — today tick and slim rows', () => {
   });
 });
 
-// A rollover budget pulled down by a carried-over deficit, or a spread bill's payback, makes this
+// A rollover budget pulled down by a carried-over deficit makes this
 // cycle's budget negative: the row keeps the minus (real minus U+2212) and says why in its note.
 describe('budget rows — negative budgets and their notes', () => {
   it('Utilities: $200 target, carryover −859 → "of −$659" + "Includes $859 past overspend"', () => {
     const row = budgetRowFor({ budget: 200, posted: 617.75, pending: 0, rollover: true, carryover: -859 });
     expect(row.spentLabel).toBe(`$617.75 of ${MINUS}$659`);
     expect(row.note).toBe('Includes $859 past overspend');
-    expect(row.remainLabel).toBe('over');
-    expect(row.remainAmount).toBe('$1,276.75');
-  });
-
-  it('a payback cycle reads "$617.75 of −$659" and notes the spread', () => {
-    // $41 target − $700 payback slice → this cycle's budget is −$659.
-    const row = budgetRowFor({
-      budget: 41, posted: 617.75, pending: 0, spreadAdjustment: -700,
-      spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 },
-    });
-    expect(row.spentLabel).toBe(`$617.75 of ${MINUS}$659`);
-    expect(row.note).toBe('Includes spread bills');
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$1,276.75');
   });

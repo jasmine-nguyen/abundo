@@ -57,7 +57,7 @@ beforeEach(() => {
 it('submitting calls updateRule with the id, not saveManualRule', async () => {
   await openEdit();
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false, undefined, false);
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
@@ -66,13 +66,30 @@ it('toggling "keep out of budget" passes budgetExcluded:true to updateRule', asy
   await openEdit();
   fireEvent.press(screen.getByTestId('rule-budget-excluded'));
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true, undefined, false);
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
 });
 
 it('prefills the toggle from the edited rule (budgetExcluded:true stays on and is submitted)', async () => {
   await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true, undefined, false);
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
+});
+
+// WHIT-558: the prefilled exclusion must ride through an edit of ONLY the pattern (the shared draft
+// object must not drop it when a sibling field changes).
+it('editing only the pattern preserves the prefilled budgetExcluded:true', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
+  fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'NETFLIX AU');
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX AU', 'subs', true);
+});
+
+// The toggle is genuinely two-way, not write-once.
+it('turning an inherited exclusion OFF submits budgetExcluded:false', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
+  fireEvent.press(screen.getByTestId('rule-budget-excluded'));
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
 });
 
 // WHIT-284 — a restored/prefilled categoryId whose category no longer exists must be dropped:
@@ -130,7 +147,7 @@ it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', 
   expect(fns.saveManualRule).not.toHaveBeenCalled(); // nothing minted yet
 
   fireEvent.press(screen.getByTestId('rule-conflict-replace'));
-  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false, undefined, false); // retarget the surviving rule
+  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false); // retarget the surviving rule
   expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
 });
 
@@ -193,7 +210,7 @@ it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pa
   fireEvent.press(screen.getByText('Groceries'));
   fireEvent.press(screen.getByText('Add rule'));
   fireEvent.press(screen.getByTestId('rule-conflict-replace'));
-  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false, undefined, false); // raw NEW pattern, not 'netflix'
+  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false); // raw NEW pattern, not 'netflix'
 });
 
 // ===== WHIT-284 drop effect (folded from AddRuleSheetDrop) — the persist effect re-cleans a dead

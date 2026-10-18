@@ -1,4 +1,4 @@
-"""Unit tests for the pure money maths in shared/spend.py: bill-spread slices, the spend gate
+"""Unit tests for the pure money maths in shared/spend.py: the spend gate
 (budget_excluded and counts_to_budget), cadence clamps, earned income, rollover history, the
 category subtree fold, unified_available and the prior/completed cycle windows. No repos, no AWS.
 """
@@ -46,78 +46,6 @@ def _record(start, end, leftover):
     return cycle_record(start, end, Decimal(100) - Decimal(leftover), leftover)
 
 
-# --- spread_adjustment: cushion, slices, then nothing ---------------------------
-
-
-def test_anchor_cycle_gets_the_full_amount_as_a_cushion(shared):
-    assert shared.spend.spread_adjustment(Decimal("1390.91"), 4, 0) == Decimal("1390.91")
-
-
-@pytest.mark.parametrize("amount, cycles", [
-    ("1390.91", 4),   # the Insurance bill that motivated the feature
-    ("100.00", 3),    # not evenly divisible — the odd cent must land somewhere
-    ("0.01", 3),      # one cent over three cycles: one slice carries it, two are zero
-    ("250.00", 1),    # a single payback cycle
-    ("999.99", 24),   # the max cycle count
-])
-def test_the_payback_slices_sum_back_to_exactly_the_amount(shared, amount, cycles):
-    # FAIL-ON-REVERT for the cent-exact split: a naive amount/cycles rounding would drift
-    # by a cent on the non-divisible cases and break net-zero.
-    amount = Decimal(amount)
-    slices = [shared.spend.spread_adjustment(amount, cycles, k) for k in range(1, cycles + 1)]
-    assert all(s <= 0 for s in slices)
-    assert sum(slices, Decimal(0)) == -amount
-    # Net over the plan's whole life: cushion + slices == 0.
-    assert shared.spend.spread_adjustment(amount, cycles, 0) + sum(slices, Decimal(0)) == 0
-
-
-def test_the_odd_cents_go_on_the_earliest_slices(shared):
-    # $100 over 3: 10000 cents = 3333 * 3 + 1 -> the first slice carries the extra cent.
-    assert shared.spend.spread_adjustment(Decimal("100.00"), 3, 1) == Decimal("-33.34")
-    assert shared.spend.spread_adjustment(Decimal("100.00"), 3, 2) == Decimal("-33.33")
-    assert shared.spend.spread_adjustment(Decimal("100.00"), 3, 3) == Decimal("-33.33")
-    # $1390.91 over 4: 139091 = 34772 * 4 + 3 -> three slices of 347.73, then 347.72.
-    assert shared.spend.spread_adjustment(Decimal("1390.91"), 4, 1) == Decimal("-347.73")
-    assert shared.spend.spread_adjustment(Decimal("1390.91"), 4, 4) == Decimal("-347.72")
-
-
-def test_the_last_payback_cycle_is_index_n_and_the_plan_is_over_at_n_plus_one(shared):
-    # FAIL-ON-REVERT for the off-by-one: index == cycles is still a payback cycle (the LAST
-    # slice); index == cycles + 1 is past the plan and contributes nothing.
-    amount = Decimal("1390.91")
-    assert shared.spend.spread_adjustment(amount, 4, 4) == Decimal("-347.72")
-    assert shared.spend.spread_adjustment(amount, 4, 5) == Decimal(0)
-    assert shared.spend.spread_adjustment(amount, 4, 500) == Decimal(0)   # long finished
-    assert shared.spend.spread_adjustment(amount, 4, -1) == Decimal(0)    # corrupt future anchor
-
-
-# --- spread_index: an UNCAPPED elapsed-cycle count ------------------------------
-
-
-@pytest.mark.parametrize("length, last_pay_date, spread_from, current_start, expected", [
-    (14, "2026-07-23", "2026-08-06", "2026-08-06", 0),   # still the anchor cycle
-    (14, "2026-07-23", "2026-07-23", "2026-08-06", 1),   # the next cycle
-    (14, "2026-07-23", "2026-06-25", "2026-08-06", 3),
-    (30, "2026-01-31", "2026-01-31", "2026-01-31", 0),   # monthly from the 31st, across Feb (ABU-44)
-    (30, "2026-01-31", "2026-01-31", "2026-02-28", 1),
-    (30, "2026-01-31", "2026-01-31", "2026-03-31", 2),
-])
-def test_spread_index_counts_whole_cycles_since_the_anchor(shared, length, last_pay_date, spread_from,
-                                                           current_start, expected):
-    assert shared.spend.spread_index(spread_from, current_start, length, last_pay_date) == expected
-
-
-def test_spread_index_is_not_capped_by_a_lookback_limit(shared):
-    # FAIL-ON-REVERT for the saturation bug: deriving the position from the CAPPED
-    # `completed_cycle_windows` (max 12 or 24) would pin a long-gap read at the cap, so a
-    # plan whose `cycles` equals the cap could never be seen to end. The direct count keeps
-    # climbing: Jan 2024 to Aug 2026 on a monthly cycle is 31 cycles, past any cap.
-    index = shared.spend.spread_index("2024-01-06", "2026-08-06", 30, "2024-01-06")
-    assert index == 31
-    assert index > 24
-    assert index != len(shared.spend.completed_cycle_windows("2024-01-06", "2026-08-06", 30, 24, "2024-01-06"))
-
-
 def test_excluded_charge_removed_from_a_mixed_set(shared):
     # Coffee charges, one excluded: only the counting ones (flag False or absent) land in the bar.
     totals = shared.spend.summarise_transactions(
@@ -129,28 +57,6 @@ def test_excluded_charge_removed_from_a_mixed_set(shared):
         {"coffee"},
     )
     assert totals["coffee"]["posted"] == Decimal("20")
-
-
-@pytest.mark.parametrize("gap, length, expected", [
-    (14, 14, 1),                 # weekly-on-fortnightly beat -> one cycle
-    (30, 14, 2),                 # monthly bill on a fortnightly pay cycle -> ~2 cycles
-    (91, 30, 3),                 # quarterly on monthly -> 3
-    (30, 30, 1),                 # monthly bill, monthly pay cycle -> 1
-    (7, 14, 1),                  # sub-cycle cadence rounds down to the floor, never 0
-    (365, 14, 24),               # a yearly bill clamps to SPREAD_MAX_CYCLES (24), not 26
-    (Decimal("30"), 14, 2),      # a Decimal gap off a stored rule row divides fine
-    (336, 14, 24),               # exactly at the max is kept, not clamped down
-    (350, 14, 24),               # one beat over the max clamps to the max
-    (Decimal("45"), 14, 3),      # a non-whole Decimal quotient rounds numerically
-])
-def test_cadence_cycles_maps_and_clamps(shared, gap, length, expected):
-    assert shared.spend.cadence_cycles(gap, length) == expected
-
-
-@pytest.mark.parametrize("gap, length", [(0, 14), (-5, 14), (30, 0), (30, -1)])
-def test_non_positive_inputs_fall_back_to_the_minimum(shared, gap, length):
-    # A malformed cadence/length spreads over one cycle rather than crashing or returning nonsense.
-    assert shared.spend.cadence_cycles(gap, length) == 1
 
 
 def test_earned_sums_positive_income_posted_and_pending(shared):
@@ -355,12 +261,10 @@ def test_fold_subtree_nets_siblings_before_the_floor(shared):
 
 
 def test_unified_available_does_not_clamp_a_negative_result(shared):
-    # A payback slice bigger than budget+buffer must show a real negative spendable, not
-    # a clamped 0. Also catches a `budget + buffer - payback` sign flip (that would give +130
-    # here). The pure primitive must not hide an overdrawn category.
-    assert shared.spend.unified_available(Decimal("100"), Decimal("-50"), Decimal("-80")) == Decimal("-30")
-    # a positive buffer can lift a big payback back above zero.
-    assert shared.spend.unified_available(Decimal("100"), Decimal("200"), Decimal("-80")) == Decimal("220")
+    # A deficit bigger than the budget must show a real negative spendable, not a clamped 0.
+    # The pure primitive must not hide an overdrawn category.
+    assert shared.spend.unified_available(Decimal("100"), Decimal("-130")) == Decimal("-30")
+    assert shared.spend.unified_available(Decimal("100"), Decimal("200")) == Decimal("300")
 
 
 def test_first_prior_cycle_is_the_length_day_span_ending_the_day_before(shared):
