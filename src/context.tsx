@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useRef, useState, useCallbac
 import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, MINUS, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage } from './apiError';
 import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, toISODate } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type BatchCategoryUpdate, type PayCycle } from './api';
 import * as Crypto from 'expo-crypto';
 import type { QueryKey } from '@tanstack/react-query';
 import { usableEquity as computeUsableEquity } from './milestones';
@@ -92,9 +92,14 @@ const CATEGORY_BATCH_LIMIT = 100;
 export async function persistCategoryBatch(
   ids: string[],
   categoryId: string,
+  transactions: Transaction[],
 ): Promise<{ savedIds: Set<string>; failedIds: string[] }> {
-  const updates = ids.map((id) => ({ id, category: categoryId }));
-  const chunks: { id: string; category: string }[][] = [];
+  const accountOf = new Map(transactions.map((t) => [t.transaction_id, t.account_id]));
+  const updates: BatchCategoryUpdate[] = ids.map((id) => {
+    const account = accountOf.get(id);
+    return { id, category: categoryId, ...(account ? { account_id: account } : {}) };
+  });
+  const chunks: BatchCategoryUpdate[][] = [];
   for (let i = 0; i < updates.length; i += CATEGORY_BATCH_LIMIT) {
     chunks.push(updates.slice(i, i + CATEGORY_BATCH_LIMIT));
   }
@@ -934,7 +939,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const ruleSettled = mints.length > 0
             ? Promise.allSettled(mints.map((mint) => createRule({ value: mint.value, categoryId })))
             : null;
-          const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
+          const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId, transactions);
           const ruleOutcomes = ruleSettled ? await ruleSettled : [];
           return { failedIds, ruleOutcomes };
         },
@@ -1013,7 +1018,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // applyCategory('all') since WHIT-292). A rejected/malformed chunk leaves its ids in
     // failedIds -> rolled back to their previous category.
     await runSave({
-      send: () => persistCategoryBatch(ids, categoryId),
+      send: () => persistCategoryBatch(ids, categoryId, transactions),
       // Partial-failure undo lives in onSaved because persistCategoryBatch never throws.
       onSaved: ({ failedIds }) => {
         if (failedIds.length > 0) {

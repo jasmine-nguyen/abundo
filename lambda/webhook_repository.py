@@ -1,8 +1,9 @@
+import time
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
-from constants import PENDING_STATUS
+from constants import EVENT_MARKER_TTL_SECONDS, PENDING_STATUS
 from repository_base import conditional_write, db_errors, update_expression
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
@@ -190,8 +191,13 @@ class TransactionRepository(_SharedTransactionRepository):
 
     def mark_event(self, envelope_id: str) -> None:
         """Record that an event has been fully processed. Called only after the
-        write succeeds; a plain, idempotent put — re-marking is harmless."""
+        write succeeds; a plain, idempotent put — re-marking is harmless.
+        The marker auto-expires (`expires_at`) once BankSync can no longer re-send it."""
         with db_errors("mark_event"):
             self._get_table().put_item(
-                Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"}
+                Item={
+                    "pk": f"EVENT#{envelope_id}",
+                    "sk": "EVENT",
+                    "expires_at": int(time.time()) + EVENT_MARKER_TTL_SECONDS,
+                }
             )

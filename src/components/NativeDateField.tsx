@@ -3,12 +3,7 @@
 // load-bearing quirk — Android fires onChange for BOTH a pick and a dismiss, and the Date
 // is the SECOND arg — copy-pasted four times and already drifting. This centralises that
 // logic so a fix lands everywhere.
-//
-// Two exports:
-//  - useNativeDate: the headless quirk logic (pick-vs-dismiss + arg extraction). The two
-//    sheets keep their own card chrome and just call this.
-//  - NativeDateField: a styled inline field row for the two forms (they share row chrome).
-// Both preserve every call-site's behaviour and look exactly.
+// Every call site renders NativeDateField; useNativeDate is its headless quirk logic.
 import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -19,7 +14,7 @@ import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
 // whichever position it lands in rather than assume arg 0 (assuming arg 0 crashed once:
 // `event.getMonth()` is undefined). Android fires on BOTH a pick and a dismiss, so close
 // the dialog either way and commit only when a Date actually came through.
-export function useNativeDate(onPick: (iso: string) => void) {
+function useNativeDate(onPick: (iso: string) => void) {
   const [showPicker, setShowPicker] = useState(false);
   const isIOS = Platform.OS === 'ios';
   const commit = (a?: unknown, b?: unknown) => {
@@ -37,7 +32,7 @@ export interface NativeDateFieldProps {
   maximumDate?: Date;
   placeholder?: string;                      // shown when unset (defaults to "Not set")
   clearable?: boolean;                       // render a "Clear" affordance once a value is set
-  alwaysShowPillIOS?: boolean;               // iOS: show the pill always (loan) vs only while picking (everywhere else)
+  alwaysShowPillIOS?: boolean;               // iOS: show the pill always (loan, pay-cycle and goal-balance sheets) vs only while picking (everywhere else)
 }
 
 // The inline field row: the current value (or placeholder), an optional Clear, and the
@@ -47,7 +42,7 @@ export function NativeDateField({
   value, onChange, minimumDate, maximumDate, placeholder, clearable, alwaysShowPillIOS,
 }: NativeDateFieldProps) {
   const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => onChange(iso));
-  // iOS shows the compact pill inline. Loan shows it always (alwaysShowPillIOS). Everywhere else
+  // iOS shows the compact pill inline. Loan and the pay-cycle + goal-balance sheets show it always (alwaysShowPillIOS). Everywhere else
   // the pill appears ONLY while actively picking: once a value is set we show it as the row text
   // with a "Change" affordance, so the same date isn't printed twice (the row text AND the pill
   // both showed it before). An unset field still shows "Set date", never a pre-filled pill that

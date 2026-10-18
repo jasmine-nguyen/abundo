@@ -19,6 +19,7 @@ import { SearchField } from '../../src/components/SearchField';
 import { useFirstFilingSeen } from '../../src/hooks/useFirstFilingSeen';
 import { HeaderTextButton } from '../../src/components/ui';
 import { toggleIn } from '../../src/setutil';
+import type { Transaction } from '../../src/types';
 
 type Tab = 'all' | 'uncategorized';
 
@@ -161,6 +162,104 @@ export default function Transactions() {
     ? <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated bankSynced={bankSynced} />
     : null;
 
+  // ABU-100: the rows go through the header's on-screen-only list. The controls above them are the
+  // list's header (children) and these states below them its footer.
+  const sections = showSpinner || showError ? [] : groups.map((g) => ({ key: g.label, dayTotal: g.dayTotal, data: g.items }));
+  const renderSectionHeader = useCallback(({ section }: { section: { key: string; dayTotal: string | null } }) => (
+    <View style={{ marginTop: 18 }}>
+      <DayHeading label={section.key} dayTotal={section.dayTotal} />
+    </View>
+  ), []);
+  const renderItem = useCallback(({ item }: { item: Transaction }) => (
+    <TransactionRow
+      t={item}
+      category={category}
+      selectable={selectionMode}
+      selected={selected.has(item.transaction_id)}
+      onToggleSelect={toggleSelect}
+    />
+  ), [category, selectionMode, selected, toggleSelect]);
+
+  const footer = (
+    <>
+        {!showSpinner && !showError && searchPending && (
+          <View testID="transactions-searching" style={styles.searchStatus}>
+            <ActivityIndicator color={C.accent} />
+            <Text style={styles.searchStatusText}>Searching your full history…</Text>
+          </View>
+        )}
+
+        {!showSpinner && !showError && searchFailed && (
+          <View testID="transactions-search-error" style={styles.searchStatus}>
+            <Text style={styles.searchStatusText}>Couldn't search your full history.</Text>
+            <Pressable onPress={serverSearch.retry} hitSlop={8} accessibilityRole="button" accessibilityLabel="Retry searching your full history">
+              <Text style={styles.searchRetry}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {!showSpinner && !showError && searchAnswered && serverSearch.truncated && (
+          <Text testID="transactions-search-truncated" style={styles.searchStatusText}>
+            Showing the newest {serverSearch.results.length} matches — refine your search to see older ones.
+          </Text>
+        )}
+
+        {/* Search returned nothing on this tab (the "all caught up" state below still owns the
+            genuinely-empty uncategorized case, so don't double up on it). WHIT-576: only once the
+            server has searched ALL history — never while it's still looking or after it failed. */}
+        {!showSpinner && !showError && searchAnswered && groups.length === 0 && !allCaughtUp && (
+          <EmptyState
+            testID="transactions-no-results"
+            icon={<Glyph name="search" size={30} color={C.textDim} />}
+            iconBackground={C.neutralWash}
+            title="No matches"
+            sub={<>No transactions match “{query}”.</>}
+          />
+        )}
+
+        {/* WHIT-501: also require the tab to be genuinely empty (`groups.length === 0`). `allCaughtUp`
+            is the WHOLE-history "server says 0" signal, which can briefly disagree with the loaded
+            rows — a cross-device or server-side re-tag drops the server count to 0 while the feed
+            cache (never invalidated on that path) still holds those rows. Without this gate the screen
+            would show "Every transaction is categorised" ABOVE a visible list of uncategorized rows. */}
+        {allCaughtUp && groups.length === 0 && !showSpinner && !showError && (
+          <EmptyState
+            icon={<Glyph name="check" size={32} color={C.good} />}
+            title="All caught up"
+            sub="Every transaction is categorised. New ones matching your rules file themselves automatically."
+          />
+        )}
+
+        {/* Paged uncategorized feed: the badge says there are unfiled charges but none are in the
+            loaded pages — they're deeper in history (Load More below), or a cross-device re-tag
+            left the badge briefly ahead. Explain it rather than showing a blank tab. */}
+        {showUncategorizedMore && (
+          <EmptyState
+            testID="transactions-uncategorized-more"
+            icon={<Glyph name="search" size={30} color={C.accentSoft} />}
+            title={hasMore ? 'More to load' : 'Nothing to show yet'}
+            sub={hasMore
+              ? 'Your unfiled charges are further back in history. Keep loading to see them.'
+              : 'Pull down to refresh this list.'}
+          />
+        )}
+
+        {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
+            (hasMore false), while the cold-load spinner / error own the empty state, and on the
+            uncategorized "all caught up" empty state (nothing to page toward there). The newest
+            batch shows first; each tap appends the next, older batch. Hidden during a search
+            (WHIT-576): the server already searched all history. */}
+        {!showSpinner && !showError && hasMore && !allCaughtUp && !searchingServer && (
+          <LoadMoreButton
+            testID="transactions-load-more"
+            onPress={loadMore}
+            loading={isLoadingMore}
+            accessibilityLabel="Load older transactions"
+          />
+        )}
+    </>
+  );
+
   return (
     <View style={{ flex: 1 }}>
     <ScrollChromeHeader
@@ -178,6 +277,11 @@ export default function Transactions() {
       // (It requires !showSpinner, so it can never re-introduce the cold-load double-spin.)
       refreshing={pulling && (listSource.length > 0 || showUncategorizedMore)}
       onRefresh={onRefresh}
+      sections={sections}
+      renderItem={renderItem}
+      renderSectionHeader={renderSectionHeader}
+      keyExtractor={(t) => t.transaction_id}
+      footer={footer}
     >
         <SegmentedControl
           value={tab}
@@ -255,99 +359,6 @@ export default function Transactions() {
           onRetry={refetch}
           error={error}
         />
-
-        {!showSpinner && !showError && groups.map((g) => (
-          <View key={g.label} style={{ marginTop: 18 }}>
-            <DayHeading label={g.label} dayTotal={g.dayTotal} />
-            {g.items.map((t) => (
-              <TransactionRow
-                key={t.transaction_id}
-                t={t}
-                category={category}
-                selectable={selectionMode}
-                selected={selected.has(t.transaction_id)}
-                onToggleSelect={() => toggleSelect(t.transaction_id)}
-              />
-            ))}
-          </View>
-        ))}
-
-        {!showSpinner && !showError && searchPending && (
-          <View testID="transactions-searching" style={styles.searchStatus}>
-            <ActivityIndicator color={C.accent} />
-            <Text style={styles.searchStatusText}>Searching your full history…</Text>
-          </View>
-        )}
-
-        {!showSpinner && !showError && searchFailed && (
-          <View testID="transactions-search-error" style={styles.searchStatus}>
-            <Text style={styles.searchStatusText}>Couldn't search your full history.</Text>
-            <Pressable onPress={serverSearch.retry} hitSlop={8} accessibilityRole="button" accessibilityLabel="Retry searching your full history">
-              <Text style={styles.searchRetry}>Retry</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {!showSpinner && !showError && searchAnswered && serverSearch.truncated && (
-          <Text testID="transactions-search-truncated" style={styles.searchStatusText}>
-            Showing the newest {serverSearch.results.length} matches — refine your search to see older ones.
-          </Text>
-        )}
-
-        {/* Search returned nothing on this tab (the "all caught up" state below still owns the
-            genuinely-empty uncategorized case, so don't double up on it). WHIT-576: only once the
-            server has searched ALL history — never while it's still looking or after it failed. */}
-        {!showSpinner && !showError && searchAnswered && groups.length === 0 && !allCaughtUp && (
-          <EmptyState
-            testID="transactions-no-results"
-            icon={<Glyph name="search" size={30} color={C.textDim} />}
-            iconBackground={C.neutralWash}
-            title="No matches"
-            sub={<>No transactions match “{query}”.</>}
-          />
-        )}
-
-        {/* WHIT-501: also require the tab to be genuinely empty (`groups.length === 0`). `allCaughtUp`
-            is the WHOLE-history "server says 0" signal, which can briefly disagree with the loaded
-            rows — a cross-device or server-side re-tag drops the server count to 0 while the feed
-            cache (never invalidated on that path) still holds those rows. Without this gate the screen
-            would show "Every transaction is categorised" ABOVE a visible list of uncategorized rows. */}
-        {allCaughtUp && groups.length === 0 && !showSpinner && !showError && (
-          <EmptyState
-            icon={<Glyph name="check" size={32} color={C.good} />}
-            title="All caught up"
-            sub="Every transaction is categorised. New ones matching your rules file themselves automatically."
-          />
-        )}
-
-        {/* Paged uncategorized feed: the badge says there are unfiled charges but none are in the
-            loaded pages — they're deeper in history (Load More below), or a cross-device re-tag
-            left the badge briefly ahead. Explain it rather than showing a blank tab. */}
-        {showUncategorizedMore && (
-          <EmptyState
-            testID="transactions-uncategorized-more"
-            icon={<Glyph name="search" size={30} color={C.accentSoft} />}
-            title={hasMore ? 'More to load' : 'Nothing to show yet'}
-            sub={hasMore
-              ? 'Your unfiled charges are further back in history. Keep loading to see them.'
-              : 'Pull down to refresh this list.'}
-          />
-        )}
-
-        {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
-            (hasMore false), while the cold-load spinner / error own the empty state, and on the
-            uncategorized "all caught up" empty state (nothing to page toward there). The newest
-            batch shows first; each tap appends the next, older batch. Hidden during a search
-            (WHIT-576): the server already searched all history. */}
-        {!showSpinner && !showError && hasMore && !allCaughtUp && !searchingServer && (
-          <LoadMoreButton
-            testID="transactions-load-more"
-            onPress={loadMore}
-            loading={isLoadingMore}
-            accessibilityLabel="Load older transactions"
-          />
-        )}
-
     </ScrollChromeHeader>
     {/* WHIT-291: the selection action bar floats above the tab bar while selecting. */}
     {selectionMode && (

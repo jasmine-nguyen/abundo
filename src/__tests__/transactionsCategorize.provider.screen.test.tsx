@@ -369,7 +369,7 @@ it("applyCategory('all') files the tapped charge and mints the rule when the swe
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(batches()).toEqual([[{ id: 't1', category: 'groceries' }]]);  // the tapped charge is filed
+  expect(batches()).toEqual([[{ id: 't1', category: 'groceries', account_id: 'a1' }]]);  // the tapped charge is filed
   expect(ruleMintBodies()).toContainEqual({ value: 'COLES', categoryId: 'groceries' }); // rule STILL fires
   // The optimistic rule was reconciled to the real id (not rolled back) and survives.
   expect(queryClient.getQueryData(['rules'])).toMatchObject([{ id: 'e1' }]);
@@ -385,5 +385,5 @@ it('applyCategoryToMany dedupes repeated ids to a single batch update', async ()
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't1', 't1'], 'groceries'); });
 
-  expect(batches()).toEqual([[{ id: 't1', category: 'groceries' }]]);
+  expect(batches()).toEqual([[{ id: 't1', category: 'groceries', account_id: 'a1' }]]);
 });

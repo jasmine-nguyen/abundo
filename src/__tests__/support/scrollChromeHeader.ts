@@ -8,7 +8,14 @@ import { styleOf } from './layout';
 type Rendered = ReturnType<typeof render>;
 
 export function scrollTo(r: Rendered, y: number) {
-  const event = { nativeEvent: { contentOffset: { y } } } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
+  // A SectionList's scroll handler also reads the viewport and content heights.
+  const event = {
+    nativeEvent: {
+      contentOffset: { y },
+      layoutMeasurement: { height: 800, width: 400 },
+      contentSize: { height: 4000, width: 400 },
+    },
+  } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
   act(() => r.UNSAFE_getAllByType(ScrollView)[0].props.onScroll(event));
 }
 

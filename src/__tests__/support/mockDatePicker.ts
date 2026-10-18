@@ -12,7 +12,12 @@
 //
 // The jest.mock factory uses require() (not the import) so it survives hoisting; both resolve to
 // this one module instance, so setPickedDate() and the mock share state.
+import { screen } from '@testing-library/react-native';
 import { toISODate } from '../../dateutil';
+
+// The props the screen passed to its one rendered picker (whichever mock is installed).
+export const renderedPickerProps = (): Record<string, unknown> =>
+  screen.UNSAFE_getByType(require('@react-native-community/datetimepicker').default).props;
 
 // A date always comfortably in the future regardless of when the suite runs. Relative to the real
 // clock on purpose: the date guards are date-sensitive, so a hardcoded year would rot.

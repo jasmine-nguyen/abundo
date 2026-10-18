@@ -7,6 +7,7 @@ import { balanceGoalView, useAppContext, type BalanceGoalView } from '../../src/
 import { useGoalsScreenData } from '../../src/queries';
 import { checkpointProgress, type CheckpointProgressRow } from '../../src/checkpoints';
 import { Header } from '../../src/components/Header';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { DetailStates } from '../../src/components/DetailStates';
 import { SectionLabel } from '../../src/components/ui';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -19,6 +20,7 @@ export default function GoalDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const d = useGoalsScreenData(); // same warm cache as the Goals tab
   const goal = d.goals.find((g) => g.id === id);
   // WHIT-72 pattern: a first-load pay-cycle failure would pace against the default cycle (wrong),
@@ -30,13 +32,14 @@ export default function GoalDetail() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header
         title="Goal"
+        divider={edge.scrolled}
         right={ready && (
           <Pressable testID="goal-detail-edit" onPress={editGoal} hitSlop={8}>
             <Text style={styles.edit}>Edit</Text>
           </Pressable>
         )}
       />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         <DetailStates
           isLoading={d.isLoading} isError={d.isError} hasCache={ready} idPrefix="goal-detail"
           errorText="Couldn't load this goal." retryLabel="Retry loading this goal" onRetry={d.refetch}

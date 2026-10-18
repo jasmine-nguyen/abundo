@@ -3,9 +3,6 @@ import { ApiError } from "./apiError";
 import { getAuthToken } from "./auth";
 import { withBodyTimeout } from "./httpTimeout";
 
-// Re-exported for the api-level tests, which assert the thrown shape alongside the fetchers.
-// Production callers import it from ./apiError directly.
-export { ApiError } from "./apiError";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**
@@ -869,6 +866,13 @@ export interface BatchCategoryResult {
   status: "updated" | "not_found";
 }
 
+/** One charge in a batch category update; `account_id` lets the server skip a lookup (ABU-57). */
+export interface BatchCategoryUpdate {
+  id: string;
+  category: string;
+  account_id?: string;
+}
+
 /**
  * Set the category on many transactions in ONE request (WHIT-70) — the batch
  * behind "All from this merchant", replacing N parallel single PATCHes. Each
@@ -879,7 +883,7 @@ export interface BatchCategoryResult {
  * @throws If the response status is not OK.
  */
 export const setTransactionCategories = endpoint(
-  (send, updates: { id: string; category: string }[]): Promise<{ results: BatchCategoryResult[] }> =>
+  (send, updates: BatchCategoryUpdate[]): Promise<{ results: BatchCategoryResult[] }> =>
     send({ path: "/transactions", method: "PATCH", body: { updates } }),
 );
 

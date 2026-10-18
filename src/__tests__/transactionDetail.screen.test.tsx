@@ -7,6 +7,7 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 import { txn } from './factory';
 import type { Transaction } from '../types';
 import type { RuleRecord } from '../api';
@@ -40,7 +41,7 @@ import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
 import { pinToday } from './support/clock';
-import { styleOf } from './support/layout';
+import { styleOf, expectScrollEdge } from './support/layout';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
@@ -149,14 +150,40 @@ it('while loading with nothing cached, shows the spinner and NOT the not-found s
 // ===== WHIT-298 (folded from transactionDetailExcludedEdges.screen.test.tsx)
 
 // [A-detail-undef] CONSISTENCY: when the server omits counts_to_budget, the detail screen shows
-// the read-only "Excluded (transfer)" note and hides the toggle (it gates on the falsy
+// the plain "not counted" line (ABU-99: no "Excluded (transfer)" box title) and hides the toggle (it gates on the falsy
 // counts_to_budget test), rather than a contradictory OFF switch. Fails if the gate reverts to a
 // strict `=== false` (which would fall through to the toggle for undefined).
 it('shows the read-only note (not the toggle) when counts_to_budget is undefined — matching the list tag', async () => {
   seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: undefined })]);
   await draw();
-  expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
+  expect(screen.getByText('Transfer or card payment. Not counted in budgets or insights.')).toBeTruthy();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
+});
+
+// ABU-99: the redesigned page — the amount is the star with the shop name under it, the Account
+// row opens that account's page, an empty note and tags fold to "Add" lines, delete is a quiet
+// link, and the title bar gets an edge once the page scrolls.
+it('the amount leads, Account opens its page, empty note/tags fold, and the title edges on scroll', async () => {
+  await draw();
+
+  const amount = screen.getByText('−⁠$12.50');
+  const merchant = screen.getByText('Woolworths');
+  expect(screen.root.findAll((n) => n === amount || n === merchant)).toEqual([amount, merchant]);
+  expect(styleOf(amount).fontSize).toBeGreaterThanOrEqual(2 * styleOf(merchant).fontSize);
+
+  fireEvent.press(screen.getByRole('button', { name: 'Open account Everyday' }));
+  expect(routerSpies.push).toHaveBeenCalledWith('/account/a1');
+
+  expect(screen.queryByTestId('note-input')).toBeNull();
+  expect(screen.queryByTestId('tag-input')).toBeNull();
+  fireEvent.press(screen.getByRole('button', { name: 'Add note' }));
+  expect(screen.getByTestId('note-input')).toBeTruthy();
+  fireEvent.press(screen.getByRole('button', { name: 'Add tag' }));
+  expect(screen.getByTestId('tag-input')).toBeTruthy();
+
+  expect(styleOf(screen.getByTestId('transaction-delete')).backgroundColor).toBeUndefined();
+
+  expectScrollEdge(screen.UNSAFE_getByType(ScrollView));
 });
 
 // ===== WHIT-276 (folded from transactionDetailStates.screen.test.tsx)
@@ -191,7 +218,7 @@ it('a charge in a transfer category shows the note, not the switch', async () =>
   seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130 })]);
   await draw();
 
-  expect(screen.getByText(`${COFFEE_RECORD.name} is set as a transfer, so it doesn't count toward budgets or insights.`)).toBeTruthy();
+  expect(screen.getByText(`${COFFEE_RECORD.name} is a transfer. Not counted in budgets or insights.`)).toBeTruthy();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
 });
 
@@ -373,6 +400,7 @@ describe('delete this transaction', () => {
     let finish: (done: boolean) => void = () => {};
     mockDeleteTransaction.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     const view = await draw();
+    fireEvent.press(screen.getByTestId('note-add'));
     fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
 
     await refreshInAct(() => { openConfirm().onPress?.(); });  // the screen draws mid-delete

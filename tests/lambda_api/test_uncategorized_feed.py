@@ -9,13 +9,15 @@ exercised, since that is the bug this endpoint fixes.
 """
 
 import json
+import math
 
 import pytest
 
 from _feed_fakes import (
     uncategorized_feed_event,
-    ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, real_repos, _row,
+    ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, real_repos, _row, date_reads,
 )
+from _transaction_range_fakes import _AccountPagesTransactionRepo
 
 
 def _drain(handler, repo, category_repo, limit=None):
@@ -149,8 +151,8 @@ def test_scan_cap_returns_short_page_with_non_null_cursor(handler, monkeypatch):
     # back short (even empty) but with a NON-null cursor, and the next request resumes and
     # eventually surfaces the deep row — never a false "all caught up". Cap lowered so the test
     # stays cheap.
-    monkeypatch.setattr(handler, "_MAX_UNCATEGORIZED_SCAN_PAGES", 2)
-    # 2 chunks = 2 * MAX_PAGE_SIZE filed rows before the single uncategorized one.
+    monkeypatch.setattr(handler, "_MAX_UNCATEGORIZED_SCAN_ROWS", 2 * handler.MAX_PAGE_SIZE)
+    # 2 * MAX_PAGE_SIZE filed rows (the whole cap) before the single uncategorized one.
     filed = [_row(SPENDING, f"2026-06-{(i % 28) + 1:02d}", f"f{i}", category="groceries")
              for i in range(2 * handler.MAX_PAGE_SIZE)]
     filed.append(_row(SPENDING, "2020-01-01", "deep", category=None))
@@ -163,29 +165,93 @@ def test_scan_cap_returns_short_page_with_non_null_cursor(handler, monkeypatch):
     assert first["transactions"] == []          # cap hit before the deep row
     assert first["nextCursor"] is not None       # but NOT a false end-of-history
 
-    # Draining from scratch (each request capped at 2 chunks) still reaches the deep row.
+    # Draining from scratch (each request capped) still reaches the deep row.
     drained = _drain(handler, repo, FakeCategoryRepo({"groceries"}), limit=5)
     assert [t["transaction_id"] for t in drained] == ["deep"]
 
 
-# --- overshoot with a live cursor: the page is never truncated -----------------
+# --- exact-size page with a live cursor: resumes gap-free ----------------------
 
 
-def test_overshoot_page_returns_all_rows_untruncated_and_resumes_gap_free(handler, monkeypatch):
-    # A chunk of 3 uncategorized rows overshoots target=2 WHILE more history (a non-null cursor)
-    # remains. The page must return all 3 (never truncated to 2), because the cursor has advanced
-    # past all 3 — dropping one would lose it forever (a gap).
-    monkeypatch.setattr(handler, "MAX_PAGE_SIZE", 3)  # 3-row raw chunks -> forces the multi-chunk walk
+def test_page_stops_at_target_and_resumes_gap_free(handler, monkeypatch):
+    # 6 uncategorized rows, limit 2, 3-row database pages: the first page holds exactly 2 rows
+    # (the cursor sits on the last row returned, so nothing is skipped) with more history behind
+    # it, and draining yields every row once, newest-first.
+    monkeypatch.setattr(handler, "MAX_PAGE_SIZE", 3)
     rows = [_row(SPENDING, f"2026-06-{d:02d}", f"u{d}", category=None) for d in range(6, 0, -1)]
-    table, repo, _ = real_repos({SPENDING: rows})  # 6 uncategorized rows, newest u6 .. oldest u1
+    table, repo, _ = real_repos({SPENDING: rows})
 
     first = json.loads(
         handler.get_uncategorized_feed(
             uncategorized_feed_event({"limit": "2"}), repo, FakeCategoryRepo(set()))["body"]
     )
-    assert len(first["transactions"]) == 3          # overshoot: the whole first chunk, NOT clamped to 2
-    assert first["nextCursor"] is not None           # and more history behind it
+    assert [t["transaction_id"] for t in first["transactions"]] == ["u6", "u5"]
+    assert first["nextCursor"] is not None
+    assert [read for read in date_reads(table) if read[0] == SPENDING] == [(SPENDING, None, None, 3, None)]
 
     drained = _drain(handler, repo, FakeCategoryRepo(set()), limit=2)
     ids = [t["transaction_id"] for t in drained]
-    assert ids == [f"u{d}" for d in range(6, 0, -1)]  # every row once, newest-first, no dupe/gap
+    assert ids == [f"u{d}" for d in range(6, 0, -1)]
+
+
+# --- one Load More reads each row at most once ---------------------------------
+
+
+def test_one_load_more_reads_each_row_at_most_once(handler):
+    # 4 accounts, each 250 filed rows then 2 unfiled ones at the bottom, in separate years so
+    # the accounts drain one after another. Finding all 8 unfiled rows walks every account to
+    # the end: each account must be read page by page, never re-read from a cursor (or from the
+    # start) already used in this request.
+    filed_per_account = 250
+    rows_by_account = {}
+    expected = []
+    for year, account_id in zip((2026, 2025, 2024, 2023), (ANZ, SPENDING, HOMELOAN, WESTPAC)):
+        rows = [_row(account_id, f"{year}-06-{(i % 28) + 1:02d}", f"{account_id}-f{i}",
+                     category="groceries") for i in range(filed_per_account)]
+        rows += [_row(account_id, f"{year}-01-0{d}", f"{account_id}-u{d}", category=None)
+                 for d in (2, 1)]
+        expected += [f"{account_id}-u2", f"{account_id}-u1"]
+        rows_by_account[account_id] = rows
+    table, repo, _ = real_repos(rows_by_account)
+
+    body = json.loads(handler.get_uncategorized_feed(
+        uncategorized_feed_event({"limit": "8"}), repo, FakeCategoryRepo({"groceries"}))["body"])
+
+    assert [t["transaction_id"] for t in body["transactions"]] == expected
+    reads = [(account_id, json.dumps(cursor, sort_keys=True))
+             for account_id, _start, _end, _limit, cursor in date_reads(table)]
+    assert len(reads) == len(set(reads)), "a database page was read twice in one request"
+    pages_per_account = math.ceil((filed_per_account + 2) / handler.MAX_PAGE_SIZE) + 1
+    assert len(reads) <= 4 * pages_per_account
+
+
+# --- edges of the shared walker ------------------------------------------------
+
+
+def test_scan_cap_counts_rows_exactly(handler, monkeypatch):
+    # [A2] A cap of 5 rows: an unfiled row that is the 5th row scanned is still returned.
+    monkeypatch.setattr(handler, "_MAX_UNCATEGORIZED_SCAN_ROWS", 5)
+    rows = [_row(SPENDING, f"2026-06-{20 - i:02d}", f"f{i}", category="groceries") for i in range(4)]
+    rows.append(_row(SPENDING, "2026-01-01", "u", category=None))
+    table, repo, _ = real_repos({SPENDING: rows})
+
+    body = json.loads(handler.get_uncategorized_feed(
+        uncategorized_feed_event({"limit": "5"}), repo, FakeCategoryRepo({"groceries"}))["body"])
+
+    assert [t["transaction_id"] for t in body["transactions"]] == ["u"]
+    assert body["nextCursor"] is None
+
+
+def test_empty_database_page_with_a_cursor_is_read_past_before_picking(handler):
+    # [A1] DynamoDB can return no rows but a LastEvaluatedKey (its 1MB page). The walker must
+    # read on before picking, or an older row from another account jumps ahead of a newer one.
+    key = {"account_id": SPENDING, "date": "2026-07-20", "pk": f"ACCOUNT#{SPENDING}", "sk": "TXN#x"}
+    repo = _AccountPagesTransactionRepo({
+        ANZ: [([_row(ANZ, "2026-07-01", "a_old", category=None)], None)],
+        SPENDING: [([], key), ([_row(SPENDING, "2026-07-10", "s_new", category=None)], None)],
+    })
+
+    body = json.loads(handler.get_uncategorized_feed(
+        uncategorized_feed_event({"limit": "1"}), repo, FakeCategoryRepo(set()))["body"])
+
+    assert [t["transaction_id"] for t in body["transactions"]] == ["s_new"]

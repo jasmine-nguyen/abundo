@@ -3,6 +3,7 @@ and idempotency-event helpers used by the sync/webhook pipeline."""
 
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -10,6 +11,7 @@ from boto3.dynamodb.conditions import Key
 
 from constants import (
     ACCOUNT_ID_MAP,
+    BATCH_CATEGORY_WORKERS,
     DATE_RANGE_MAX_PAGES,
     DEAD_LETTER_TTL_SECONDS,
     DELETED_TRANSACTION_TTL_SECONDS,
@@ -449,25 +451,36 @@ class TransactionRepository(RepositoryBase):
     ) -> list[dict[str, str]]:
         """Set the category on many transactions, best-effort (WHIT-70).
 
-        Each update is {"id", "category"}. Applied INDEPENDENTLY: resolve the row's
-        keys via the GSI, then conditionally update, so one unknown or vanished id
-        yields a per-item "not_found" rather than failing the whole batch. Returns
-        [{"id", "status"}] in input order, status ∈ {"updated", "not_found"}. A
-        partial UpdateItem loop (not batch_writer, which is put-only and would
-        overwrite the whole row; not transact_write_items, whose all-or-nothing
-        would let one stale id sink the entire sweep).
+        Each update is {"id", "category", "account_id"?}. Applied INDEPENDENTLY, so
+        one unknown or vanished id yields a per-item "not_found" rather than failing
+        the whole batch. With an account_id the row's keys are built directly and
+        the GSI lookup is skipped; a direct miss (or no account_id) falls back to
+        the GSI lookup, then a conditional update. Items run in parallel; returns
+        [{"id", "status"}] in input order, status ∈ {"updated", "not_found"}.
+        Duplicate ids in one batch have no defined winner (the app sends one
+        category per batch). The first non-conditional error is re-raised as
+        DatabaseError; queued items are cancelled, in-flight ones finish, so some
+        rows may already be saved. Partial UpdateItems (not batch_writer, which is
+        put-only and would overwrite the whole row; not transact_write_items, whose
+        all-or-nothing would let one stale id sink the entire sweep).
         """
-        results: list[dict[str, str]] = []
-        for item in updates:
-            transaction_id = item["id"]
-            keys = self.get_transaction_keys_by_id(transaction_id)
-            if keys is None:
-                results.append({"id": transaction_id, "status": "not_found"})
-                continue
-            updated = self.update_transaction_category(
-                keys["pk"], keys["sk"], item["category"]
-            )
-            results.append(
-                {"id": transaction_id, "status": "updated" if updated else "not_found"}
-            )
-        return results
+        self._get_table()
+        pool = ThreadPoolExecutor(max_workers=BATCH_CATEGORY_WORKERS)
+        try:
+            return list(pool.map(self._update_one_category, updates))
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def _update_one_category(self, item: dict[str, str]) -> dict[str, str]:
+        transaction_id = item["id"]
+        category = item["category"]
+        account_id = item.get("account_id")
+        if account_id and self.update_transaction_category(
+            _build_pk(account_id), _build_sk(transaction_id), category
+        ):
+            return {"id": transaction_id, "status": "updated"}
+        keys = self.get_transaction_keys_by_id(transaction_id)
+        if keys is None:
+            return {"id": transaction_id, "status": "not_found"}
+        updated = self.update_transaction_category(keys["pk"], keys["sk"], category)
+        return {"id": transaction_id, "status": "updated" if updated else "not_found"}

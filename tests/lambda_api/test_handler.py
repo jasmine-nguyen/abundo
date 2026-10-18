@@ -221,6 +221,16 @@ def test_batch_success_applies_all_and_shapes_results(handler):
     assert repo.batch_calls == [[{"id": "t1", "category": "coffee"}, {"id": "t2", "category": "coffee"}]]
 
 
+def test_batch_passes_the_account_through_to_the_repo(handler):
+    repo = FakeBatchRepo()
+    body = '{"updates": [{"id": "t1", "category": "coffee", "account_id": "acct-1"}]}'
+
+    resp = handler.patch_transactions_batch(_batch_event(body), repo)
+
+    assert resp["statusCode"] == 200
+    assert repo.batch_calls == [[{"id": "t1", "category": "coffee", "account_id": "acct-1"}]]
+
+
 def test_batch_exactly_max_succeeds(handler):
     # Boundary on the OTHER side of the >MAX reject: exactly TRANSACTION_BATCH_MAX
     # items must be ACCEPTED and reach the repo (a `>=` would wrongly 400 a full batch).
@@ -247,6 +257,10 @@ _OVERSIZED_BATCH = json.dumps({"updates": [
     '{"updates": [1, 2]}',
     '{"updates": [{"category": "coffee"}]}',                # item without an id
     '{"updates": [{"id": "t1", "category": "   "}]}',
+    '{"updates": [{"id": "t1", "category": "coffee", "account_id": ""}]}',
+    '{"updates": [{"id": "t1", "category": "coffee", "account_id": 5}]}',
+    '{"updates": [{"id": "t1", "category": "coffee", "account_id": null}]}',  # [A2]
+    '{"updates": [{"id": "t1", "category": "coffee", "account_id": "  "}]}',
     "not json",
 ])
 def test_an_invalid_batch_is_400_and_never_reaches_the_database(handler, body):

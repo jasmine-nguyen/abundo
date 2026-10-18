@@ -39,17 +39,17 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
 }
 
 // Where a wedge sits on the emphasis axis, given the current selection: +1 popped (this is the
-// tapped one), −1 dimmed (something else is tapped), 0 at rest (nothing tapped). Pure so a test
-// can pin it without reaching into the animation. The scale/opacity below are just this mapped.
-export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0 | 1 {
+// tapped one), −1 dimmed (something else is tapped), 0 at rest (nothing tapped). The scale/opacity
+// below are just this mapped.
+function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0 | 1 {
   if (isSelected) return 1;
   return anySelected ? -1 : 0;
 }
 
 // A tapped category can leave the data — its spend drops to 0, or it folds into "Other" on a cycle
 // change. Treat the selection as active only while its category is still painted: a stale id would
-// otherwise dim every wedge for a selection that no longer exists. Pure + exported so a test pins it.
-export function activeSelection(selectedId: string | null, painted: DonutSlice[]): string | null {
+// otherwise dim every wedge for a selection that no longer exists.
+function activeSelection(selectedId: string | null, painted: DonutSlice[]): string | null {
   return selectedId !== null && painted.some((s) => s.id === selectedId) ? selectedId : null;
 }
 

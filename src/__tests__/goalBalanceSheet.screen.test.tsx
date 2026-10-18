@@ -17,6 +17,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
+import { renderedPickerProps } from './support/mockDatePicker';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -138,6 +139,12 @@ it('picking a date backdates manual_as_of to the chosen ISO date', async () => {
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
   expect(body.manual_as_of).toBe('2026-06-20');
+});
+
+// [A2] An as-of date is never in the future: the sheet must cap the shared picker at today.
+it('caps the as-of picker at today', async () => {
+  await openSheet();
+  expect((renderedPickerProps().maximumDate as Date).toDateString()).toBe(new Date().toDateString());
 });
 
 // ===== WHIT-235 adversarial gaps (folded from goalBalanceSheetGaps) — the per-goal re-seed on

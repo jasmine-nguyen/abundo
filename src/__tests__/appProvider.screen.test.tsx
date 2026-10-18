@@ -292,7 +292,7 @@ it('applyCategory(all) files the tapped charge even when the sweep is empty (nev
 
   const batches = server.sent('PATCH', '/transactions');
   expect(batches).toHaveLength(1);
-  expect(batches[0].body).toEqual({ updates: [{ id: 't1', category: 'groceries' }] });
+  expect(batches[0].body).toEqual({ updates: [{ id: 't1', category: 'groceries', account_id: 'a1' }] });
 });
 
 it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)', async () => {

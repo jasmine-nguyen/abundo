@@ -88,6 +88,26 @@ it.each([
   else expect(routerSpies.push).not.toHaveBeenCalled();
   expect(openPicker).not.toHaveBeenCalled();
   expect(onToggleSelect).toHaveBeenCalledTimes(selectable ? 1 : 0);
+  if (selectable) expect(onToggleSelect).toHaveBeenCalledWith('tx1');
+});
+
+// ABU-58: the row remembers its output, so a screen redraw (a search keystroke, a Select-mode
+// tick on another row) skips rows whose props didn't change. The screen passes one stable toggle
+// callback to every row, so the row hands back its own transaction id.
+it('skips redrawing on unchanged props, and its checkbox passes the transaction id', () => {
+  mockState = stateWith();
+  const category = jest.fn(mockState.category);
+  const onToggleSelect = jest.fn();
+  const t = txn({ transaction_id: 'tx7', merchant_name: 'Woolworths', category: 'coffee' });
+  const { rerender } = render(<TransactionRow t={t} category={category} selectable onToggleSelect={onToggleSelect} />);
+  const lookupsAfterFirstDraw = category.mock.calls.length;
+  expect(lookupsAfterFirstDraw).toBeGreaterThan(0);
+
+  rerender(<TransactionRow t={t} category={category} selectable onToggleSelect={onToggleSelect} />);
+  expect(category.mock.calls.length).toBe(lookupsAfterFirstDraw);
+
+  fireEvent.press(screen.getByLabelText('Select Woolworths'));
+  expect(onToggleSelect).toHaveBeenCalledWith('tx7');
 });
 
 // WHIT-272: the trailing chevron opens /transaction/[id]. It is a SEPARATE Pressable from the

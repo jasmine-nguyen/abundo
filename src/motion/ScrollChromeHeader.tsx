@@ -8,8 +8,8 @@
 // the provider's stateRef (read here, written via setNavBars), which also honours
 // reduce-motion. `prevY` is per-ScrollView scroll geometry, not chrome state.
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, Animated, ScrollView, StyleSheet, StyleProp, ViewStyle, RefreshControl } from 'react-native';
-import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { View, Text, Animated, ScrollView, SectionList, StyleSheet, StyleProp, ViewStyle, RefreshControl } from 'react-native';
+import type { NativeScrollEvent, NativeSyntheticEvent, SectionListProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../theme';
 import { useNavBars } from './NavBarsContext';
@@ -44,9 +44,23 @@ export const floatingHeaderStyle = StyleSheet.create({
 
 export const SCREEN_PADDING = 18;
 
-export function ScrollChromeHeader({
+// A SectionList's first draw. The window counts each day's heading and section footer as cells
+// too (3 per day at worst): 90 draws a whole first page of 30 rows over 30 days.
+export const SECTION_LIST_FIRST_DRAW = 90;
+
+// ABU-100: pass `sections` (with its renderers) to draw only the rows on screen. `children` then
+// becomes the list's header and `footer` its footer. Without `sections` it's a plain ScrollView.
+// `S` is one section; the row type is read off its `data`, so the renderers are checked against it.
+type Section = { data: readonly unknown[] };
+type ListModeProps<S extends Section> = {
+  sections?: readonly S[];
+  footer?: React.ReactNode;
+} & Partial<NoInfer<Pick<SectionListProps<S['data'][number], S>, 'renderItem' | 'renderSectionHeader' | 'keyExtractor'>>>;
+
+export function ScrollChromeHeader<S extends Section>({
   title, subtitle, right, refreshing, onRefresh, contentContainerStyle, keyboardShouldPersistTaps, children,
-}: {
+  sections, renderItem, renderSectionHeader, keyExtractor, footer,
+}: ListModeProps<S> & {
   title: string;
   // Small text under the title (the freshness line, WHIT-863). With one, the header's measured
   // height drives the list's top gap, the slide distance and the pull spinner's offset.
@@ -76,6 +90,29 @@ export function ScrollChromeHeader({
     if (next !== stateRef.current) setNavBars(next);
   }, [setNavBars, stateRef]);
 
+  const scrollProps = {
+    onScroll,
+    scrollEventThrottle: 16,
+    // Flatten to a single object so `contentContainerStyle.paddingTop/Bottom` stays
+    // directly readable (the motion/clearance tests inspect it), while still folding in
+    // a screen's extra style (e.g. Transactions' select-mode bottom padding).
+    contentContainerStyle: StyleSheet.flatten([
+      {
+        // Fill the viewport so a short list (or a centred spinner/error) can still be pulled to refresh.
+        flexGrow: 1,
+        paddingHorizontal: SCREEN_PADDING,
+        paddingTop: headerHeight,
+        paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_BOTTOM_CLEARANCE,
+      },
+      contentContainerStyle,
+    ]),
+    showsVerticalScrollIndicator: false,
+    keyboardShouldPersistTaps,
+    refreshControl: onRefresh && (
+      <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
+    ),
+  };
+
   // 1 = shown (translateY 0, opaque), 0 = hidden (slid up by its full height, faded).
   const headerStyle = {
     opacity: visibility,
@@ -98,30 +135,21 @@ export function ScrollChromeHeader({
         {subtitle != null && <View>{subtitle}</View>}
       </Animated.View>
 
-      <ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        // Flatten to a single object so `contentContainerStyle.paddingTop/Bottom` stays
-        // directly readable (the motion/clearance tests inspect it), while still folding in
-        // a screen's extra style (e.g. Transactions' select-mode bottom padding).
-        contentContainerStyle={StyleSheet.flatten([
-          {
-            // Fill the viewport so a short list (or a centred spinner/error) can still be pulled to refresh.
-            flexGrow: 1,
-            paddingHorizontal: SCREEN_PADDING,
-            paddingTop: headerHeight,
-            paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_BOTTOM_CLEARANCE,
-          },
-          contentContainerStyle,
-        ])}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-        refreshControl={onRefresh && (
-          <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
-        )}
-      >
-        {children}
-      </ScrollView>
+      {sections ? (
+        <SectionList
+          {...scrollProps}
+          sections={sections}
+          renderItem={renderItem}
+          renderSectionHeader={renderSectionHeader}
+          keyExtractor={keyExtractor}
+          ListHeaderComponent={<>{children}</>}
+          ListFooterComponent={<>{footer}</>}
+          initialNumToRender={SECTION_LIST_FIRST_DRAW}
+          stickySectionHeadersEnabled={false}
+        />
+      ) : (
+        <ScrollView {...scrollProps}>{children}</ScrollView>
+      )}
     </View>
   );
 }

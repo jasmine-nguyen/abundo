@@ -7,7 +7,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
+import { RefreshControl, SectionList } from 'react-native';
 import { C } from '../theme';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
@@ -15,7 +15,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { accountFeedKey } from '../queryKeys';
-import { styleOf } from './support/layout';
+import { styleOf, expectScrollEdge } from './support/layout';
 import { accountBalance } from './support/accountBalance';
 import type { AccountBalance } from '../api';
 
@@ -240,5 +240,27 @@ it('Load More appends this account\'s older rows, and a pull snaps back to the n
   expect(await screen.findByTestId('account-load-more')).toBeTruthy();
   expect(feedReads().slice(readsBeforePull).every((params) => params.get('cursor') === null)).toBe(true);
   await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+});
+
+// [A1] ABU-58: a full first page (30 rows, each on its own day) draws every row and the Load More
+// footer without scrolling, so the list's first window must also count each day's heading cells.
+it('a full first page over 30 different days draws every row and Load More without scrolling', async () => {
+  const page = Array.from({ length: 30 }, (_, i) => {
+    const date = `2026-06-${String(i + 1).padStart(2, '0')}`;
+    return { ...ROW, transaction_id: `p${i}`, date, authorized_date: date, amount: -(i + 1) };
+  });
+  seedFeedPage(server, FEED, page, 'c1');
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByText('−⁠$30.00')).toBeTruthy();
+  expect(screen.getByText('−⁠$1.00')).toBeTruthy();
+  expect(screen.getByTestId('account-load-more')).toBeTruthy();
+});
+
+// ABU-99: content scrolling under the title gets a clean edge. The shared scroll hook must work on
+// the account page's SectionList, not just a ScrollView.
+it('scrolling the list draws the title bar edge, and scrolling back to the top removes it', async () => {
+  server.seed('/accounts/balances', [bal()]);
+  await renderWithQueries(<AccountDetail />);
+  expectScrollEdge(screen.UNSAFE_getByType(SectionList));
 });
 

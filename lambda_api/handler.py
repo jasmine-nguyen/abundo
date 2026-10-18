@@ -66,6 +66,7 @@ from constants import (
     RULE_OPERATORS,
     SAVINGS_BUCKET,
 )
+from collections import deque
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -542,7 +543,9 @@ def delete_transaction(event: dict, repo: TransactionRepository) -> dict:
 def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:
     """PATCH /transactions — set the category on many transactions in one request.
 
-    Body: {"updates": [{"id": "<txn id>", "category": "<non-empty string>"}, ...]}.
+    Body: {"updates": [{"id": "<txn id>", "category": "<non-empty string>",
+    "account_id"?: "<non-empty string>"}, ...]}. The optional account_id lets the
+    repository skip the id-index lookup.
     This exists so the "All from this merchant" sweep persists in ONE round-trip
     instead of N single PATCHes. Each update is applied INDEPENDENTLY (best-effort):
     the response is {"results": [{"id", "status"}, ...]} where status is "updated"
@@ -569,6 +572,10 @@ def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:
         category = item.get("category")
         if not isinstance(category, str) or not category.strip():
             return _json_response(400, {"error": "category is required"})
+        if "account_id" in item:
+            account_id = item["account_id"]
+            if not isinstance(account_id, str) or not account_id.strip():
+                return _json_response(400, {"error": "account_id must be a non-empty string"})
 
     results = repo.update_transaction_categories(updates)
     return _json_response(200, {"results": results})
@@ -687,83 +694,88 @@ def _fetch_feed_page(
 ) -> tuple[list[dict], dict]:
     """One page of the merged all-accounts feed: the globally newest `limit` rows at or
     after each account's resume position, plus the resume map for the next page.
+    `accounts` limits the first page to those accounts (default: every account)."""
+    return _walk_feed(repo, resume_keys, accounts, page_size=limit, target=limit, max_scan=limit)
 
+
+def _walk_feed(
+    repo: TransactionRepository,
+    resume_keys: dict,
+    accounts: list[str] | None,
+    page_size: int,
+    target: int,
+    max_scan: int,
+    keep: Callable[[dict], bool] = lambda row: True,
+) -> tuple[list[dict], dict]:
+    """Merge every live account's date-index pages newest-first, keeping rows that pass
+    `keep`, until `target` are kept, `max_scan` rows are consumed, or history runs out.
+    Returns the kept rows plus the resume map for the next call.
+
+    Each account holds a buffer of fetched rows and is queried (`page_size` rows) only when
+    its buffer is empty and the walk still needs a row, so no row is read twice in one call.
     Why it is gap-free and dupe-free:
-      - Fetch up to `limit` newest rows from each live account past its resume key. A
-        globally top-`limit` row has < limit rows newer than it globally, hence < limit
-        newer within its OWN account, so it always sits inside that account's own
-        top-`limit` — fetching `limit` per account can never miss one.
-      - Stable-merge all fetched rows by date descending (ties keep ACCOUNT_ID_MAP order,
-        and each account's own rows keep DynamoDB order) and take the top `limit`.
-      - Advance an account's resume key only PAST the OLDEST row it contributed to this
-        page (DynamoDB's ExclusiveStartKey resumes strictly after it, so no row repeats).
-        An account that contributed nothing keeps its PRIOR key, so its fetched-but-unshown
-        rows re-compete next page (no row is skipped).
-      - Drop an account from the next cursor once it has no unshown fetched rows AND
-        DynamoDB reports no more pages.
+      - Every live account has a row at its buffer head before each pick, and the newest
+        head wins (ties go to the earlier account in `live` order, i.e. ACCOUNT_ID_MAP order,
+        kept stable across pages), so rows come out in one deterministic global order.
+      - An account's next resume key is the last row it gave up (DynamoDB's ExclusiveStartKey
+        resumes strictly after it). An account that gave up nothing keeps its prior key, so
+        its buffered rows re-compete next call. It drops out once its buffer is empty and
+        DynamoDB has no more pages.
 
     resume_keys is {} on the first page (every account from newest); otherwise it holds
     only the still-live accounts, each mapped to a date-index key or None (from newest).
-    `accounts` limits the first page to those accounts (default: every account).
     """
-    first_page = not resume_keys
-    if first_page:
-        live = {account_id: None for account_id in (accounts or ACCOUNT_ID_MAP.values())}
-    else:
+    if resume_keys:
         live = dict(resume_keys)
+    else:
+        live = {account_id: None for account_id in (accounts or ACCOUNT_ID_MAP.values())}
 
-    # One query per live account, in ACCOUNT_ID_MAP order (kept stable across pages so the
-    # equal-date merge tiebreak never flips a row across a page boundary).
-    fetched: dict[str, list[dict]] = {}
-    dynamo_has_more: dict[str, bool] = {}
-    for account_id, resume_key in live.items():
-        rows, next_key = repo.get_transactions_by_date_range(
-            account_id, None, None, limit=limit, cursor=resume_key
-        )
-        fetched[account_id] = rows
-        dynamo_has_more[account_id] = next_key is not None
+    buffers = {account_id: deque() for account_id in live}
+    dynamo_keys = dict(live)
+    dynamo_done = {account_id: False for account_id in live}
+    last_consumed: dict[str, dict] = {}
+    kept: list[dict] = []
+    scanned = 0
 
-    # Stable-merge: insertion order is account-by-account in live order, so a stable sort
-    # on date-desc keeps equal-date rows in ACCOUNT_ID_MAP order and each account's rows in
-    # DynamoDB order — a single deterministic global order.
-    ordered = [
-        (row, account_id)
-        for account_id, rows in fetched.items()
-        for row in rows
-    ]
-    ordered.sort(key=lambda pair: pair[0]["date"], reverse=True)
-    page_pairs = ordered[:limit]
-    page = [row for row, _ in page_pairs]
+    while len(kept) < target and scanned < max_scan:
+        for account_id in live:
+            while not buffers[account_id] and not dynamo_done[account_id]:
+                rows, next_key = repo.get_transactions_by_date_range(
+                    account_id, None, None, limit=page_size, cursor=dynamo_keys[account_id]
+                )
+                buffers[account_id].extend(rows)
+                dynamo_keys[account_id] = next_key
+                dynamo_done[account_id] = next_key is None
 
-    # The page is newest-first, so the LAST time an account appears is the oldest row it
-    # contributed → its next resume key.
-    oldest_contributed: dict[str, dict] = {}
-    contributed_count: dict[str, int] = {}
-    for row, account_id in page_pairs:
-        oldest_contributed[account_id] = row
-        contributed_count[account_id] = contributed_count.get(account_id, 0) + 1
+        newest = None
+        for account_id in live:
+            buffer = buffers[account_id]
+            if buffer and (newest is None or buffer[0]["date"] > buffers[newest][0]["date"]):
+                newest = account_id
+        if newest is None:
+            break
+
+        row = buffers[newest].popleft()
+        last_consumed[newest] = row
+        scanned += 1
+        if keep(row):
+            kept.append(row)
 
     next_resume_keys: dict = {}
     for account_id in live:
-        row = oldest_contributed.get(account_id)
-        if row is not None:
-            all_fetched_shown = contributed_count[account_id] == len(fetched[account_id])
-            exhausted = all_fetched_shown and not dynamo_has_more[account_id]
-            if not exhausted:
-                next_resume_keys[account_id] = {
-                    "account_id": account_id,
-                    "date": row["date"],
-                    "pk": row["pk"],
-                    "sk": row["sk"],
-                }
+        if not buffers[account_id] and dynamo_done[account_id]:
             continue
-        # Contributed nothing this page. If it still has fetched-but-unshown rows (or
-        # DynamoDB has more), keep it live at its PRIOR position so those rows re-compete;
-        # otherwise it is exhausted and drops out of the cursor.
-        if fetched[account_id] or dynamo_has_more[account_id]:
+        row = last_consumed.get(account_id)
+        if row is None:
             next_resume_keys[account_id] = live[account_id]
-
-    return page, next_resume_keys
+            continue
+        next_resume_keys[account_id] = {
+            "account_id": account_id,
+            "date": row["date"],
+            "pk": row["pk"],
+            "sk": row["sk"],
+        }
+    return kept, next_resume_keys
 
 
 def _slugify(name: str) -> str:
@@ -1262,12 +1274,11 @@ def get_uncategorized_count(transaction_repo: TransactionRepository, category_re
     return _json_response(200, {"count": count})
 
 
-# How many raw feed chunks one uncategorized-feed request will walk to fill a page. Each
-# chunk is a MAX_PAGE_SIZE-row slice of the merged feed, so this bounds a single Load More
-# to ~this many × MAX_PAGE_SIZE rows scanned. If a user's uncategorized charges are sparse
-# and deep, one request may return fewer than the target (with a continuation cursor) rather
-# than scanning unbounded history; the next Load More resumes where this one stopped.
-_MAX_UNCATEGORIZED_SCAN_PAGES = 30
+# How many raw rows one uncategorized-feed request will scan to fill a page (~3,000). If a
+# user's uncategorized charges are sparse and deep, one request may return fewer than the
+# target (with a continuation cursor) rather than scanning unbounded history; the next Load
+# More resumes where this one stopped.
+_MAX_UNCATEGORIZED_SCAN_ROWS = 30 * MAX_PAGE_SIZE
 
 
 def _fetch_uncategorized_feed_page(
@@ -1275,26 +1286,17 @@ def _fetch_uncategorized_feed_page(
 ) -> tuple[list[dict], dict]:
     """One page of uncategorized rows: walk the merged all-accounts feed from `resume_keys`,
     keeping only uncategorized charges (same rule as the count), until `target` of them
-    accrue, history is exhausted, or the scan cap is hit. Returns the accumulated rows plus
-    the resume map for the next page.
-
-    Reuses _fetch_feed_page unchanged, so the walk stays gap-free and dupe-free. Each raw
-    chunk is MAX_PAGE_SIZE rows (not `target`) to minimise round trips. The accumulated rows
-    are NOT truncated to `target`: the cursor has already advanced past every raw row consumed
-    to build them, so dropping any would skip an uncategorized charge (a gap). A page may
-    therefore hold slightly more than `target` on the final chunk — harmless.
-    """
-    accumulated: list[dict] = []
-    cursor = resume_keys
-    for _ in range(_MAX_UNCATEGORIZED_SCAN_PAGES):
-        raw_page, cursor = _fetch_feed_page(repo, MAX_PAGE_SIZE, cursor)
-        accumulated.extend(
-            row for row in raw_page
-            if is_unfiled_category(row.get("category"), taxonomy_ids)
-        )
-        if len(accumulated) >= target or not cursor:
-            break
-    return accumulated, cursor
+    accrue, history is exhausted, or the scan cap is hit. Returns the rows plus the resume
+    map for the next page. Reads MAX_PAGE_SIZE rows per query to minimise round trips."""
+    return _walk_feed(
+        repo,
+        resume_keys,
+        None,
+        page_size=MAX_PAGE_SIZE,
+        target=target,
+        max_scan=_MAX_UNCATEGORIZED_SCAN_ROWS,
+        keep=lambda row: is_unfiled_category(row.get("category"), taxonomy_ids),
+    )
 
 
 def get_uncategorized_feed(

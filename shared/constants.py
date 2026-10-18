@@ -66,8 +66,16 @@ CARRY_DATE_SKEW_DAYS = 3
 # well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the deleted charge back.
 DELETED_TRANSACTION_TTL_SECONDS = 30 * 24 * 3600
 
+# How long a webhook "already processed" marker (EVENT#<envelope>) lives (ABU-46). Written as
+# DynamoDB TTL (`expires_at`); must stay well past FEED_WINDOW_DAYS so every BankSync re-send
+# is still recognised as seen.
+EVENT_MARKER_TTL_SECONDS = 30 * 24 * 60 * 60
+
 # Maximum number of items requested per DynamoDB query page.
 MAX_PAGE_SIZE = 100
+
+# Parallel workers for a batch category update; matches botocore's default max_pool_connections.
+BATCH_CATEGORY_WORKERS = 10
 
 # Page ceiling for one account's date-range read. 1000 × MAX_PAGE_SIZE is far beyond any
 # real window, so hitting it means the cursor isn't advancing.
