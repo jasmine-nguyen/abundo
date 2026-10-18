@@ -8,7 +8,7 @@ count, best-effort (never raise). notify_behind_goals is monkeypatched to captur
 
 import logging
 
-from _terraform import MONITORING_TF, alarm_names, filter_pattern, tf_attr, tf_block
+from _terraform import MONITORING_TF, alarm_metrics, filter_metrics, filter_pattern, tf_attr, tf_block
 
 HEARTBEAT = filter_pattern("goal_nudge_runs").strip('"')
 
@@ -48,9 +48,8 @@ def test_swallows_a_failure_and_reports_zero(handler, monkeypatch, caplog):
 def test_heartbeat_alarm_pages_when_the_sweep_goes_silent():
     # No heartbeat at all (crash, timeout, stopped schedule) must count as failing.
     text = MONITORING_TF.read_text()
-    heartbeat_filter = tf_block(text, "aws_cloudwatch_log_metric_filter", "goal_nudge_runs")
-    heartbeat_metric = tf_attr(heartbeat_filter.split("metric_transformation", 1)[1], "name")
-    for name in alarm_names(text):
-        alarm = tf_block(text, "aws_cloudwatch_metric_alarm", name)
-        if tf_attr(alarm, "metric_name") == heartbeat_metric:
+    heartbeat_metric = filter_metrics(text)["goal_nudge_runs"]
+    for name, metric in alarm_metrics(text).items():
+        if metric == heartbeat_metric:
+            alarm = tf_block(text, "aws_cloudwatch_metric_alarm", name)
             assert tf_attr(alarm, "treat_missing_data") == '"breaching"'
