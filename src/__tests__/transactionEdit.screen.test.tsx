@@ -117,6 +117,27 @@ it.each([
   expect(screen.getByTestId('tag-input').props.value).toBe(left);
 });
 
+// [A1][A2] ABU-99: the note and the tags fold on their own — an empty one shows its "Add" line, a
+// filled one its box straight away. A box opened by the tap gets the keyboard; a filled note doesn't.
+it.each([
+  { case: 'note only', over: { notes: 'old note', tags: [] }, noteOpen: true, tagsOpen: false },
+  { case: 'tags only', over: { notes: '', tags: ['work'] }, noteOpen: false, tagsOpen: true },
+  { case: 'neither', over: { notes: '', tags: [] }, noteOpen: false, tagsOpen: false },
+])('note and tags fold: $case', async ({ over, noteOpen, tagsOpen }) => {
+  seedRow(over);
+  await draw();
+  expect(screen.queryByTestId('note-input') !== null).toBe(noteOpen);
+  expect(screen.queryByTestId('note-add') !== null).toBe(!noteOpen);
+  expect(screen.queryByTestId('tag-input') !== null).toBe(tagsOpen);
+  expect(screen.queryByTestId('tag-add') !== null).toBe(!tagsOpen);
+  if (noteOpen) expect(screen.getByTestId('note-input').props.autoFocus).toBe(false);
+
+  if (!noteOpen) fireEvent.press(screen.getByTestId('note-add'));
+  if (!tagsOpen) fireEvent.press(screen.getByTestId('tag-add'));
+  if (!noteOpen) expect(screen.getByTestId('note-input').props.autoFocus).toBe(true);
+  if (!tagsOpen) expect(screen.getByTestId('tag-input').props.autoFocus).toBe(true);
+});
+
 it('ignores a duplicate tag (case-insensitive)', async () => {
   await draw();
   const input = screen.getByTestId('tag-input');
