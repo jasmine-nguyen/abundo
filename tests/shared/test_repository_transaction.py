@@ -436,6 +436,31 @@ def test_batch_wrong_account_falls_back_to_lookup_without_creating_a_row(repo):
     assert list(repo._table.store) == [("ACCOUNT#a", "TXN#t1")]
 
 
+def test_batch_mixed_items_keep_input_order_and_unknown_ids_create_nothing(repo):
+    # [A1] The slowest write is first, so completion order differs from input order. A known
+    # id with its account, an unknown id sent WITH an account (direct miss, then lookup miss),
+    # and a known id without an account each get their own status, in input order.
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1", "category": "OLD"},
+        ("ACCOUNT#b", "TXN#t3"): {"pk": "ACCOUNT#b", "sk": "TXN#t3", "transaction_id": "t3", "category": "OLD"},
+    }
+    repo._table.before_write(lambda key, table: key["sk"] == "TXN#t1" and time.sleep(0.1))
+
+    results = repo.update_transaction_categories([
+        {"id": "t1", "category": "coffee", "account_id": "a"},
+        {"id": "ghost", "category": "coffee", "account_id": "a"},
+        {"id": "t3", "category": "coffee"},
+    ])
+
+    assert results == [
+        {"id": "t1", "status": "updated"},
+        {"id": "ghost", "status": "not_found"},
+        {"id": "t3", "status": "updated"},
+    ]
+    assert sorted(repo._table.store) == [("ACCOUNT#a", "TXN#t1"), ("ACCOUNT#b", "TXN#t3")]
+    assert repo._table.store[("ACCOUNT#b", "TXN#t3")]["category"] == "coffee"
+
+
 def test_batch_real_error_cancels_queued_updates(repo, database_error):
     # The first write fails at once while the others are slowed, so without cancelling
     # the queue every one of the 30 writes would still run after the error.

@@ -259,6 +259,8 @@ _OVERSIZED_BATCH = json.dumps({"updates": [
     '{"updates": [{"id": "t1", "category": "   "}]}',
     '{"updates": [{"id": "t1", "category": "coffee", "account_id": ""}]}',
     '{"updates": [{"id": "t1", "category": "coffee", "account_id": 5}]}',
+    '{"updates": [{"id": "t1", "category": "coffee", "account_id": null}]}',  # [A2]
+    '{"updates": [{"id": "t1", "category": "coffee", "account_id": "  "}]}',
     "not json",
 ])
 def test_an_invalid_batch_is_400_and_never_reaches_the_database(handler, body):
