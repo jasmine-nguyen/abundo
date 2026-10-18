@@ -10,6 +10,7 @@ import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
 import { Bar, RetryButton, HeroGradientFill, MilestonesCardStatus, cardStyle } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
+import { useScrollEdge } from '../src/hooks/useScrollEdge';
 import { EquityCard, EquityBody, EquityCta, EquitySetupTeaser } from '../src/components/EquityCard';
 import { Celebration } from '../src/components/Celebration';
 import { useRepaymentLanded } from '../src/hooks/useRepaymentLanded';
@@ -24,6 +25,7 @@ import { usePullToRefresh } from '../src/hooks/usePullToRefresh';
 export default function Mortgage() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
 
   // WHIT-197: the live balance, last repayment, and loan facts come from the cached query
   // layer. Re-check on focus, but only if the cache has gone stale (no request storm).
@@ -54,8 +56,8 @@ export default function Mortgage() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Home loan" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}
+      <Header title="Home loan" divider={edge.scrolled} />
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={pulling} onRefresh={onRefresh} tintColor={C.accent} />}
       >
         {landed && (

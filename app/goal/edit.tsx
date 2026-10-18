@@ -8,6 +8,7 @@ import { Icon, ICON_KEYS } from '../../src/icons';
 import { useAppContext, accountSummaries, accountNameFromId } from '../../src/context';
 import { useGoalsQuery, useRecentTransactionsScreenData, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { NativeDateField } from '../../src/components/NativeDateField';
 import { MoneyField } from '../../src/components/MoneyField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
@@ -35,6 +36,7 @@ function seedCpRows(checkpoints: GoalCheckpoint[] | null | undefined): CpRow[] {
 // app/loan.tsx form + app/category/edit.tsx create-vs-edit-and-delete conventions.
 export default function GoalEdit() {
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const router = useRouter();
   const s = useAppContext(); // saveGoal / deleteGoal writers + showToast
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -230,8 +232,9 @@ export default function GoalEdit() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title={editing ? 'Edit goal' : 'Add a goal'} />
+      <Header title={editing ? 'Edit goal' : 'Add a goal'} divider={edge.scrolled} />
       <ScrollView
+        {...edge.scrollProps}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

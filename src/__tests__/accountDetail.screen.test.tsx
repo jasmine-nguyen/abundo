@@ -7,7 +7,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
+import { RefreshControl, SectionList } from 'react-native';
 import { C } from '../theme';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
@@ -15,7 +15,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { accountFeedKey } from '../queryKeys';
-import { styleOf } from './support/layout';
+import { styleOf, expectScrollEdge } from './support/layout';
 import { accountBalance } from './support/accountBalance';
 import type { AccountBalance } from '../api';
 
@@ -254,5 +254,13 @@ it('a full first page over 30 different days draws every row and Load More witho
   expect(screen.getByText('−⁠$30.00')).toBeTruthy();
   expect(screen.getByText('−⁠$1.00')).toBeTruthy();
   expect(screen.getByTestId('account-load-more')).toBeTruthy();
+});
+
+// ABU-99: content scrolling under the title gets a clean edge. The shared scroll hook must work on
+// the account page's SectionList, not just a ScrollView.
+it('scrolling the list draws the title bar edge, and scrolling back to the top removes it', async () => {
+  server.seed('/accounts/balances', [bal()]);
+  await renderWithQueries(<AccountDetail />);
+  expectScrollEdge(screen.UNSAFE_getByType(SectionList));
 });
 

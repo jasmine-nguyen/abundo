@@ -14,6 +14,7 @@ import { SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { confirmDelete } from '../../src/confirmDelete';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by tapping a TransactionRow
 // or its chevron; the id in the route is the transaction_id. The transaction comes from the
@@ -36,6 +37,7 @@ export default function TransactionDetail() {
   // Budgets feed the "Spread this bill" prompt below; cached + deduped by query key, so this adds
   // no real cost. On a cold open `budgets` is [] → eligibility 'hidden' → the button just waits.
   const { budgets } = useBudgetsScreenData();
+  const edge = useScrollEdge();
   // Resolve the charge across every list cache — feed, uncategorized feed, the bounded recent
   // window, AND the budget-detail / Insights category-drill caches — via the shared resolver, so a
   // row tapped anywhere (incl. a deep-history unfiled charge on the Uncategorized tab, or an older
@@ -100,8 +102,9 @@ export default function TransactionDetail() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Transaction" />
+      <Header title="Transaction" divider={edge.scrolled} />
       <ScrollView
+        {...edge.scrollProps}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -125,13 +128,18 @@ export default function TransactionDetail() {
                 <View style={[styles.chip, { backgroundColor: view.chipBg }]}>
                   <Icon name={view.icon} size={30} color={view.iconColor} />
                 </View>
-                <Text style={styles.merchant} numberOfLines={2}>{view.merchant}</Text>
                 <Text style={[styles.amount, { color: view.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{view.amountLabel}</Text>
+                <Text style={styles.merchant} numberOfLines={2}>{view.merchant}</Text>
               </View>
 
               <View style={styles.card}>
                 <Field label="Date" value={formatDayMonthYear(transaction.date)} />
-                <Field label="Account" value={transaction.account_name} />
+                <Field
+                  label="Account"
+                  value={transaction.account_name}
+                  onPress={() => router.push(`/account/${transaction.account_id}`)}
+                  actionLabel={`Open account ${transaction.account_name}`}
+                />
                 {/* WHIT-287: the Category row is tappable — it re-opens the SAME categorize
                     picker the lists use (openPicker → PickerSheet → ConfirmSheet), so any
                     transaction can be re-filed, not just the Uncategorized ones a list row
@@ -155,14 +163,14 @@ export default function TransactionDetail() {
               {ruleFiledText && <RuleFiledNote text={ruleFiledText} />}
 
               {/* WHIT-298: a bank-excluded charge (transfer / card payment) can't be manually
-                  un-excluded, so show a read-only note in place of the WHIT-296 manual toggle.
+                  un-excluded, so show a plain "not counted" line (ABU-99) in place of the WHIT-296 manual toggle.
                   A normal charge keeps the toggle so the user can still exclude it themselves.
                   Gate on the same "bank doesn't count this" test the row tag uses (falsy
                   counts_to_budget), so the list and this screen never disagree. */}
               {/* ABU-83: a "Transfer, not spending" category never counts, so its rows get the
                   note too — the manual toggle would do nothing. */}
               {spreadCategory?.transfer ? (
-                <BudgetExcludedNote note={`${spreadCategory.name} is set as a transfer, so it doesn't count toward budgets or insights.`} />
+                <BudgetExcludedNote note={`${spreadCategory.name} is a transfer. Not counted in budgets or insights.`} />
               ) : transaction.counts_to_budget ? (
                 <BudgetExcludeToggle transaction={transaction} />
               ) : (
@@ -199,7 +207,8 @@ export default function TransactionDetail() {
                 accessibilityRole="button"
                 accessibilityLabel="Delete transaction"
                 accessibilityState={{ disabled: deleting }}
-                style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}
+                hitSlop={8}
+                style={[styles.deleteLink, deleting && { opacity: 0.6 }]}
               >
                 <Text style={styles.deleteText}>{deleting ? 'Deleting…' : 'Delete transaction'}</Text>
               </Pressable>
@@ -221,7 +230,7 @@ export default function TransactionDetail() {
 
 // WHIT-539: read-only note naming the rule that auto-filed this charge's category
 // ("Filed by your rule: contains \"COLES\""), or a generic fallback when the rule can't be
-// named. Same card as BudgetExcludedNote, but a single legible line (toggleTitle weight, not
+// named. Same card as the toggle row, but a single legible line (toggleTitle weight, not
 // the dim sub) — it stands alone, so a faint line would read as unbalanced. No numberOfLines
 // cap, so a long merchant wraps rather than truncating.
 function RuleFiledNote({ text }: { text: string }) {
@@ -244,13 +253,13 @@ const EXCLUDE_COPY = {
     title: 'Exclude from budgets',
     sub: "Mark as a transfer — won't count toward budgets or insights.",
     hint: "Marks this as a transfer so it doesn't count toward budgets or insights",
-    note: "This looks like a transfer or card payment, so it doesn't count toward budgets or insights.",
+    note: 'Transfer or card payment. Not counted in budgets or insights.',
   },
   in: {
     title: 'Leave this money out',
     sub: "For a transfer in, not real income or a refund. Won't count toward budgets or insights.",
     hint: "Leaves this money out of budgets and insights",
-    note: "This looks like a transfer in, so it doesn't count toward budgets or insights.",
+    note: 'Transfer in. Not counted in budgets or insights.',
   },
 };
 
@@ -284,16 +293,7 @@ function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
 // (counts_to_budget falsy) or its category is a transfer (ABU-83). Read-only, because the manual toggle can't un-exclude a bank
 // transfer — so we explain the auto-exclusion rather than offer an inert switch.
 function BudgetExcludedNote({ note }: { note: string }) {
-  return (
-    <View
-      style={styles.excludedNote}
-      accessible
-      accessibilityLabel={`Excluded from budgets. ${note}`}
-    >
-      <Text style={styles.toggleTitle}>Excluded (transfer)</Text>
-      <Text style={styles.toggleSub}>{note}</Text>
-    </View>
-  );
+  return <Text testID="budget-excluded-note" style={styles.excludedLine} accessibilityLabel={note}>{note}</Text>;
 }
 
 // The editable half (WHIT-275). Rendered only when the transaction exists, keyed by its id,
@@ -307,6 +307,9 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
   const tags = transaction.tags ?? [];
   const [noteText, setNoteText] = useState(savedNote);
   const [tagInput, setTagInput] = useState('');
+  // ABU-99: an empty note / tag list folds to one "Add …" line; tapping it opens the box.
+  const [noteOpen, setNoteOpen] = useState(savedNote !== '');
+  const [tagsOpen, setTagsOpen] = useState(tags.length > 0);
 
   // The note saves on an explicit Save tap (not on blur). `noteDirty` gates the button — it's
   // shown only when the trimmed text differs from what's stored. Tags/category/exclude keep saving
@@ -366,18 +369,25 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
 
   return (
     <>
-      <SectionLabel style={{ marginTop: 22 }}>NOTE</SectionLabel>
-      <TextInput
-        testID="note-input"
-        accessibilityLabel="Note"
-        style={styles.noteInput}
-        value={noteText}
-        onChangeText={setNoteText}
-        placeholder="What was this for?"
-        placeholderTextColor={C.placeholder}
-        multiline
-        maxLength={NOTE_MAX_LEN}
-      />
+      {noteOpen ? (
+        <>
+          <SectionLabel style={{ marginTop: 22 }}>NOTE</SectionLabel>
+          <TextInput
+            testID="note-input"
+            accessibilityLabel="Note"
+            style={styles.noteInput}
+            value={noteText}
+            onChangeText={setNoteText}
+            placeholder="What was this for?"
+            placeholderTextColor={C.placeholder}
+            multiline
+            maxLength={NOTE_MAX_LEN}
+            autoFocus={!savedNote}
+          />
+        </>
+      ) : (
+        <AddRow testID="note-add" label="Add note" onPress={() => setNoteOpen(true)} />
+      )}
       {noteDirty && (
         <Pressable
           testID="note-save"
@@ -390,36 +400,58 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
         </Pressable>
       )}
 
-      <SectionLabel style={{ marginTop: 22 }}>TAGS</SectionLabel>
-      <View style={styles.tagsWrap}>
-        {tags.map((tag) => (
-          <View key={tag} style={styles.tagChip}>
-            <Text style={styles.tagText}>{tag}</Text>
-            <Pressable
-              onPress={() => removeTag(tag)}
-              hitSlop={{ top: 14, bottom: 14, left: 17, right: 17 }}
-              accessibilityRole="button"
-              accessibilityLabel={`Remove tag ${tag}`}
-            >
-              <Text style={styles.tagRemove}>×</Text>
-            </Pressable>
+      {!tagsOpen && tags.length === 0 ? (
+        <AddRow testID="tag-add" label="Add tag" onPress={() => setTagsOpen(true)} />
+      ) : (
+        <>
+          <SectionLabel style={{ marginTop: 22 }}>TAGS</SectionLabel>
+          <View style={styles.tagsWrap}>
+            {tags.map((tag) => (
+              <View key={tag} style={styles.tagChip}>
+                <Text style={styles.tagText}>{tag}</Text>
+                <Pressable
+                  onPress={() => removeTag(tag)}
+                  hitSlop={{ top: 14, bottom: 14, left: 17, right: 17 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove tag ${tag}`}
+                >
+                  <Text style={styles.tagRemove}>×</Text>
+                </Pressable>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
-      <TextInput
-        testID="tag-input"
-        accessibilityLabel="Add a tag"
-        style={styles.tagInput}
-        value={tagInput}
-        onChangeText={onTagChange}
-        onSubmitEditing={submitTag}
-        placeholder="Add a tag"
-        placeholderTextColor={C.placeholder}
-        autoCapitalize="none"
-        maxLength={TAG_MAX_LEN}
-        returnKeyType="done"
-      />
+          <TextInput
+            testID="tag-input"
+            accessibilityLabel="Add a tag"
+            style={styles.tagInput}
+            value={tagInput}
+            onChangeText={onTagChange}
+            onSubmitEditing={submitTag}
+            placeholder="Add a tag"
+            placeholderTextColor={C.placeholder}
+            autoCapitalize="none"
+            maxLength={TAG_MAX_LEN}
+            returnKeyType="done"
+            autoFocus={tagsOpen && tags.length === 0}
+          />
+        </>
+      )}
     </>
+  );
+}
+
+// ABU-99: the folded "Add note" / "Add tag" line shown in place of an empty box.
+function AddRow({ testID, label, onPress }: { testID: string; label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.addRow, pressed && PRESSED]}
+    >
+      <Text style={styles.addText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -457,8 +489,8 @@ function Field({ label, value, valueColor, last, onPress, actionLabel }: {
 const styles = StyleSheet.create({
   hero: { alignItems: 'center', paddingVertical: 22, gap: 10 },
   chip: { width: 60, height: 60, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  merchant: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: C.textBright, letterSpacing: -0.4, textAlign: 'center' },
-  amount: { fontFamily: FONT.display, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  amount: { fontFamily: FONT.display, fontSize: 40, fontWeight: '800', letterSpacing: -1 },
+  merchant: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textMid, textAlign: 'center' },
 
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, marginTop: 6 },
   field: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: C.hairline },
@@ -470,6 +502,7 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginTop: 12 },
   // WHIT-298: same card as the toggle, but a plain informational block (no switch).
   excludedNote: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginTop: 12, gap: 3 },
+  excludedLine: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, lineHeight: 18, marginTop: 10, paddingHorizontal: 4 },
   toggleText: { flex: 1, minWidth: 0, gap: 3 },
   toggleTitle: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright },
   toggleSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, lineHeight: 17 },
@@ -478,6 +511,8 @@ const styles = StyleSheet.create({
   switchKnob: { width: 20, height: 20, borderRadius: 999, backgroundColor: C.textDim, alignSelf: 'flex-start' },
   switchKnobOn: { backgroundColor: C.accentInk, alignSelf: 'flex-end' },
 
+  addRow: { marginTop: 14, paddingVertical: 12 },
+  addText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.accentSofter },
   noteInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 14, minHeight: 88, fontFamily: FONT.body, fontSize: 14.5, color: C.textBright, textAlignVertical: 'top' },
   noteSaveBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent },
   noteSaveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },
@@ -490,8 +525,8 @@ const styles = StyleSheet.create({
   spreadBtn: { marginTop: 12, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
   spreadText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSofter },
 
-  deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.bad, 0.3), backgroundColor: tint(C.bad, 0.08), alignItems: 'center' },
-  deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
+  deleteLink: { marginTop: 28, alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 16 },
+  deleteText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.bad },
 
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30, gap: 8 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, marginTop: 4 },

@@ -10,6 +10,7 @@ import type { Rule } from '../src/model';
 import { useRulesScreenData, useCategories } from '../src/queries';
 import { useDebouncedValue } from '../src/hooks/useDebouncedValue';
 import { Header } from '../src/components/Header';
+import { useScrollEdge } from '../src/hooks/useScrollEdge';
 import { SearchField } from '../src/components/SearchField';
 import { RetryButton, HeaderIconButton } from '../src/components/ui';
 import { confirmDelete } from '../src/confirmDelete';
@@ -21,6 +22,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 export default function Rules() {
   const s = useAppContext(); // setSheet + deleteRule (writers)
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
 
   // WHIT-195: the rule list comes from the cached ['rules'] query; WHIT-203: the category
   // label per rule now comes from the shared taxonomy hook (not the old store).
@@ -141,6 +143,7 @@ export default function Rules() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header
         title="Automation rules"
+        divider={edge.scrolled}
         right={<HeaderIconButton icon="plus" accessibilityLabel="Add rule" onPress={() => s.setSheet({ mode: 'addrule' })} />}
       />
 
@@ -153,6 +156,7 @@ export default function Rules() {
       )}
 
       <SectionList
+        {...edge.scrollProps}
         style={{ flex: 1 }}
         sections={sections}
         keyExtractor={(item) => item.id}

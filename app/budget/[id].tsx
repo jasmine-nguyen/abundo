@@ -11,6 +11,7 @@ import { TransactionRow } from '../../src/components/TransactionRow';
 import { LoadMoreButton } from '../../src/components/LoadMoreButton';
 import { BudgetBar, SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { confirmDelete } from '../../src/confirmDelete';
 
 // How many related-transaction rows to show before the "Load More" button.
@@ -24,6 +25,7 @@ export default function BudgetDetail() {
   const s = useAppContext(); // deleteBudget writer stays on the store
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const bd = budgetDetail(d, id);
   const [deleting, setDeleting] = useState(false);
   // How many related rows are revealed; "Load More" reveals the next page.
@@ -68,13 +70,14 @@ export default function BudgetDetail() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header
         title="Budget"
+        divider={edge.scrolled}
         right={
           <Pressable onPress={() => router.push(`/budget/edit?categoryId=${id}&from=detail`)}>
             <Text style={styles.edit}>Edit</Text>
           </Pressable>
         }
       />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <View style={[styles.chip, { backgroundColor: bd.color }]}><Icon name={bd.icon} size={32} color={C.heroInk} /></View>
