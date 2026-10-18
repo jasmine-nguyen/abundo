@@ -13,7 +13,7 @@ from the shared constants.
 import calendar
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from constants import (
@@ -171,20 +171,6 @@ def completed_cycle_windows(anchor_start: str, current_start: str, length: int,
     return [_cycle_window(last_pay_date, length, k) for k in range(first, current)]
 
 
-def spread_index(spread_from: str, current_start: str, length: int, last_pay_date: str) -> int:
-    """How many whole pay cycles the current cycle is past a bill spread's anchor cycle:
-    0 while still in the cycle the spread was created in, 1 the next cycle, and so on.
-
-    A plain, UNCAPPED count — deliberately not `len(completed_cycle_windows(...))`, whose
-    `max_cycles` cap truncates the list and would pin the position at the cap, so a plan
-    could never be seen to end. `spread_from` is a cycle-aligned start captured at write
-    (like `carryover_from`), so on an unchanged pay cycle this steps 0, 1, 2, ... with no drift.
-    """
-    def index(day: str) -> int:
-        return cycle_index(last_pay_date, length, date.fromisoformat(day))
-    return index(current_start) - index(spread_from)
-
-
 def same_pay_cycle(stored_len, stored_paydate, length: int, last_pay_date: str) -> bool:
     """Whether a plan saved under (stored_len, stored_paydate) sits on the CURRENT pay-cycle grid:
     same length, and the payday moved by a whole number of cycles (re-picking a later or earlier
@@ -198,120 +184,14 @@ def same_pay_cycle(stored_len, stored_paydate, length: int, last_pay_date: str) 
     return (current - stored).days % length == 0
 
 
-def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
-    """The signed amount a bill spread adds to a category's spendable in the cycle at
-    `index` (see spread_index): the full `+amount` cushion in the anchor cycle (index 0),
-    an equal slice taken back in each of the next `cycles` cycles, and 0 once the plan
-    has run its course (or for a negative index, which no aligned plan produces).
-
-    Slices are worked out in whole cents so they sum back to `amount` EXACTLY — no lost
-    cent: `divmod` splits the cents evenly and the first `extra` slices carry one cent
-    more. `amount` is expected to be quantised to cents already (the write does that);
-    the half-up rounding is only a guard against a stray fraction.
-    """
-    if index == 0:
-        return amount
-    if index < 0 or index > cycles:
-        return Decimal(0)
-    cents = int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
-    base, extra = divmod(cents, cycles)
-    slice_cents = base + (1 if index <= extra else 0)
-    return Decimal(-slice_cents) / 100
-
-
 # `unified_available`: the smoothed spendable identity used by budget_standing (WHIT-547).
 
 
-def unified_available(budget: Decimal, buffer: Decimal, payback: Decimal) -> Decimal:
-    """A smoothed category's spendable this cycle: base budget + the signed running buffer
-    (leftover accrued from past cycles) + this cycle's payback slice (already negative).
-    The single source of the `budget + buffer - slice` identity so the read path can't
+def unified_available(budget: Decimal, buffer: Decimal) -> Decimal:
+    """A category's spendable this cycle: base budget + the signed running buffer (leftover
+    accrued from past cycles). The single source of the identity so the read path can't
     re-derive it inconsistently."""
-    return budget + buffer + payback
-
-
-# The five fields a stored bill spread carries (WHIT-504). Spend-only, like rollover, and
-# cleared on a reclassify out of spend. A read only trusts an entry that has all of them.
-SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
-
-
-def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
-    """After a pay-cycle change, the ONE-cycle plan that collects what a spread still owes —
-    or None when nothing is owed.
-
-    The old slice grid is fictional under the new cycle, so instead of reading slices off it
-    we settle up. "Taken" means what the user was actually SHOWN: `elapsed` is the index the
-    plan had reached under its OWN grid as of today (not the new cycle start — a new start
-    that lands a day inside a completed old cycle would otherwise un-take that cycle's slice
-    and charge it twice), so the slices for old cycles 1..elapsed−1, each shown for a full
-    cycle, count as taken. `outstanding = amount − taken` is re-saved as a fresh plan of
-    `outstanding` over 1 cycle, anchored one cycle BACK on the new grid — so it reads as
-    index 1 (the whole outstanding comes off THIS cycle) for the rest of the cycle and
-    finishes on the next. Net over the plan's life = +amount − taken − outstanding = 0,
-    exactly; nothing is forgiven, nothing invented. Persisting it (rather than showing a
-    one-shot and clearing) is what keeps the settle visible past the first read, and lets
-    a second cycle change re-settle it the same way.
-
-    None when the change lands while still in the anchor cycle (elapsed 0 — the cushion and
-    the settle would cancel in the same cycle) or when every slice was already taken.
-    """
-    amount = entry["spread_amount"]
-    cycles = int(entry["spread_cycles"])
-    stored_len = int(entry["spread_len"])
-    stored_paydate = entry["spread_paydate"]
-    spread_from = snap_to_pay_cycle(entry["spread_from"], stored_len, stored_paydate, today)
-    elapsed = spread_index(spread_from, today, stored_len, stored_paydate)
-    if elapsed <= 0:
-        return None
-    taken_through = min(cycles, elapsed - 1)
-    taken = -sum((spread_adjustment(amount, cycles, k) for k in range(1, taken_through + 1)), Decimal(0))
-    outstanding = amount - taken
-    if outstanding == 0:
-        return None
-    previous_start, _ = nth_prior_cycle_window(cycle_start, length, 1, last_pay_date)
-    return {
-        "spread_amount": outstanding, "spread_cycles": Decimal(1), "spread_from": previous_start,
-        "spread_len": Decimal(length), "spread_paydate": last_pay_date,
-    }
-
-
-def spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
-    """The bill-spread contribution for one category this read (WHIT-504).
-
-    Returns (spread_row, finished, reanchor). `spread_row` is the {amount, cycles, index,
-    adjustment} object for the /budgets row — `adjustment` is the signed amount added to the
-    cycle's spendable — or None when there is nothing to show. `finished` asks for the stored
-    fields to be cleared (best-effort, from the read path); `reanchor` is a replacement plan
-    to persist instead (the pay-cycle-change settle, see _settle_spread). At most one is set.
-
-    Aligned (the plan was created under the CURRENT pay cycle): index 0 shows the `+amount`
-    cushion, cycles 1..N take back a slice each, and past N the plan is finished — nothing
-    shown, fields cleared. Alignment is the same length and the payday a whole number of
-    cycles from the stored one (same_pay_cycle), as rollover_windows checks. An aligned anchor
-    saved on the old 30-day monthly grid is snapped to the nearest payday first (ABU-44).
-    Misaligned: the settle plan is computed and then read exactly like an aligned one.
-
-    An entry missing any of the five fields (a hand-edited item — every write sets and
-    strips all five together) is treated as finished and cleared, rather than letting one
-    bad entry 500 every budget row.
-    """
-    fields = [entry.get(field) for field in SPREAD_ENTRY_FIELDS]
-    if None in fields:
-        return None, True, None
-    amount, cycles, spread_from, stored_len, stored_paydate = fields
-    cycles = int(cycles)
-    if not same_pay_cycle(stored_len, stored_paydate, length, last_pay_date):
-        reanchor = _settle_spread(entry, cycle_start, length, last_pay_date, today)
-        if reanchor is None:
-            return None, True, None
-        spread_row, _, _ = spread_state(reanchor, cycle_start, length, last_pay_date, today)
-        return spread_row, False, reanchor
-    spread_from = snap_to_pay_cycle(spread_from, length, last_pay_date, cycle_start)
-    index = spread_index(spread_from, cycle_start, length, last_pay_date)
-    if index > cycles:
-        return None, True, None
-    return {"amount": amount, "cycles": cycles, "index": index,
-            "adjustment": spread_adjustment(amount, cycles, index)}, False, None
+    return budget + buffer
 
 
 def transactions_in_window(transactions: list[dict], start: str, end: str) -> list[dict]:

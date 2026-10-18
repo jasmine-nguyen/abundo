@@ -740,63 +740,7 @@ def test_excluded_settling_twin_does_not_fire_over_budget_alert(alerts, repo, mo
     assert notify.fired_markers("2026-07-01", 14) == set()
 
 
-# ── WHIT-509: the alert threshold folds in the bill-spread cushion ──────────────
-#
-# The /budgets screen spends against target + the signed spread adjustment (WHIT-504):
-# a full +amount cushion in the cycle the bill lands, an equal slice taken back over the
-# next N cycles. Before this fix the push path crossed against the RAW target only, so a
-# cushioned category that the screen shows as in-budget could still fire a false "over
-# budget" push. fire_budget_alerts now crosses against the row's `available` from
-# budget_standing.py — the same number /budgets shows. The maths itself is pinned in
-# tests/shared/test_budget_standing.py; these check the alert is wired to it.
-#
-# Cushion note: with the pinned cycle (start 2026-07-01, len 14, today 2026-07-14) an
-# ALIGNED spread carries spread_from=2026-07-01, spread_len=14, spread_paydate=2026-07-01
-# → index 0 → the +amount cushion. spread_from one cycle back (2026-06-17) → index 1 → a
-# payback slice (negative). A mismatched len/paydate is MISALIGNED → settled like the read
-# path. Spread-alert cats carry a real spend bucket ("Living") so they exercise the live
-# spend-category path, not a bucket-less shortcut.
-
-_SPREAD_CATS = [{"id": "groceries", "name": "Groceries", "bucket": "Living"}]
-
-
-def _spread_fields(amount, cycles, *, spread_from="2026-07-01", spread_len=14,
-                   spread_paydate="2026-07-01"):
-    """The five stored bill-spread fields, Decimal-typed like a real write."""
-    return {
-        "spread_amount": Decimal(str(amount)), "spread_cycles": Decimal(cycles),
-        "spread_from": spread_from, "spread_len": Decimal(spread_len),
-        "spread_paydate": spread_paydate,
-    }
-
-
-def test_spread_cushion_suppresses_a_false_over_budget_push(alerts, monkeypatch):
-    # (a) Anchor cycle: a $200 bill spread over 4 cycles cushions a $100 target to a $300
-    # basis. $70 → $120 of spend stays under 80% of the basis ($240), so NO push. Revert
-    # the basis to the raw target and $120 crosses 100% of $100 → a false "over budget"
-    # push appears. THE bug this card fixes.
-    budget = {"target": Decimal("100"), **_spread_fields(200, 4)}
-    before = [_txn("old", "groceries", -70, "posted")]
-    new = _txn("new1", "groceries", -50, "posted")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
-                           before=before, normalised=[new], cats=_SPREAD_CATS)
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
-def test_spread_basis_exactly_zero_is_skipped(alerts, monkeypatch):
-    # [A-qa9] (P0) A payback slice equal to the whole target drives basis to EXACTLY $0
-    # (target 100, $200 over 2 cycles, index 1 → −$100 slice → basis 0). The `basis <= 0`
-    # guard skips it, so even a huge $500 overspend sends NOTHING — a push the user could
-    # not act on. Locks the deliberate silence at basis == 0.
-    # Fail-on-revert (basis→target): basis becomes the raw $100, $500 crosses both → a
-    # "Budget hit" push fires.
-    budget = {"target": Decimal("100"), **_spread_fields(200, 2, spread_from="2026-06-17")}
-    new = _txn("new1", "groceries", -500, "posted")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
-                           before=[], normalised=[new], cats=_SPREAD_CATS)
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
+_SPEND_CATS = [{"id": "groceries", "name": "Groceries", "bucket": "Living"}]
 
 
 # --- WHIT-555: rollover live buffer is folded INTO the alert basis ---------------------
@@ -822,7 +766,7 @@ def test_rollover_buffer_folds_live_from_prior_cycle_txns(alerts, monkeypatch):
     before = [prior_txn, current_before]
     new = _txn("new1", "groceries", -10, "posted")
     sent, _, ctx = _run(alerts, monkeypatch, budgets={"groceries": budget},
-                        before=before, normalised=[new], cats=_SPREAD_CATS)
+                        before=before, normalised=[new], cats=_SPEND_CATS)
     assert len(sent) == 1
     assert "80%" in sent[0][1]
     # before_rows must be current-cycle only (prior_txn filtered out)
@@ -833,7 +777,7 @@ def test_widened_rollover_read_does_not_leak_last_cycle_into_a_plain_budget(aler
     # A rollover budget widens the read back to 2026-06-17. Dining (plain, $100) spent
     # $500 LAST cycle and only $20 + $10 this one → 30%, no push. If last cycle's rows leak into
     # this cycle's spend, Dining reads $530 → a false "Budget hit".
-    cats = _SPREAD_CATS + [{"id": "dining", "name": "Dining", "bucket": "Lifestyle"}]
+    cats = _SPEND_CATS + [{"id": "dining", "name": "Dining", "bucket": "Lifestyle"}]
     budgets = {"groceries": {"target": Decimal("1000"), **_ROLLOVER},
                "dining": {"target": Decimal("100")}}
     before = [_txn("prior", "dining", -500, "posted", date="2026-06-20"),
@@ -850,7 +794,7 @@ def test_this_cycle_rows_are_counted_once_not_twice_with_rollover_history(alerts
     before = [_txn("prior", "groceries", -100, "posted", date="2026-06-20"),
               _txn("old", "groceries", -70, "posted", date="2026-07-05")]
     sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100"), **_ROLLOVER}},
-                      before=before, normalised=[_txn("new1", "groceries", -5, "posted")], cats=_SPREAD_CATS)
+                      before=before, normalised=[_txn("new1", "groceries", -5, "posted")], cats=_SPEND_CATS)
     assert sent == []
 
 
@@ -860,7 +804,7 @@ def test_rollover_overspend_last_cycle_lowers_the_alert_basis(alerts, monkeypatc
     before = [_txn("prior", "groceries", -140, "posted", date="2026-06-20"),
               _txn("old", "groceries", -40, "posted", date="2026-07-05")]
     sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100"), **_ROLLOVER}},
-                      before=before, normalised=[_txn("new1", "groceries", -10, "posted")], cats=_SPREAD_CATS)
+                      before=before, normalised=[_txn("new1", "groceries", -10, "posted")], cats=_SPEND_CATS)
     assert len(sent) == 1
     assert "80%" in sent[0][1]
 

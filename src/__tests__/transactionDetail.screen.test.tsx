@@ -7,9 +7,9 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { budgetRow, txn } from './factory';
+import { txn } from './factory';
 import type { Transaction } from '../types';
-import type { BudgetRollup, RuleRecord } from '../api';
+import type { RuleRecord } from '../api';
 
 // WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
 // it (real selectors kept) so these read-path tests render without an AppProvider.
@@ -46,7 +46,6 @@ import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 const server = installFakeServer();
 useTestQueryClient();
 
-const rollup = (over: Partial<BudgetRollup> = {}): BudgetRollup => ({ target: 100, posted: 40, pending: 10, ...over });
 
 const ruleRecord = (over: Partial<RuleRecord> = {}): RuleRecord => ({
   id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'coffee', ...over,
@@ -185,56 +184,15 @@ it('detail screen labels the Category "Uncategorized" and re-opens the picker on
   expect(mockOpenPicker).toHaveBeenCalledWith('t1');
 });
 
-// ── WHIT-556: the "Spread this bill" prompt ──────────────────────────────────
-describe('spread this bill prompt', () => {
-  // A spend charge on 'coffee' (the fixture category). Eligibility is driven by the BUDGET's
-  // over/under state (the /budgets rollup), while the prefill comes from the category overage.
-  const seedSpend = (over: Partial<Transaction> = {}) =>
-    seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })]);
+// ABU-83: a charge filed in a "Transfer, not spending" category never counts, so the screen
+// explains why (no manual exclude switch).
+it('a charge in a transfer category shows the note, not the switch', async () => {
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null, transfer: true }]);
+  seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130 })]);
+  await draw();
 
-  it('over-budget spend, no plan → shows "Spread a bill in this category" and prefills the OVERAGE', async () => {
-    seedSpend();  // the tapped charge is -130, but the prefill is the category overage, not the charge
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });  // over by 30 → start
-    await draw();
-
-    fireEvent.press(screen.getByRole('button', { name: 'Spread a bill in this category' }));
-    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
-  });
-
-  it('active plan → shows "Edit or remove" and routes with NO prefill (never a second plan)', async () => {
-    seedSpend();
-    server.seed('/budgets', {
-      coffee: budgetRow({ target: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } }),
-    });
-    await draw();
-
-    fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(screen.getByText('Edit or remove bill spread')).toBeTruthy();
-    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee');
-  });
-
-  it.each([
-    ['an excluded charge (contributesToBudget false)', { budget_excluded: true }],
-    ['a refund / credit (amount >= 0)', { amount: 50 }],
-  ])('hidden for %s', async (_name, over) => {
-    seedSpend(over);
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
-    await draw();
-    expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
-
-  // ABU-83: a charge filed in a "Transfer, not spending" category never counts, so the screen
-  // explains why (no manual exclude switch) and offers no bill spread, even when over budget.
-  it('a charge in a transfer category shows the note, not the switch, and no spread offer', async () => {
-    server.seed('/categories', [{ ...COFFEE_RECORD, parent: null, transfer: true }]);
-    seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', amount: -130 })]);
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
-    await draw();
-
-    expect(screen.getByText(`${COFFEE_RECORD.name} is set as a transfer, so it doesn't count toward budgets or insights.`)).toBeTruthy();
-    expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
-    expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
+  expect(screen.getByText(`${COFFEE_RECORD.name} is set as a transfer, so it doesn't count toward budgets or insights.`)).toBeTruthy();
+  expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
 });
 
 // ── WHIT-539: "why this category" — name the rule that auto-filed the charge ──

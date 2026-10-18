@@ -176,13 +176,13 @@ describe('WHIT-714 top card totals', () => {
 // note and still opens the budget. A budget with spending keeps its full card and bar.
 it('a $0 budget is a slim row with no bar that keeps its note and still opens the budget', async () => {
   await showRows(server, {
-    // Nothing spent; a spread cushion makes this cycle's budget $300 and adds the note.
-    coffee: budgetRow({ target: 100, posted: 0, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
+    // Nothing spent; past leftovers make this cycle's budget $300 and add the note.
+    coffee: budgetRow({ target: 100, posted: 0, pending: 0, rollover: true, carryover: 200 }),
     groceries: { target: 100, posted: 30, pending: 0 },
   });
 
   expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(1);
-  expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
+  expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $200 past leftovers');
 
   fireEvent.press(screen.getByText('Cafes & Coffee'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');

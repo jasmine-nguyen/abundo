@@ -125,9 +125,6 @@ Domain terms agents must use in names, tests and plans.
   (category, notes, tags, `budget_excluded`) and the swipe date. _Avoid_: clearing, merge
 - **Rollover / carryover** — rollover is the per-category option; carryover is the sealed balance
   of past cycles' leftover (target − spend) it accumulates. _Avoid_: surplus, bank
-- **Spread** — a bill spread: a one-off `amount` added to this cycle's spendable, taken back in
-  equal slices over the next `cycles` cycles. A category has rollover or a spread, never both.
-  _Avoid_: instalment, split
 - **Excluded from budget** (`budget_excluded`) — a user flag that keeps a transaction out of
   budget spend. _Avoid_: ignored, hidden
 

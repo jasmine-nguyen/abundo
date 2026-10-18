@@ -59,7 +59,7 @@ def _put_budget_event(category="coffee", body='{"target": 58}'):
 
 
 class _SpendCategoryRepo(_FakeCategoryRepo):
-    """The spread suites' taxonomy: one spendable `insurance` category unless told otherwise."""
+    """One spendable `insurance` category unless told otherwise."""
 
     def __init__(self, categories=None):
         if categories is None:

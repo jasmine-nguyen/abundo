@@ -65,11 +65,8 @@ export default function BudgetEdit() {
     if (!canSave) return;
     setSubmitting(true);
     try {
-      // Smoothing is spend-only — pass the flag only when the switch is shown AND editable.
-      // While locked (a bill spread is active) send undefined: the server 400s a rollover
-      // write on a spread category (rollover XOR spread).
-      const smoothingEditable = info.smoothingShown && !info.smoothingLocked;
-      const ok = await s.saveBudget(categoryId, num, smoothingEditable ? rollover : undefined);
+      // Smoothing is spend-only — pass the flag only when the switch is shown.
+      const ok = await s.saveBudget(categoryId, num, info.smoothingShown ? rollover : undefined);
       if (ok) {
         // WHIT-188: the Budgets tab now reads the query cache, so mark budgets stale —
         // otherwise the just-saved change wouldn't show until the 45s staleTime elapsed.
@@ -108,10 +105,9 @@ export default function BudgetEdit() {
         {info.smoothingShown && (
           <SwitchRow
             title={info.smoothingTitle}
-            help={info.smoothingLocked ? info.smoothingLockedHelp : info.smoothingHelp}
-            value={info.smoothingLocked ? true : rollover}
+            help={info.smoothingHelp}
+            value={rollover}
             onValueChange={setRollover}
-            disabled={info.smoothingLocked}
           />
         )}
 

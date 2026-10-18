@@ -170,7 +170,6 @@ def test_clear_rollover_strips_the_fields_but_keeps_the_target(shared, budget_re
 
 @pytest.mark.parametrize("clear, cat_id, items", [
     pytest.param("clear_rollover", "coffee", {"coffee": {"target": Decimal(58)}}, id="rollover-plain-target"),
-    pytest.param("clear_spread", "insurance", {"insurance": {"target": Decimal(250)}}, id="spread-plain-target"),
     pytest.param("clear_rollover", "coffee", {"food": {"target": Decimal(80)}}, id="rollover-absent-entry"),
 ])
 def test_clearing_an_already_clean_entry_writes_nothing(shared, budget_repo, config_item_table, clear, cat_id, items):
@@ -185,7 +184,7 @@ def test_clearing_an_already_clean_entry_writes_nothing(shared, budget_repo, con
     assert table.store[_KEY]["items"] == items
 
 
-@pytest.mark.parametrize("clear", ["delete_budget", "clear_rollover", "clear_spread"])
+@pytest.mark.parametrize("clear", ["delete_budget", "clear_rollover"])
 def test_clearing_with_no_budgets_item_yet_writes_nothing(shared, budget_repo, config_item_table, clear):
     # No target was ever set -> no BUDGETS item. Must not crash (a 500 after the category
     # delete already landed) and must not seed an item nobody asked for.
@@ -217,156 +216,16 @@ def test_rollover_fields_tuple_matches_what_the_writes_persist(shared, budget_re
     assert persisted_rollover_keys == set(shared.budget._ROLLOVER_FIELDS)
 
 
-# --- set_spread / clear_spread: a bill spread on a budget entry (WHIT-504) ---
-
-
-def _spread_entry(target=250):
-    return {
-        "target": Decimal(target), "spread_amount": Decimal("1390.91"), "spread_cycles": Decimal(4),
-        "spread_from": "2026-08-06", "spread_len": Decimal(30), "spread_paydate": "2026-01-01",
-    }
-
-
-def test_set_spread_writes_the_plan_and_keeps_the_target(shared, budget_repo, config_item_table):
-    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
-    _with_table(budget_repo, table)
-
-    saved = budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
-
-    assert saved == {"id": "insurance", "amount": Decimal("1390.91"), "cycles": 4}
-    entry = table.store[_KEY]["items"]["insurance"]
-    assert entry["target"] == Decimal(250)              # NOT clobbered by the spread write
-    assert entry["spread_amount"] == Decimal("1390.91")
-    assert entry["spread_cycles"] == Decimal(4)
-    assert entry["spread_from"] == "2026-08-06"
-    assert entry["spread_len"] == Decimal(30)
-    assert entry["spread_paydate"] == "2026-01-01"
-
-
-def test_set_spread_replaces_an_existing_plan(shared, budget_repo, config_item_table):
-    # Spreading again on the same category is an upsert: the new amount/cycles/anchor win.
-    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
-    _with_table(budget_repo, table)
-
-    budget_repo.set_spread("insurance", Decimal("600.00"), 2, "2026-09-05", 30, "2026-01-01")
-
-    entry = table.store[_KEY]["items"]["insurance"]
-    assert entry["spread_amount"] == Decimal("600.00")
-    assert entry["spread_cycles"] == Decimal(2)
-    assert entry["spread_from"] == "2026-09-05"
-    assert entry["target"] == Decimal(250)
-
-
-def test_clear_spread_strips_the_plan_but_keeps_the_target(shared, budget_repo, config_item_table):
-    # FAIL-ON-REVERT: every spread field goes, the target stays, a sibling entry is untouched.
-    table = config_item_table("BUDGETS", items={"insurance": _spread_entry(), "food": {"target": Decimal(80)}})
-    _with_table(budget_repo, table)
-
-    budget_repo.clear_spread("insurance")
-
-    assert table.store[_KEY]["items"]["insurance"] == {"target": Decimal(250)}
-    assert table.store[_KEY]["items"]["food"] == {"target": Decimal(80)}
-    assert table.store[_KEY]["version"] == Decimal(2)
-    assert len(table.update_calls) == 1
-
-
-def test_clear_spread_leaves_rollover_fields_alone_and_vice_versa(shared, budget_repo, config_item_table):
-    # The two clears are independent strips: neither may reach into the other's fields.
-    # (Prod never stores both on one entry — the write guards forbid it — but the repo
-    # must not rely on that to be correct.)
-    both = {**_rollover_entry(), **{k: v for k, v in _spread_entry().items() if k != "target"}}
-    table = config_item_table("BUDGETS", items={"coffee": dict(both)})
-    _with_table(budget_repo, table)
-
-    budget_repo.clear_spread("coffee")
-    assert table.store[_KEY]["items"]["coffee"] == _rollover_entry()    # rollover fields intact
-
-    budget_repo.clear_rollover("coffee")
-    assert table.store[_KEY]["items"]["coffee"] == {"target": Decimal(300)}
-
-
-def test_spread_fields_tuple_matches_what_set_spread_persists(shared, budget_repo, config_item_table):
-    # GUARD (mirrors the rollover one): SPREAD_ENTRY_FIELDS is what clear_spread strips, so it
-    # MUST equal every key set_spread writes minus target — a field added to the write but
-    # not the tuple would survive a clear and keep adjusting the spendable forever.
-    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
-    _with_table(budget_repo, table)
-
-    budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
-
-    persisted_spread_keys = set(table.store[_KEY]["items"]["insurance"].keys()) - {"target"}
-    assert persisted_spread_keys == set(shared.spend.SPREAD_ENTRY_FIELDS)
-    assert not set(shared.spend.SPREAD_ENTRY_FIELDS) & set(shared.budget._ROLLOVER_FIELDS)
-
-
-# --- rollover OR spread, never both: the write makes it structural (WHIT-504) ---
-
-
-def test_set_spread_strips_any_rollover_fields_in_the_same_write(shared, budget_repo, config_item_table):
-    # The handler's guard is check-then-act; a lost race could otherwise land both. The
-    # write itself resolves it: spreading strips rollover (last writer wins), target kept.
-    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
-    _with_table(budget_repo, table)
-
-    budget_repo.set_spread("coffee", Decimal("100.00"), 2, "2026-08-06", 30, "2026-01-01")
-
-    entry = table.store[_KEY]["items"]["coffee"]
-    assert entry["target"] == Decimal(300)
-    assert "spread_amount" in entry
-    assert not set(shared.budget._ROLLOVER_FIELDS) & set(entry)
-
-
-def test_turning_rollover_on_strips_any_spread_fields_in_the_same_write(shared, budget_repo, config_item_table):
-    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
-    _with_table(budget_repo, table)
-    anchor = {"carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"}
-
-    budget_repo.set_budget("insurance", Decimal(250), rollover=True, anchor=anchor)
-
-    entry = table.store[_KEY]["items"]["insurance"]
-    assert entry["rollover"] is True
-    assert not set(shared.spend.SPREAD_ENTRY_FIELDS) & set(entry)
-
-
-def test_a_plain_target_edit_keeps_the_spread(shared, budget_repo, config_item_table):
-    # Only turning rollover ON strips a spread; an amount edit (rollover omitted or false)
-    # must leave the plan alone.
-    for rollover in (None, False):
-        table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
-        _with_table(budget_repo, table)
-
-        budget_repo.set_budget("insurance", Decimal(300), rollover=rollover)
-
-        entry = table.store[_KEY]["items"]["insurance"]
-        assert entry["target"] == Decimal(300)
-        assert entry["spread_amount"] == Decimal("1390.91"), rollover
-
-
-def test_the_strip_is_re_applied_on_a_version_race_retry(shared, budget_repo, config_item_table):
-    # The race that matters: the competing writer merged rollover in between our read and
-    # our write. The retry re-reads and must strip it again, not carry it through.
-    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
-    table.race_next_update()
-    _with_table(budget_repo, table)
-
-    budget_repo.set_spread("coffee", Decimal("100.00"), 2, "2026-08-06", 30, "2026-01-01")
-
-    assert not set(shared.budget._ROLLOVER_FIELDS) & set(table.store[_KEY]["items"]["coffee"])
-    assert len(table.update_calls) == 2
-
-
 @pytest.mark.parametrize("write, args", [
     pytest.param("settle_carryover", (Decimal(40), "2026-09-05", 30, "2026-01-01"), id="settle"),
-    pytest.param("set_spread", (Decimal("600.00"), 2, "2026-09-05", 30, "2026-01-01"), id="set-spread"),
-    pytest.param("clear_spread", (), id="clear-spread"),
 ])
 def test_a_write_given_a_stale_expected_entry_is_skipped(shared, budget_repo, config_item_table, write, args):
     # The read-path settle passes the entry it read; an edit since then must survive untouched.
-    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()}, version=3)
+    table = config_item_table("BUDGETS", items={"insurance": _rollover_entry()}, version=3)
     _with_table(budget_repo, table)
 
     getattr(budget_repo, write)("insurance", *args, expected={"target": Decimal(250)})
 
     assert len(table.update_calls) == 0
     assert table.store[_KEY]["version"] == Decimal(3)
-    assert table.store[_KEY]["items"] == {"insurance": _spread_entry()}
+    assert table.store[_KEY]["items"] == {"insurance": _rollover_entry()}

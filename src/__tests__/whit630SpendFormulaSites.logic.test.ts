@@ -1,8 +1,8 @@
-// WHIT-630 QA: budgetViews, budgetDetail and budgetSpreadEligibility all read the server's `available`
+// WHIT-630 QA: budgetViews and budgetDetail both read the server's `available`
 // and the pace through paceTarget — so each screen honours a server `available`
 // (including a server 0) and keeps pace on the BASE target, not the envelope.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail, budgetSpreadEligibility } from '../context';
+import { budgetViews, budgetDetail } from '../context';
 import { makeState, cat, budget } from './factory';
 
 const food = cat({ id: 'food', name: 'Food', bucket: 'Living' });
@@ -25,11 +25,6 @@ describe('a server `available` wins at every read site', () => {
     expect(detail?.ofBudget).toContain('250');
     expect(detail?.ofBudget).not.toContain('300');
   });
-
-  it('[A4] (P0) spread eligibility measures overspend against the server spendable', () => {
-    const b = budget({ id: 'food', ...serverValue, rollover: false, carryover: 0, posted: 400, available: 1000 });
-    expect(budgetSpreadEligibility(food, b)).toEqual({ entry: 'hidden', overspend: 0 });
-  });
 });
 
 describe('a server 0 is kept, not replaced by the parts-sum', () => {
@@ -41,31 +36,26 @@ describe('a server 0 is kept, not replaced by the parts-sum', () => {
     expect(view.totBudget).toBe(0);
   });
 
-  it('[A1] (P0) budgetDetail reads over and offers a spread for the whole spend', () => {
+  it('[A1] (P0) budgetDetail reads over against the server 0', () => {
     const detail = budgetDetail(state(drained), 'food');
     expect(detail?.ofBudget).toContain('$0');
-    expect(detail?.overspend).toBe(10);
-  });
-
-  it('[A1] (P0) spread eligibility offers to spread the whole spend', () => {
-    expect(budgetSpreadEligibility(food, budget({ id: 'food', ...drained }))).toEqual({ entry: 'start', overspend: 10 });
+    expect(detail?.statusLabel).toBe('Over budget — ease up');
   });
 });
 
-describe('the three sites agree with the budget\'s available', () => {
+describe('the two sites agree with the budget\'s available', () => {
   const cases = [
     { budget: 100, posted: 30, pending: 5, rollover: true, carryover: 50 },
     { budget: 100, posted: 30, pending: 5, rollover: false, carryover: 50 },
-    { budget: 100, posted: 130, pending: 0, spreadAdjustment: -40 },
-    { budget: 100, posted: 130, pending: 0, spreadAdjustment: 60 },
+    { budget: 100, posted: 130, pending: 0, rollover: true, carryover: -40 },
+    { budget: 100, posted: 130, pending: 0, rollover: true, carryover: 60 },
   ];
 
-  it.each(cases)('[A12] (P1) totals and overspend match for %o', (over) => {
+  it.each(cases)('[A12] (P1) totals and the "of" line match for %o', (over) => {
     const b = budget({ id: 'food', ...over });
     const available = b.available;
     expect(budgetViews(state(over)).totBudget).toBe(available);
-    const expectedOver = Math.round(Math.max(0, b.posted + b.pending - available) * 100) / 100;
-    expect(budgetDetail(state(over), 'food')?.overspend).toBe(expectedOver);
+    expect(budgetDetail(state(over), 'food')?.ofBudget).toContain(`$${available}`);
   });
 });
 

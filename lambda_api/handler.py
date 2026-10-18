@@ -65,12 +65,10 @@ from constants import (
     RULE_LOGIC,
     RULE_OPERATORS,
     SAVINGS_BUCKET,
-    SPREAD_MAX_CYCLES,
-    SPREAD_MIN_CYCLES,
 )
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from repository_balance import AccountBalanceRepository
 from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
@@ -152,11 +150,6 @@ def get_api_key() -> str:
     by path). Kept as a one-line wrapper passing this lambda's own SSM path (AGENTS.md landmine);
     the balance refresh and its tests monkeypatch `handler.get_api_key`."""
     return _fetch_api_key(BANKSYNC_API_KEY_PATH)
-
-
-def _is_budget_spread_path(path: str) -> bool:
-    """Exactly /budgets/{id}/spread, so a category id "spread" stays an item route."""
-    return path.startswith(f"{BUDGET_PATH}/") and path.endswith("/spread") and path.count("/") == 3
 
 
 def _under(prefix: str, suffix: str = ""):
@@ -267,11 +260,6 @@ _PREFIX_ROUTES = [
     # The transactions behind one budget's total, so the detail list reconciles with the header.
     ("GET", _under(BUDGET_PATH, "/transactions"), lambda event: get_budget_transactions(
         event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
-    # A bill spread on one budget (WHIT-504). MUST sit above the budget item PUT/DELETE,
-    # which would otherwise swallow "/budgets/{id}/spread" as a target write.
-    ("PUT", _is_budget_spread_path, lambda event: set_spread(
-        event, BudgetRepository(), CategoryRepository(), PayCycleRepository())),
-    ("DELETE", _is_budget_spread_path, lambda event: delete_spread(event, BudgetRepository())),
     ("PUT", _under(BUDGET_PATH), lambda event: set_budget(
         event, BudgetRepository(), CategoryRepository(), PayCycleRepository())),
     ("DELETE", _under(BUDGET_PATH), lambda event: delete_budget(event, BudgetRepository())),
@@ -922,19 +910,17 @@ def update_category(
     except InvalidCategoryParentError as e:
         return _json_response(400, {"error": str(e)})
 
-    # Rollover and a bill spread are spend-only. Reclassifying a category OUT of a spend
-    # bucket must clear both (keeping the target) so a stale carryover anchor can't re-fold
-    # on a later move back to spend (WHIT-474), and a stale spread can't keep adjusting.
-    # Best-effort, category-first — like the delete cascade below: a failed clear only
-    # leaves a recoverable stale field (inert while the category is non-spend, as the read
-    # path ignores both on a non-spend bucket), never a corrupt entry, so it must not fail
-    # the bucket edit. Each clear is its own attempt so one failing can't skip the other.
+    # Rollover is spend-only. Reclassifying a category OUT of a spend bucket must clear it
+    # (keeping the target) so a stale carryover anchor can't re-fold on a later move back to
+    # spend (WHIT-474). Best-effort, category-first — like the delete cascade below: a failed
+    # clear only leaves a recoverable stale field (inert while the category is non-spend, as
+    # the read path ignores it on a non-spend bucket), never a corrupt entry, so it must not
+    # fail the bucket edit.
     if bucket in (INCOME_BUCKET, SAVINGS_BUCKET):
-        for clear in (budget_repo.clear_rollover, budget_repo.clear_spread):
-            try:
-                clear(cat_id)
-            except (VersionConflictError, DatabaseError) as e:
-                logger.warning("%s failed for re-bucketed category %s: %s", clear.__name__, cat_id, e)
+        try:
+            budget_repo.clear_rollover(cat_id)
+        except (VersionConflictError, DatabaseError) as e:
+            logger.warning("clear_rollover failed for re-bucketed category %s: %s", cat_id, e)
 
     return _json_response(200, updated)
 
@@ -1922,34 +1908,6 @@ def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     return {**cycle, "days_left": days_left, "cycle_days": cycle_days}
 
 
-def _persist_spread_settlements(budget_repo: BudgetRepository, targets: dict, finished: list,
-                                reanchored: dict) -> None:
-    """Write each spread's read-side outcome back — clear the finished ones, re-save the
-    settled ones — BEST-EFFORT, same posture as the rollover settle: the row is recomputed
-    live on every read (a finished plan contributes 0, a settle re-derives the same plan), so
-    a lost race or DB blip must never 500 the GET; it just lands on the next read. Each write
-    is its own attempt so one failing can't skip the rest.
-
-    Each write is skipped if the budget changed since the read (`expected=targets[cat_id]`),
-    so a spread edit made during the GET is never overwritten; it lands on the next read. If
-    the same category also got a rollover settle in this read (legacy rollover+spread
-    co-state), that write already changed the entry, so the spread write is skipped too and
-    lands on a later read."""
-    for cat_id in finished:
-        try:
-            budget_repo.clear_spread(cat_id, expected=targets[cat_id])
-        except Exception as e:
-            logger.warning("spread clear failed for %s (recomputes next read): %s", cat_id, e)
-    for cat_id, plan in reanchored.items():
-        try:
-            budget_repo.set_spread(
-                cat_id, plan["spread_amount"], int(plan["spread_cycles"]), plan["spread_from"],
-                int(plan["spread_len"]), plan["spread_paydate"], expected=targets[cat_id],
-            )
-        except Exception as e:
-            logger.warning("spread settle failed for %s (recomputes next read): %s", cat_id, e)
-
-
 def _persist_rollover_settlements(budget_repo: BudgetRepository, targets: dict, settlements: dict,
                                   length: int, last_pay_date: str) -> None:
     """Write each rollover seal/re-anchor back — BEST-EFFORT. The displayed carryover is
@@ -2009,14 +1967,6 @@ def list_budgets(
     before (bar the two always-present keys). Rollover applies to SPEND categories only: a
     flag left on a category later re-bucketed to Income/Savings is ignored (its earnings are
     never folded as a spend buffer).
-
-    Bill spread (WHIT-504): a category with a spread plan carries a `spread` object —
-    {amount, cycles, index, adjustment} — whose signed `adjustment` the client adds to the
-    cycle's spendable: the full cushion in the anchor cycle, then an equal slice taken back
-    each of the next `cycles` cycles (see spread_state). A plan that has finished, or was
-    settled after a pay-cycle change, is cleared best-effort here. Like rollover it is
-    spend-only, ignored on a re-bucketed category, and a plain budget's wire shape is
-    unchanged. A category has rollover OR a spread, never both (enforced on write).
     """
     targets = budget_repo.list_budgets()  # {id: entry}
     if not targets:
@@ -2027,8 +1977,6 @@ def list_budgets(
     rows, settlements = budget_standing(targets, window, categories, transactions)
     _persist_rollover_settlements(budget_repo, targets, settlements["rollover"], window.length,
                                   window.last_pay_date)
-    _persist_spread_settlements(budget_repo, targets, settlements["spread_finished"],
-                                settlements["spread_reanchored"])
     return rows
 
 
@@ -2326,8 +2274,8 @@ def get_cycle_transactions(
     follows the budget's own rule. Returns {start, end, transactions, budgets} so the app
     can name the file after the window.
 
-    `budgets` has the same shape as GET /budgets. Cycle 0 IS /budgets' maths (rollover and
-    spread included); a past cycle is that cycle's posted/pending against today's targets.
+    `budgets` has the same shape as GET /budgets. Cycle 0 IS /budgets' maths (rollover
+    included); a past cycle is that cycle's posted/pending against today's targets.
     Read-only: no settlement is saved.
     """
     cycle, cycle_error = _parse_breakdown_cycle(event)
@@ -3119,11 +3067,6 @@ def set_budget(
     anchor = None
     if rollover:
         existing = repo.list_budgets().get(cat_id)
-        # A category has rollover OR a bill spread, never both — the two would both move the
-        # same cycle's spendable and double-count one overspend (WHIT-504). set_spread holds
-        # the mirror guard.
-        if existing and "spread_amount" in existing:
-            return _json_response(400, {"error": "remove this category's bill spread before turning on rollover"})
         if not (existing and existing.get("rollover")):
             cycle = paycycle_repo.get_paycycle()
             cycle_start, _ = current_cycle_window(cycle["last_pay_date"], cycle["length"])
@@ -3149,83 +3092,6 @@ def delete_budget(event: dict, repo: BudgetRepository) -> dict:
     if not cat_id:
         return _json_response(404, {"error": "budget not found"})
     repo.delete_budget(cat_id)
-    return _json_response(200, {"id": cat_id})
-
-
-def set_spread(
-    event: dict, repo: BudgetRepository, category_repo: CategoryRepository,
-    paycycle_repo: PayCycleRepository,
-) -> dict:
-    """PUT /budgets/{category}/spread — spread a one-off bill over the coming pay cycles
-    (WHIT-504): cover `amount` in the current cycle, take it back in `cycles` equal slices.
-
-    Body: {"amount": <number > 0>, "cycles": <whole number in [SPREAD_MIN_CYCLES,
-    SPREAD_MAX_CYCLES]>}. `amount` is stored as a Decimal quantised to cents, so the slices
-    (worked out in whole cents) always sum back to exactly the stored amount. Creating a
-    spread on a category that already has one replaces it, anchored afresh to the current
-    cycle.
-
-    Spend-only, like rollover: an Income earn-target or a Savings category is rejected. The
-    category must already carry a budget target (the spread adjusts that target's cycle
-    spendable), and must not have rollover on — a category has one or the other, never both
-    (set_budget holds the mirror guard). Cheap numeric checks run before any repo read.
-    """
-    cat_id = (event.get("pathParameters") or {}).get("category")
-    if not cat_id:
-        return _json_response(404, {"error": "budget not found"})
-
-    body, error = _parse_json_body(event)
-    if error:
-        return error
-
-    amount = body.get("amount")
-    if not _finite_number(amount, low=-math.inf):
-        return _json_response(400, {"error": "amount must be a number"})
-    # Cap the raw float first (set_budget's order): quantising a huge value like 1e27 would
-    # raise InvalidOperation (past the 28-digit Decimal context) and 500 instead of 400.
-    if amount > _BUDGET_TARGET_MAX:
-        return _json_response(400, {"error": "amount too large"})
-    # Quantise to cents BEFORE the > 0 check — the slices are split in whole cents, so a
-    # sub-cent amount (0.004) would otherwise pass and store a $0.00 plan. Half-up is the
-    # same rounding the read-side slice math uses, so the two never disagree.
-    stored_amount = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if stored_amount <= 0:
-        return _json_response(400, {"error": "amount must be at least 0.01"})
-
-    cycles = body.get("cycles")
-    if isinstance(cycles, bool) or not isinstance(cycles, int):
-        return _json_response(400, {"error": "cycles must be a whole number"})
-    if not SPREAD_MIN_CYCLES <= cycles <= SPREAD_MAX_CYCLES:
-        return _json_response(
-            400, {"error": f"cycles must be between {SPREAD_MIN_CYCLES} and {SPREAD_MAX_CYCLES}"})
-
-    bucket_by_id = {c["id"]: c.get("bucket") for c in category_repo.list_categories()}
-    if bucket_by_id.get(cat_id) in (INCOME_BUCKET, SAVINGS_BUCKET):
-        return _json_response(400, {"error": "a bill spread is only for spend categories"})
-
-    existing = repo.list_budgets().get(cat_id)
-    if existing is None:
-        return _json_response(400, {"error": "set a budget before spreading a bill"})
-    if existing.get("rollover"):
-        return _json_response(400, {"error": "turn off rollover before spreading a bill"})
-
-    cycle = paycycle_repo.get_paycycle()
-    cycle_start, _ = current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    saved = repo.set_spread(
-        cat_id, stored_amount, cycles, cycle_start, cycle["length"], cycle["last_pay_date"],
-    )
-    return _json_response(200, saved)
-
-
-def delete_spread(event: dict, repo: BudgetRepository) -> dict:
-    """DELETE /budgets/{category}/spread — remove a category's bill spread, keeping its
-    budget target. Idempotent: an id with no spread (or no budget at all) still returns 200,
-    as the repo's clear_spread is a no-op then — mirroring delete_budget.
-    """
-    cat_id = (event.get("pathParameters") or {}).get("category")
-    if not cat_id:
-        return _json_response(404, {"error": "budget not found"})
-    repo.clear_spread(cat_id)
     return _json_response(200, {"id": cat_id})
 
 

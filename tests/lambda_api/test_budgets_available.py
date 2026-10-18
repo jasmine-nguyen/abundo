@@ -2,15 +2,14 @@
 
 The /budgets read now emits a per-row `available` — the spendable this cycle — computed
 server-side from the unified Smoothing engine (`shared/spend.unified_available`) instead of
-being re-summed on the client. It must reproduce the client's old formula byte-for-byte:
+being re-summed on the client:
 
-    available = target + (rollover ? live carryover : 0) + spread adjustment
+    available = target + (rollover ? live carryover : 0)
 
-A category is rollover OR spread, never both, so exactly one cushion is ever non-zero. The
-one exception these tests pin is a CORRUPT row wrongly flagged both ways: rollover wins, so
-`available` never sums two cushions.
+Bill spread was removed (ABU-91); saved entries may still carry its old fields until the
+clean-up script runs, and the read ignores them.
 
-Same deterministic grid as the rollover/spread suites: monthly, cycle_start 2026-08-06,
+Same deterministic grid as the rollover suites: monthly, cycle_start 2026-08-06,
 payday grid from 2026-01-01. `current_cycle_window` is monkeypatched to a fixed window.
 """
 
@@ -26,7 +25,7 @@ from _transaction_range_fakes import _QueuedTransactionRepo
 pytestmark = pytest.mark.usefixtures("fixed_window")
 
 
-BILL = Decimal("1390.91")   # over 4 cycles: index 0 shows the full +BILL cushion
+BILL = Decimal("1390.91")   # an old saved spread amount
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
@@ -43,7 +42,7 @@ def _list(handler, budget_repo, transactions=None, categories=None):
         budget_repo, _QueuedTransactionRepo(transactions), FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
 
-# --- the four normal cases: available reproduces the client's old parts-sum ----
+# --- available = target + carryover ----------------------------------------------
 
 
 def test_rollover_available_is_target_plus_live_carryover(handler):
@@ -60,25 +59,24 @@ def test_rollover_available_is_target_plus_live_carryover(handler):
     assert result["sink"]["available"] == Decimal(400)
 
 
-def test_spread_available_is_target_plus_adjustment(handler):
-    # A bill spread anchored this cycle shows the full +BILL cushion at index 0. available =
-    # target + BILL, so the bill doesn't read as "over budget".
+def test_a_leftover_saved_spread_is_ignored_and_never_rewritten(handler):
+    # ABU-91: bill spread is gone, but saved entries keep their old spread fields until the
+    # clean-up script runs. The read ignores them: available is just the target, the reply has
+    # no spread, and nothing is written back.
     entry = {"target": Decimal(250), "spread_amount": BILL, "spread_cycles": Decimal(4),
              "spread_from": CYCLE_START, "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE}
     budget_repo = recording_budget_repo({"cat": entry})
     result = _list(handler, budget_repo, [_txn("cat", -1390.91, "2026-08-07")])
 
-    assert result["cat"]["spread"]["adjustment"] == BILL
-    assert result["cat"]["available"] == Decimal(250) + BILL
-
-
-# --- the corrupt-both-flags guard: rollover wins, never the sum -----------------
+    assert result["cat"]["available"] == Decimal(250)
+    assert "spread" not in result["cat"]
+    assert budget_repo._table.update_calls == []
+    assert budget_repo._table.put_calls == []
 
 
 def test_a_row_flagged_both_rollover_and_spread_never_sums_both_cushions(handler):
-    # Data says rollover OR spread, never both (set_budget strips spread when rollover turns on).
-    # A future migration bug could store both. available must pick ONE cushion (rollover) — never
-    # target + carryover + adjustment. FAIL-ON-REVERT for the `not in rollover_ids` precedence guard.
+    # An old row can carry rollover AND leftover spread fields. Only the rollover carryover
+    # counts — never target + carryover + the old spread amount.
     cats = [{"id": "both", "bucket": "Lifestyle", "parent": None}]
     entry = {
         "target": Decimal(100), "rollover": True, "carryover": Decimal(0),

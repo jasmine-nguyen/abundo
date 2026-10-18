@@ -43,10 +43,7 @@ def _budgets():
         "sink": {"target": Decimal("100"), "rollover": True, "carryover": Decimal(0),
                  "carryover_from": "2026-06-01", "carryover_len": Decimal(LENGTH),
                  "carryover_paydate": PAYDATE},
-        # Bill spread anchored this cycle → a positive adjustment on both routes.
-        "insurance": {"target": Decimal("100"), "spread_amount": Decimal("600"),
-                      "spread_cycles": Decimal(4), "spread_from": "2026-07-01",
-                      "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE},
+        "insurance": {"target": Decimal("100")},
     }
 
 
@@ -136,8 +133,6 @@ def test_user_can_export_each_budgets_numbers_for_this_and_last_cycle(handler, w
     # The export is read-only.
     for repo in export_repos:
         assert repo.settle_calls == []
-        assert repo.set_spread_calls == []
-        assert repo.clear_spread_calls == []
     # The wider rollover read doesn't leak into the exported transaction list.
     assert [r["transaction_id"] for r in export["transactions"]] == [
         "t-sink", "t-coffee-pending", "t-insurance", "t-fun", "t-nest",

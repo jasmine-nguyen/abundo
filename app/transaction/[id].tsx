@@ -3,10 +3,10 @@ import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
-import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK } from '../../src/context';
+import { transactionView, useAppContext, ruleFiledLabel, RULE_FILED_FALLBACK } from '../../src/context';
 import type { Transaction } from '../../src/types';
 import { formatDayMonthYear, pendingLabel } from '../../src/dateutil';
-import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
+import { useTransactionDetailScreenData, useTransactionResolver, useRulesScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
@@ -33,9 +33,6 @@ export default function TransactionDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { openPicker, deleteTransaction } = useAppContext();
   const { category, isLoading, isError, refetch } = useTransactionDetailScreenData();
-  // Budgets feed the "Spread this bill" prompt below; cached + deduped by query key, so this adds
-  // no real cost. On a cold open `budgets` is [] → eligibility 'hidden' → the button just waits.
-  const { budgets } = useBudgetsScreenData();
   // Resolve the charge across every list cache — feed, uncategorized feed, the bounded recent
   // window, AND the budget-detail / Insights category-drill caches — via the shared resolver, so a
   // row tapped anywhere (incl. a deep-history unfiled charge on the Uncategorized tab, or an older
@@ -49,13 +46,7 @@ export default function TransactionDetail() {
   const runDelete = useInFlightGuard();
   const transaction = findTx(id) ?? (deleting ? deletingTransaction.current : undefined);
   const view = transaction ? transactionView({ category }, transaction) : null;
-  // "Spread this bill" (WHIT-556): offer the shared spread flow from the transaction itself, using
-  // the SAME eligibility rule as the budget screen. Only a real spend charge that counts to budget
-  // (not a refund/credit — amount >= 0 — and not an excluded transfer) on an over-budget category.
-  const spreadCategory = transaction?.category ? category(transaction.category) : undefined;
-  const spreadBudget = transaction?.category ? budgets.find((b) => b.id === transaction.category) : undefined;
-  const spreadElig = budgetSpreadEligibility(spreadCategory, spreadBudget);
-  const showSpread = !!transaction && transaction.amount < 0 && contributesToBudget(transaction, category) && spreadElig.entry !== 'hidden';
+  const filedCategory = transaction?.category ? category(transaction.category) : undefined;
 
   // WHIT-539: explain a rule-filed category. Resolve the stamped rule against the rules cache.
   // Gate on the rule STILL owning the current category: the server clears filed_by_rule on a hand
@@ -161,32 +152,12 @@ export default function TransactionDetail() {
                   counts_to_budget), so the list and this screen never disagree. */}
               {/* ABU-83: a "Transfer, not spending" category never counts, so its rows get the
                   note too — the manual toggle would do nothing. */}
-              {spreadCategory?.transfer ? (
-                <BudgetExcludedNote note={`${spreadCategory.name} is set as a transfer, so it doesn't count toward budgets or insights.`} />
+              {filedCategory?.transfer ? (
+                <BudgetExcludedNote note={`${filedCategory.name} is set as a transfer, so it doesn't count toward budgets or insights.`} />
               ) : transaction.counts_to_budget ? (
                 <BudgetExcludeToggle transaction={transaction} />
               ) : (
                 <BudgetExcludedNote note={excludeCopy(transaction).note} />
-              )}
-
-              {/* WHIT-556: spread a bill in this (over-budget) category over pay cycles. Same shared
-                  flow + eligibility the budget screen uses; 'start' prefills the category's overage,
-                  'edit' opens the active plan with no prefill (never a second plan). */}
-              {showSpread && (
-                <Pressable
-                  testID="transaction-spread"
-                  accessibilityRole="button"
-                  onPress={() => router.push(
-                    spreadElig.entry === 'edit'
-                      ? `/budget/spread?categoryId=${transaction.category}`
-                      : `/budget/spread?categoryId=${transaction.category}&prefill=${spreadElig.overspend}`,
-                  )}
-                  style={styles.spreadBtn}
-                >
-                  <Text style={styles.spreadText}>
-                    {spreadElig.entry === 'edit' ? 'Edit or remove bill spread' : 'Spread a bill in this category'}
-                  </Text>
-                </Pressable>
               )}
 
               {/* Keyed by id so switching transactions reseeds the local note text. */}
@@ -486,9 +457,6 @@ const styles = StyleSheet.create({
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },
   tagRemove: { fontFamily: FONT.body, fontSize: 17, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
-
-  spreadBtn: { marginTop: 12, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
-  spreadText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSofter },
 
   deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.bad, 0.3), backgroundColor: tint(C.bad, 0.08), alignItems: 'center' },
   deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },

@@ -397,11 +397,6 @@ class RolloverBudgetRepo:
     def settle_carryover(self, *args):
         self.writes.append(("settle_carryover", args))
 
-    def clear_spread(self, *args):
-        self.writes.append(("clear_spread", args))
-
-    def set_spread(self, *args):
-        self.writes.append(("set_spread", args))
 
 
 def _groceries_row(txn_id, amount, day):

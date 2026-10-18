@@ -115,8 +115,6 @@ const ROUTES: [Method, string, (call: Call) => unknown][] = [
   ['GET', '/budgets/:id/transactions', readSeeded([])],
   ['PUT', '/budgets/:id', ({ params, body }) => ({ id: params.id, ...body })],
   ['DELETE', '/budgets/:id', ({ params }) => ({ id: params.id })],
-  ['PUT', '/budgets/:id/spread', ({ params, body }) => ({ id: params.id, ...body })],
-  ['DELETE', '/budgets/:id/spread', ({ params }) => ({ id: params.id })],
   ['GET', '/breakdown', readSeeded({})],
   ['GET', '/homeloan', readSeeded({ balance: null, as_of: null, currency: null })],
   ['GET', '/accounts/balances', readSeeded([])],

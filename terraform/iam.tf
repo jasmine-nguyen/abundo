@@ -641,7 +641,7 @@ resource "aws_iam_role" "ai_chat_worker_exec" {
 
 # Chat worker: reads transactions (Query on the date-index GSI), categories, budgets and the pay
 # cycle (GetItem/Query); PutItem covers the pay-cycle/category first-read seeding; UpdateItem covers
-# its own job row and the /budgets read's best-effort rollover/spread settle writes. No DeleteItem.
+# its own job row and the /budgets read's best-effort rollover settle writes. No DeleteItem.
 resource "aws_iam_role_policy" "ai_chat_worker_dynamodb" {
   name = "${var.project_name}-ai-chat-worker-dynamodb"
   role = aws_iam_role.ai_chat_worker_exec.id

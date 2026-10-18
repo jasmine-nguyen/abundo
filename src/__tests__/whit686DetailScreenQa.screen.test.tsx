@@ -86,18 +86,6 @@ it('[A6] rules arriving late fill in the named rule line', async () => {
   expect(await screen.findByText('Filed by your rule: contains "COLES"')).toBeTruthy();
 });
 
-// [A7] Budgets arriving after the row: the spread prompt appears once the over-budget rollup lands.
-it('[A7] the spread prompt appears once late budgets show the category over', async () => {
-  server.seed('/budgets', { coffee: { target: 100, posted: 130, pending: 0 } });
-  const held = server.hold('/budgets');
-  render(<WithQueries><TransactionDetail /></WithQueries>);
-  await screen.findByText('Woolworths');
-  expect(screen.queryByTestId('transaction-spread')).toBeNull();
-
-  await refreshInAct(() => held.release());
-  expect(await screen.findByTestId('transaction-spread')).toBeTruthy();
-});
-
 // [A8] Signed out: the detail screen sends no reads.
 it('[A8] signed out → no feed or categories read goes out', async () => {
   setAuthStatus('anon');

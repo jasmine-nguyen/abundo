@@ -1,7 +1,7 @@
 """Each budget's standing this pay cycle, worked out once (WHIT-622).
 
 Pure: budget targets + pay cycle + categories + charges in → one row per budget
-(target, posted, pending, carryover, spread, available) plus the settlements to save.
+(target, posted, pending, carryover, available) plus the settlements to save.
 /budgets, the budget alerts and the chat all call it, so they can't disagree.
 
 Two steps, because the caller has to read transactions in between:
@@ -18,10 +18,8 @@ Row rules:
   earnings (WHIT-69). Any other (or unknown) bucket is spend.
 - A parent budget sums its whole subtree, netting every id before the floor at zero
   (WHIT-228, WHIT-343).
-- Rollover and bill spread apply to spend categories only: a flag left on a category
-  later moved to Income/Savings is ignored. Only a rollover row carries
-  `rollover`/`carryover`; only a spread row carries `spread`. Rollover wins if a corrupt
-  row has both, so `available` never sums two cushions.
+- Rollover applies to spend categories only: a flag left on a category later moved to
+  Income/Savings is ignored. Only a rollover row carries `rollover`/`carryover`.
 - A rollover row also lists the cycles behind its carryover (`carryover_cycles`, newest
   first, still-settling ones flagged) and `carryover_earlier`, the part from before
   history was kept, so the cycles plus the remainder add up to `carryover` (WHIT-742).
@@ -39,7 +37,6 @@ from spend import (
     rollover_history_view,
     rollover_windows,
     seal_rollover,
-    spread_state,
     subtree_ids,
     summarise_income,
     summarise_transactions,
@@ -111,7 +108,7 @@ def budget_spend(targets: dict, categories: list, transactions: list) -> dict:
     """Each budget's {"posted", "pending"} over `transactions`, whatever window they cover.
 
     The same subtree fold and Income earn-target rule as `budget_standing`, with no
-    rollover or spread.
+    rollover.
     """
     transactions = drop_transfer_rows(transactions, categories)
     bucket_by_id, ids_by_target = _subtrees(targets, categories)
@@ -125,22 +122,16 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
     `transactions` must be exactly the rows dated `window.fetch_start..window.today`: when
     no rollover widened the read, they ARE the current cycle and are summed as-is. Returns
     (rows, settlements) where settlements is
-    {"rollover": {cat_id: {carryover, carryover_from[, carryover_history]}}, "spread_finished": [cat_id],
-     "spread_reanchored": {cat_id: plan}}.
+    {"rollover": {cat_id: {carryover, carryover_from[, carryover_history]}}}.
     """
     transactions = drop_transfer_rows(transactions, categories)
     cycle_start = window.cycle_start
     today = window.today
-    length = window.length
     bucket_by_id, ids_by_target = _subtrees(targets, categories)
 
     rollover_ids = {
         cat_id for cat_id, entry in targets.items()
         if entry.get("rollover") and bucket_by_id.get(cat_id) not in (INCOME_BUCKET, SAVINGS_BUCKET)
-    }
-    spread_ids = {
-        cat_id for cat_id, entry in targets.items()
-        if "spread_amount" in entry and bucket_by_id.get(cat_id) not in (INCOME_BUCKET, SAVINGS_BUCKET)
     }
 
     current = transactions
@@ -150,8 +141,6 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
     spend_by_id = _fold_spend(ids_by_target, bucket_by_id, current)
 
     rollover_settlements = {}
-    finished_spreads = []
-    reanchored_spreads = {}
     rows = {}
     for cat_id, entry in targets.items():
         folded = spend_by_id[cat_id]
@@ -161,7 +150,6 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
             "pending": folded["pending"],
         }
         buffer_term = Decimal(0)
-        adjustment_term = Decimal(0)
         if cat_id in rollover_ids:
             if cat_id in window.reanchor_by_id:
                 carryover = window.reanchor_by_id[cat_id]["carryover"]
@@ -178,22 +166,7 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
             row["carryover_cycles"] = cycles
             row["carryover_earlier"] = earlier
             buffer_term = carryover
-        if cat_id in spread_ids:
-            spread_row, finished, reanchor = spread_state(entry, cycle_start, length, window.last_pay_date, today)
-            if spread_row is not None:
-                row["spread"] = spread_row
-                if cat_id not in rollover_ids:
-                    adjustment_term = spread_row["adjustment"]
-            if finished:
-                finished_spreads.append(cat_id)
-            if reanchor is not None:
-                reanchored_spreads[cat_id] = reanchor
-        row["available"] = unified_available(entry["target"], buffer_term, adjustment_term)
+        row["available"] = unified_available(entry["target"], buffer_term)
         rows[cat_id] = row
 
-    settlements = {
-        "rollover": rollover_settlements,
-        "spread_finished": finished_spreads,
-        "spread_reanchored": reanchored_spreads,
-    }
-    return rows, settlements
+    return rows, {"rollover": rollover_settlements}

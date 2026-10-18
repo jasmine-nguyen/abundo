@@ -1,5 +1,5 @@
 // WHIT-630: the "what can I spend this cycle" formula and the pace target live once,
-// in budgetMath.ts, so budgetViews / budgetDetail / spread eligibility can't drift apart.
+// in budgetMath.ts, so budgetViews and budgetDetail can't drift apart.
 import { describe, it, expect } from '@jest/globals';
 import { nothingLeft, paceTarget, paceWarning, pacePct, paidInOneGo } from '../budgetMath';
 import type { Transaction } from '../types';

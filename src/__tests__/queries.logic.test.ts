@@ -13,9 +13,9 @@ describe('selectBudgets', () => {
       tiny: { target: 0.01, posted: 0, pending: 0 },
     });
     expect(out).toEqual([
-      { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 100 },
-      { id: 'food', budget: 250, posted: 60, pending: 5, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 250 },
-      { id: 'tiny', budget: 0.01, posted: 0, pending: 0, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 0.01 },
+      { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, available: 100 },
+      { id: 'food', budget: 250, posted: 60, pending: 5, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, available: 250 },
+      { id: 'tiny', budget: 0.01, posted: 0, pending: 0, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, available: 0.01 },
     ]);
   });
 });

@@ -96,13 +96,13 @@ describe('budgetDetail — carryover', () => {
 describe('toBudget — rollover fields', () => {
   it('defaults a legacy rollup (no rollover keys) to off / 0', () => {
     expect(toBudget('x', { target: 100, posted: 10, pending: 5 })).toEqual({
-      id: 'x', budget: 100, posted: 10, pending: 5, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 100,
+      id: 'x', budget: 100, posted: 10, pending: 5, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, available: 100,
     });
   });
 
   it('maps present rollover + carryover through', () => {
     expect(toBudget('x', { target: 100, posted: 10, pending: 5, rollover: true, carryover: 40 })).toEqual({
-      id: 'x', budget: 100, posted: 10, pending: 5, rollover: true, carryover: 40, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 100,
+      id: 'x', budget: 100, posted: 10, pending: 5, rollover: true, carryover: 40, carryoverCycles: [], carryoverEarlier: 0, available: 100,
     });
   });
 

@@ -1,5 +1,5 @@
-// WHIT-630: the pace target, in one place so budgetViews, budgetDetail and spread eligibility
-// can't drift apart. The spendable is the server's `available` (WHIT-549), read as sent.
+// WHIT-630: the pace target, in one place so budgetViews and budgetDetail can't drift apart.
+// The spendable is the server's `available` (WHIT-549), read as sent.
 import type { Budget } from './model';
 import { elapsedFrac } from './payCycle';
 import type { Category, Transaction } from './types';

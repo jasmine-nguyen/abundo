@@ -1,6 +1,6 @@
 // WHIT-630: the client model shapes and the converters from the server payloads, moved out of
 // context.tsx so queries.ts can use them without importing the store.
-import type { BreakdownRollup, BudgetRollup, CarryoverCycle, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord, SpreadPlan } from './api';
+import type { BreakdownRollup, BudgetRollup, CarryoverCycle, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord } from './api';
 import type { Category } from './types';
 import { chartCategoryColor, normalizeColorSlot } from './chartColors';
 
@@ -12,12 +12,6 @@ export interface Budget {
   rollover: boolean; carryover: number;
   // The cycles behind `carryover` (newest first) and the older remainder (WHIT-742).
   carryoverCycles?: CarryoverCycle[]; carryoverEarlier?: number;
-  // Bill spread (WHIT-504): `spreadAdjustment` is the signed dollars this cycle's spendable
-  // moves by (a positive cushion in the anchor cycle, a negative slice in a payback cycle);
-  // default 0 for a non-spread budget. `spread` carries the plan detail for the status line.
-  // A category has rollover OR a spread, never both, so at most one of carryover/spreadAdjustment
-  // is ever non-zero.
-  spreadAdjustment: number; spread?: SpreadPlan;
   // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549).
   // Always set: toBudget fills the target when the server omits it (past-cycle rows only).
   available: number;
@@ -88,7 +82,6 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
     id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
     rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
     carryoverCycles: rollup.carryover_cycles ?? [], carryoverEarlier: rollup.carryover_earlier ?? 0,
-    spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
     // The server's spendable (WHIT-549). Only past-cycle export rows omit it, and a past cycle
     // exports the plain target, so that's the fill (WHIT-840).
     available: rollup.available ?? rollup.target,
