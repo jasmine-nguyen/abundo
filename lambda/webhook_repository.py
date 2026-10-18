@@ -1,5 +1,5 @@
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
 import reconcile
@@ -43,12 +43,12 @@ class TransactionRepository(_SharedTransactionRepository):
             filter_expression=Attr("status").eq(status),
         )
 
-    def get_pending_pools(self, transactions: list[Transaction], today: Optional[date] = None) -> dict[str, list[dict]]:
+    def get_pending_pools(self, transactions: list[Transaction]) -> dict[str, list[dict]]:
         """The recent pendings of every account with a non-pending row in `transactions` — the
         pool reconcile matches settlements against. Read once per bank message and shared by
         the alert preview and the write, so both see the same pool (ABU-41). Bounded to the
         last PENDING_LOOKBACK_DAYS through the date-index; age-out reaps anything older."""
-        start = ((today or melbourne_today()) - timedelta(days=PENDING_LOOKBACK_DAYS)).isoformat()
+        start = (melbourne_today() - timedelta(days=PENDING_LOOKBACK_DAYS)).isoformat()
         accounts = dict.fromkeys(t["account_id"] for t in transactions if t.get("status") != PENDING_STATUS)
         return {
             account_id: [row for row in read_date_range_pages(self, account_id, start, None)

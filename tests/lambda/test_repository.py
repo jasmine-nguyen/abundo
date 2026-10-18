@@ -3,7 +3,6 @@ in-memory FakeTable. The dedup marker's skip/mark order is driven end to end in 
 its expiry is checked here."""
 
 import time
-from datetime import date
 
 
 
@@ -37,15 +36,15 @@ def test_get_pending_accumulates_pendings_across_pages(repo):
 # --- ABU-41: get_pending_pools reads only the last 30 days of pendings ---
 
 
-def test_get_pending_pools_keeps_recent_pendings_across_pages(repo):
-    # today 2026-10-18 → lookback starts 2026-09-18. Pages of 2 force the cursor to be followed.
+def test_get_pending_pools_keeps_recent_pendings_across_pages(repo, pinned_pending_lookback):
+    # today 2026-07-01 → lookback starts 2026-06-01. Pages of 2 force the cursor to be followed.
     for txn_id, status, swiped in [
-        ("old_pend", "pending", "2026-09-08"),     # 40 days old: outside the lookback
-        ("edge_pend", "pending", "2026-09-18"),    # exactly 30 days old: inside (the bound is inclusive)
-        ("recent_pend", "pending", "2026-09-19"),  # 29 days old: inside
-        ("posted", "posted", "2026-10-13"),
-        ("new_pend", "pending", "2026-10-15"),
-        ("other_pend", "pending", "2026-10-16"),   # an account with no posted row in the message
+        ("old_pend", "pending", "2026-05-22"),     # 40 days old: outside the lookback
+        ("edge_pend", "pending", "2026-06-01"),    # exactly 30 days old: inside (the bound is inclusive)
+        ("recent_pend", "pending", "2026-06-02"),  # 29 days old: inside
+        ("posted", "posted", "2026-06-26"),
+        ("new_pend", "pending", "2026-06-28"),
+        ("other_pend", "pending", "2026-06-29"),   # an account with no posted row in the message
     ]:
         account_id = "other" if txn_id == "other_pend" else "acc"
         _put(repo, account_id, txn_id, status)
@@ -56,7 +55,7 @@ def test_get_pending_pools_keeps_recent_pendings_across_pages(repo):
         {"transaction_id": "p9", "account_id": "other", "status": "pending"},
     ]
 
-    pools = repo.get_pending_pools(message, today=date(2026, 10, 18))
+    pools = repo.get_pending_pools(message)
 
     assert set(pools) == {"acc"}
     assert sorted(row["transaction_id"] for row in pools["acc"]) == ["edge_pend", "new_pend", "recent_pend"]
