@@ -69,7 +69,8 @@ def test_get_failed_threads_exclusive_start_key_on_later_pages_without_a_filter(
 
 
 def test_mark_event_stamps_expires_at_ttl(repo, monkeypatch):
-    monkeypatch.setattr(time, "time", lambda: 1_000_000)
+    # [A1] a fractional clock, so a missing int() (boto3 rejects floats) is caught
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.7)
 
     repo.mark_event("evt_1")
 
