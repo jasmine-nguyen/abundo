@@ -131,28 +131,6 @@ def test_excluded_charge_removed_from_a_mixed_set(shared):
     assert totals["coffee"]["posted"] == Decimal("20")
 
 
-@pytest.mark.parametrize("gap, length, expected", [
-    (14, 14, 1),                 # weekly-on-fortnightly beat -> one cycle
-    (30, 14, 2),                 # monthly bill on a fortnightly pay cycle -> ~2 cycles
-    (91, 30, 3),                 # quarterly on monthly -> 3
-    (30, 30, 1),                 # monthly bill, monthly pay cycle -> 1
-    (7, 14, 1),                  # sub-cycle cadence rounds down to the floor, never 0
-    (365, 14, 24),               # a yearly bill clamps to SPREAD_MAX_CYCLES (24), not 26
-    (Decimal("30"), 14, 2),      # a Decimal gap off a stored rule row divides fine
-    (336, 14, 24),               # exactly at the max is kept, not clamped down
-    (350, 14, 24),               # one beat over the max clamps to the max
-    (Decimal("45"), 14, 3),      # a non-whole Decimal quotient rounds numerically
-])
-def test_cadence_cycles_maps_and_clamps(shared, gap, length, expected):
-    assert shared.spend.cadence_cycles(gap, length) == expected
-
-
-@pytest.mark.parametrize("gap, length", [(0, 14), (-5, 14), (30, 0), (30, -1)])
-def test_non_positive_inputs_fall_back_to_the_minimum(shared, gap, length):
-    # A malformed cadence/length spreads over one cycle rather than crashing or returning nonsense.
-    assert shared.spend.cadence_cycles(gap, length) == 1
-
-
 def test_earned_sums_positive_income_posted_and_pending(shared):
     totals = shared.spend.summarise_earned(
         [_txn(2500, status="posted"), _txn(300, status="pending")],

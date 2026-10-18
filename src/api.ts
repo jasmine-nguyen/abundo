@@ -166,11 +166,6 @@ export interface RuleRecord {
   categoryId: string;
   /** When true, a charge this rule files is also kept out of the budget (WHIT-558). */
   budgetExcluded?: boolean;
-  // WHIT-559: when true, matching this rule auto-creates the category's bill-spread plan. The
-  // amount + gap are captured server-side from the matched recurring bill (read-only here).
-  spread?: boolean;
-  spreadAmount?: number | null;
-  spreadGapDays?: number | null;
   // WHIT-541: multi-condition rules carry these; a single-condition rule has null and the engine
   // falls back to the flat field/operator/value.
   conditions?: RuleCondition[] | null;
@@ -189,8 +184,6 @@ export interface RuleWriteInput {
   field?: string;
   operator?: string;
   budgetExcluded?: boolean;
-  /** WHIT-559: when true, the server auto-creates the category's bill-spread plan on a match. */
-  spread?: boolean;
   conditions?: RuleCondition[];
   logic?: RuleLogic;
 }
@@ -1279,9 +1272,7 @@ export const listRules = endpoint((send): Promise<RuleRecord[]> =>
  *
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The created rule, including its store-assigned id.
- * @throws {ApiError} If the response status is not OK — carrying `.status` so the caller can
- *   tell a spread rule's 409 (category already spread) / 422 (no recurring bill) apart (WHIT-559),
- *   from a 400 (invalid) or 401 (auth).
+ * @throws {ApiError} If the response status is not OK.
  */
 export const createRule = endpoint((send, input: RuleWriteInput): Promise<RuleRecord> =>
   send({ path: "/rules", method: "POST", body: input }));
@@ -1293,8 +1284,7 @@ export const createRule = endpoint((send, input: RuleWriteInput): Promise<RuleRe
  * @param id - The id of the rule to update.
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The updated rule.
- * @throws {ApiError} If the response status is not OK — carrying `.status` so an edit that turns
- *   spread on can surface its 409/422 (WHIT-559), apart from 404 (unknown id) / 400 / 401.
+ * @throws {ApiError} If the response status is not OK.
  */
 export const updateRule = endpoint((send, id: string, input: RuleWriteInput): Promise<RuleRecord> =>
   send({ path: `/rules/${encodeURIComponent(id)}`, method: "PUT", body: input }));

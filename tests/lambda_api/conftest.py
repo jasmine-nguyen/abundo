@@ -104,14 +104,6 @@ def rule_engine():
 
 
 @pytest.fixture
-def recurring_bills():
-    """Import lambda_api/recurring_bills.py in isolation — the pure recurring-bill detector
-    (WHIT-559 prereq), tested without the handler's scan or writes."""
-    with _isolated_import("recurring_bills") as module:
-        yield module
-
-
-@pytest.fixture
 def transaction_search():
     """Import lambda_api/transaction_search.py in isolation — the pure search matcher (WHIT-576),
     tested without the handler's full-history scan."""

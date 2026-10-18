@@ -1,8 +1,8 @@
 """The user's rule book (WHIT-623) — the one place a saved rule row becomes the matcher's shape.
 
 The webhook (lambda/rule_ingest.py), the API routes and the apply-rules worker all read rules
-through `rule_from_row`, so they can never drift apart on which fields reach the matcher.
-`rule_reply` is the same rule as the app sees it (without the internal `spreadSeeded` flag).
+through `rule_from_row`, so they can never drift apart on which fields reach the matcher. The
+same shape is what the app receives.
 
 `RuleBook` is the user's rule book for one run: read once, then file incoming charges (webhook),
 sweep stored ones (the apply-rules route and worker), or re-file after an edit/delete.
@@ -31,20 +31,10 @@ def rule_from_row(row: dict) -> dict:
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
         "budgetExcluded": bool(row.get("budget_excluded")),
-        # WHIT-559: the spread action, whether its plan was already created, and the captured bill.
-        "spread": bool(row.get("spread")),
-        "spreadSeeded": bool(row.get("spread_seeded")),
-        "spreadAmount": row.get("spread_amount"),
-        "spreadGapDays": row.get("spread_gap_days"),
         # WHIT-541: None on a single-condition rule; the engine then reads field/operator/value.
         "conditions": row.get("conditions"),
         "logic": row.get("logic"),
     }
-
-
-def rule_reply(rule: dict) -> dict:
-    """An engine-shaped rule as the app receives it — `spreadSeeded` is internal bookkeeping."""
-    return {key: value for key, value in rule.items() if key != "spreadSeeded"}
 
 
 class WriteLimit:
@@ -76,7 +66,7 @@ class WriteLimit:
 class RuleBook:
     """The user's rules + taxonomy for one run, read once, in the engine's shape.
 
-    `target_by_id`, `excluded_by_id` and `spread_by_id` always cover the WHOLE store — `only()`
+    `target_by_id` and `excluded_by_id` always cover the WHOLE store — `only()`
     narrows `rules` to one inline rule but keeps them, so the reconcile sweep can still tell an
     orphaned stamp (rule gone) from a drifted one (rule still here, charge off its target)."""
 
@@ -85,7 +75,6 @@ class RuleBook:
         self.rules = [rule_from_row(row) for row in rule_rows]
         self.target_by_id = {rule["id"]: rule["categoryId"] for rule in self.rules if rule["id"]}
         self.excluded_by_id = {rule["id"]: rule["budgetExcluded"] for rule in self.rules if rule["id"]}
-        self.spread_by_id = {rule["id"]: rule for rule in self.rules if rule["spread"] and rule["id"]}
 
     @classmethod
     def load(cls, rule_repo, category_repo) -> "RuleBook":
@@ -118,20 +107,19 @@ class RuleBook:
         """What this book's rules would do to `transactions` — decided, not done."""
         return rule_engine.plan_rule_application(self.rules, transactions, self.is_unfiled)
 
-    def file_charges(self, rows: list[dict], seeder=None, *, counts_to_budget) -> None:
+    def file_charges(self, rows: list[dict], *, counts_to_budget) -> None:
         """File each unfiled charge in `rows` in place, when exactly one live category is agreed.
 
         Disagreeing rules leave it unfiled (both ids logged); no match leaves it unchanged. A filed
         charge gets the winning rule's stamp (WHIT-536), its "keep out of budget" action (WHIT-558,
-        only ever set True), a recomputed `counts_to_budget(account_id, category)`, and — through
-        `seeder` — its spread plan (WHIT-559)."""
+        only ever set True) and a recomputed `counts_to_budget(account_id, category)`."""
         applicable = self.applicable()
         if not applicable:
             return
         for charge in rows:
-            self._file_charge(charge, applicable, seeder, counts_to_budget)
+            self._file_charge(charge, applicable, counts_to_budget)
 
-    def _file_charge(self, charge: dict, applicable: list[dict], seeder, counts_to_budget) -> None:
+    def _file_charge(self, charge: dict, applicable: list[dict], counts_to_budget) -> None:
         if not self.is_unfiled(charge.get("category")):
             return
         resolved, matched_indices, categories = rule_engine.decide(applicable, charge)
@@ -150,15 +138,13 @@ class RuleBook:
         charge["filed_by_rule"] = winning_rule["id"]
         if winning_rule.get("budgetExcluded"):
             charge["budget_excluded"] = True
-        if seeder is not None:
-            seeder.seed(winning_rule)
         logger.info("rule ingest: filed %s -> %s (rule %s)",
                     charge.get("transaction_id"), resolved, winning_rule["id"])
 
     def sweep(
         self, transaction_repo, transactions: list[dict], plan: dict, *,
         limit: WriteLimit, inline_stamp: str | None = None, inline_excluded: bool = False,
-        run_reconcile: bool, seeder=None, on_progress: Callable[[dict], None] | None = None,
+        run_reconcile: bool, on_progress: Callable[[dict], None] | None = None,
     ) -> tuple[list[dict], list[str], list[str], list[str], int]:
         """The write half of apply-rules (WHIT-537): file `plan["matched"]`, then — only when
         `run_reconcile` (the plain full sweep, never the inline path) — the WHIT-540 reconcile pass.
@@ -189,9 +175,6 @@ class RuleBook:
                 stamp, budget_excluded = inline_stamp, inline_excluded
             else:
                 stamp, budget_excluded = rule_id, self.excluded_by_id.get(rule_id, False)
-            # Once per run and create-only, whether or not the write below lands (WHIT-559).
-            if seeder is not None and self.spread_by_id:
-                seeder.seed(self.spread_by_id.get(rule_id))
             try:
                 # Conditional on the category the SCAN saw, so the user's tap always beats a rule (WHIT-508).
                 status, current_category = transaction_repo.update_transaction_category_if_unchanged(

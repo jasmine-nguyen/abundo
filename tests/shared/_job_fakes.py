@@ -26,9 +26,9 @@ def real_job_repo(jobs=None):
 
 
 def wire_apply_rules_worker(worker, monkeypatch, *, transactions, rules,
-                            categories=frozenset({"groceries"}), budget=None, paycycle=None):
+                            categories=frozenset({"groceries"})):
     """Point the apply-rules worker's repo constructors at the real repos over one FakeTable, with
-    a created "job1". ``budget`` / ``paycycle`` replace its spread repositories when given.
+    a created "job1".
 
     Returns (table, rule_repo, job_repo)."""
     from _feed_fakes import FakeCategoryRepo, real_repos
@@ -40,10 +40,6 @@ def wire_apply_rules_worker(worker, monkeypatch, *, transactions, rules,
     monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
     monkeypatch.setattr(worker, "RuleRepository", lambda: rule_repo)
     monkeypatch.setattr(worker, "JobRepository", lambda: job_repo)
-    if budget is not None:
-        monkeypatch.setattr(worker, "BudgetRepository", lambda: budget)
-    if paycycle is not None:
-        monkeypatch.setattr(worker, "PayCycleRepository", lambda: paycycle)
     return table, rule_repo, job_repo
 
 

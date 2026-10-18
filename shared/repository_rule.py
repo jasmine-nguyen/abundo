@@ -61,28 +61,22 @@ class RuleRepository(RepositoryBase):
         budget_excluded: bool = False,
         conditions: Optional[list] = None,
         logic: Optional[str] = None,
-        spread: bool = False,
-        spread_amount: Optional[Any] = None,
-        spread_gap_days: Optional[int] = None,
     ) -> tuple[dict, bool]:
         """Create a rule, returning ``(rule, created)``.
 
         The id is derived from the text, so re-creating the SAME text is idempotent:
-          - same text + same category + same budget_excluded + same spread flag -> the existing row,
-            ``created=False``.
-          - same text but a DIFFERENT category, a different budget_excluded, OR a different spread flag
-            -> ``RuleClashError`` (the two would fight over the same charges — over the category, over
-            whether the charge is kept out of the budget, or over whether it is auto-spread — and a
-            conflicted charge is never filed).
+          - same text + same category + same budget_excluded -> the existing row, ``created=False``.
+          - same text but a DIFFERENT category or a different budget_excluded -> ``RuleClashError``
+            (the two would fight over the same charges — over the category, or over whether the
+            charge is kept out of the budget — and a conflicted charge is never filed).
         The ``attribute_not_exists(pk)`` condition is the dedup guard — dropping it would let the
-        second create silently overwrite the first. ``budget_excluded`` and ``spread`` are deliberately
-        NOT part of the id (the id stays the rule TEXT, rule_engine.rule_id_for), so they can only ever
-        collide, never mint a second row for the same text.
+        second create silently overwrite the first. ``budget_excluded`` is deliberately NOT part of
+        the id (the id stays the rule TEXT, rule_engine.rule_id_for), so it can only ever collide,
+        never mint a second row for the same text.
         """
         rule_id = rule_engine.rule_identity(field, operator, value, conditions, logic)
         item = _rule_row(rule_id, field, operator, value, category_id,
                          budget_excluded=budget_excluded, conditions=conditions, logic=logic,
-                         spread=spread, spread_amount=spread_amount, spread_gap_days=spread_gap_days,
                          created_at=_now())
         try:
             self._get_table().put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
@@ -96,8 +90,7 @@ class RuleRepository(RepositoryBase):
                 # not a clash. Surface it as a DB fault rather than inventing a clash.
                 handle_database_error(e, "create rule")
             if (existing.get("category_id") != category_id
-                    or bool(existing.get("budget_excluded")) != budget_excluded
-                    or bool(existing.get("spread")) != spread):
+                    or bool(existing.get("budget_excluded")) != budget_excluded):
                 raise RuleClashError(existing)
             return existing, False
 
@@ -111,15 +104,12 @@ class RuleRepository(RepositoryBase):
         budget_excluded: bool = False,
         conditions: Optional[list] = None,
         logic: Optional[str] = None,
-        spread: bool = False,
-        spread_amount: Optional[Any] = None,
-        spread_gap_days: Optional[int] = None,
     ) -> dict:
         """Edit a rule, returning the updated rule.
 
         Editing the text changes the id (the id IS the text), so this is not always an in-place
         update:
-          - id unchanged (a category change, a budget_excluded/spread toggle, or a case-/spacing-only
+          - id unchanged (a category change, a budget_excluded toggle, or a case-/spacing-only
             value edit) -> update in place.
           - id changed onto ANOTHER existing rule's text -> ``RuleClashError`` (merging two rules
             into one on an edit is ambiguous; refuse it).
@@ -136,24 +126,12 @@ class RuleRepository(RepositoryBase):
 
         if new_id == rule_id:
             self._update_in_place(rule_id, value, category_id, budget_excluded, now,
-                                  conditions=conditions, logic=logic, spread=spread,
-                                  spread_amount=spread_amount, spread_gap_days=spread_gap_days,
-                                  was_spread=bool(existing.get("spread")))
+                                  conditions=conditions, logic=logic)
             updated = {**existing, "value": value, "category_id": category_id,
-                       "budget_excluded": budget_excluded, "spread": spread, "updated_at": now}
+                       "budget_excluded": budget_excluded, "updated_at": now}
             if conditions:
                 updated["conditions"] = conditions
                 updated["logic"] = logic or "all"
-            # Reflect the captured-bill fields the in-place write applied (see _update_in_place):
-            # a spread rule carries them; a rule edited out of spreading sheds them.
-            if spread:
-                updated["spread_amount"] = spread_amount
-                updated["spread_gap_days"] = spread_gap_days
-                if not existing.get("spread"):
-                    updated["spread_seeded"] = False
-            else:
-                for stale in ("spread_amount", "spread_gap_days", "spread_seeded"):
-                    updated.pop(stale, None)
             return updated
 
         clash = self.get_rule(new_id)
@@ -162,8 +140,7 @@ class RuleRepository(RepositoryBase):
 
         new_row = _rule_row(
             new_id, field, operator, value, category_id, budget_excluded=budget_excluded,
-            conditions=conditions, logic=logic, spread=spread, spread_amount=spread_amount,
-            spread_gap_days=spread_gap_days,
+            conditions=conditions, logic=logic,
             created_at=existing.get("created_at", now), updated_at=now,
         )
         try:
@@ -191,11 +168,9 @@ class RuleRepository(RepositoryBase):
 
     def _update_in_place(self, rule_id: str, value: str, category_id: str,
                          budget_excluded: bool, now: str,
-                         conditions: Optional[list] = None, logic: Optional[str] = None,
-                         spread: bool = False, spread_amount: Optional[Any] = None,
-                         spread_gap_days: Optional[int] = None, was_spread: bool = False) -> None:
+                         conditions: Optional[list] = None, logic: Optional[str] = None) -> None:
         sets: dict[str, Any] = {"value": value, "category_id": category_id,
-                                "budget_excluded": budget_excluded, "updated_at": now, "spread": spread}
+                                "budget_excluded": budget_excluded, "updated_at": now}
         removes: list[str] = []
         # A same-id edit keeps the rule's identity, but the shape can change: a multi-condition rule
         # re-writes its conditions (a case-/spacing-only value edit may have changed the RAW values),
@@ -206,17 +181,6 @@ class RuleRepository(RepositoryBase):
             sets["conditions"], sets["logic"] = conditions, (logic or "all")
         else:
             removes += ["conditions", "logic"]
-        # The captured-bill fields track the spread flag (WHIT-559): a spread rule carries the amount
-        # + gap; a rule edited OUT of spreading sheds them. spread_seeded ("has this rule created its
-        # plan yet") is (re)armed to False only when spreading is turned ON fresh — when the rule was
-        # already spread, it is left untouched so a user who dismissed an auto-spread plan is not
-        # re-seeded by an unrelated edit ("stay dismissed", WHIT-559).
-        if spread:
-            sets["spread_amount"], sets["spread_gap_days"] = spread_amount, spread_gap_days
-            if not was_spread:
-                sets["spread_seeded"] = False
-        else:
-            removes += ["spread_amount", "spread_gap_days", "spread_seeded"]
         expression, names, values = update_expression(sets, removes)
         if not conditional_write("update rule", lambda: self._get_table().update_item(
             Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
@@ -238,40 +202,15 @@ class RuleRepository(RepositoryBase):
         with db_errors("delete rule"):
             self._get_table().delete_item(Key={"pk": "RULE", "sk": f"RULE#{rule_id}"})
 
-    def mark_spread_seeded(self, rule_id: str) -> None:
-        """Flip a spread rule's ``spread_seeded`` marker to True — called once, after the rule has
-        auto-created its category's spread plan (WHIT-559), so it never seeds again even if the user
-        deletes the plan ("stay dismissed"). Idempotent: re-setting True is a no-op. A rule deleted
-        mid-flight is a no-op success — the ``attribute_exists(pk)`` guard fails, and a plan that no
-        rule points at simply won't be re-seeded, which is the intended end state.
-        """
-        conditional_write("mark rule spread", lambda: self._get_table().update_item(
-            Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
-            UpdateExpression="SET #ss = :true",
-            ConditionExpression="attribute_exists(pk)",
-            ExpressionAttributeNames={"#ss": "spread_seeded"},
-            ExpressionAttributeValues={":true": True},
-        ))
-
-
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,
               *, budget_excluded: bool = False, conditions: Optional[list] = None,
-              logic: Optional[str] = None, spread: bool = False,
-              spread_amount: Optional[Any] = None, spread_gap_days: Optional[int] = None,
-              created_at: str, updated_at: Optional[str] = None) -> dict:
+              logic: Optional[str] = None, created_at: str, updated_at: Optional[str] = None) -> dict:
     """Build a rule item. Every rule is app-authored, so ``source`` is always "app".
 
     ``budget_excluded`` is stored ALWAYS as a bool (not sparse): a rule row is never budget-summed,
     so the transaction sparse-false convention doesn't apply, and an always-present flag keeps the
     in-place update and the clash compare uniform. An old row written before this field reads back
     ``.get("budget_excluded", False)``.
-
-    ``spread`` (WHIT-559) is the second action flag, stored ALWAYS as a bool like ``budget_excluded``.
-    A spread rule also carries the recurring bill it captured at create time — ``spread_amount``
-    (Decimal cents) and ``spread_gap_days`` (the median day-gap the cadence→cycles conversion uses at
-    apply) — plus ``spread_seeded`` (has this rule created its category's spread plan yet), seeded
-    False. Those three are SPARSE: present only on a spread rule, so a non-spread row gains just the
-    one ``spread: False`` flag. An old row reads back ``.get("spread", False)``.
 
     A multi-condition rule (WHIT-541) adds ``conditions`` + ``logic``; the flat field/operator/value
     are still written (set by the caller to the first condition) so a legacy reader has a shape, but
@@ -281,14 +220,10 @@ def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: 
     row = {
         "pk": _PK, "sk": f"RULE#{rule_id}", "id": rule_id,
         "field": field, "operator": operator, "value": value,
-        "category_id": category_id, "budget_excluded": budget_excluded, "spread": spread,
+        "category_id": category_id, "budget_excluded": budget_excluded,
         "source": "app", "created_at": created_at, "updated_at": updated_at or created_at,
     }
     if conditions:
         row["conditions"] = conditions
         row["logic"] = logic or "all"
-    if spread:
-        row["spread_amount"] = spread_amount
-        row["spread_gap_days"] = spread_gap_days
-        row["spread_seeded"] = False
     return row

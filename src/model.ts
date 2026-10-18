@@ -26,7 +26,7 @@ export interface Budget {
 // server facts (default description/contains for app-authored rules) so a rule
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; spread?: boolean; spreadAmount?: number | null; spreadGapDays?: number | null; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
 // WHIT-563: the multi-condition payload a rule writer sends when the builder produced more than a
 // plain "description contains" rule. Absent on the classic single-condition path (which stays a
 // flat value write, preserving the WHIT-538 preview flow and pattern-based conflict detection).
@@ -99,7 +99,7 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
 // (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
 export function toRule(raw: RuleRecord): Rule {
-  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, spread: raw.spread, spreadAmount: raw.spreadAmount, spreadGapDays: raw.spreadGapDays, conditions: raw.conditions, logic: raw.logic };
+  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, conditions: raw.conditions, logic: raw.logic };
 }
 
 // The sentinel category id the /breakdown endpoint uses for spend that counts to

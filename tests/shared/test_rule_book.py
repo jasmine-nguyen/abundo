@@ -49,15 +49,6 @@ def load(rule_book, rule_repo, category_repo):
     return lambda: rule_book.RuleBook.load(rule_repo, category_repo)
 
 
-class RecordingSeeder:
-    def __init__(self):
-        self.seeded = []
-
-    def seed(self, rule):
-        if rule:
-            self.seeded.append(rule["id"])
-
-
 def _store_charge(transaction_repo, transaction_id, description, **fields):
     key = (f"ACCOUNT#{ACCOUNT}", f"TXN#{transaction_id}")
     transaction_repo._table.store[key] = {
@@ -94,14 +85,11 @@ def _counts_to_budget(account_id, category):
 # --- the converter and the one rule id ---------------------------------------------------------
 
 
-def test_every_saved_rule_field_reaches_the_matcher_including_spread_seeded(rule_book, rule_repo):
-    # FAIL-ON-REVERT: dropping spread_seeded is how the old converters drifted apart.
+def test_every_saved_rule_field_reaches_the_matcher(rule_book, rule_repo):
     created, _ = rule_repo.create_rule(
         "description", "contains", "COLES", "groceries", budget_excluded=True,
         conditions=COLES_AND_GROCERY, logic="AND",
-        spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30,
     )
-    rule_repo.mark_spread_seeded(created["id"])
     [row] = rule_repo.list_rules()
 
     assert rule_book.rule_from_row(row) == {
@@ -111,10 +99,6 @@ def test_every_saved_rule_field_reaches_the_matcher_including_spread_seeded(rule
         "value": "COLES",
         "categoryId": "groceries",
         "budgetExcluded": True,
-        "spread": True,
-        "spreadSeeded": True,
-        "spreadAmount": Decimal("42.50"),
-        "spreadGapDays": 30,
         "conditions": COLES_AND_GROCERY,
         "logic": "AND",
     }
@@ -159,12 +143,12 @@ def test_update_moves_to_the_same_id_in_the_store_and_the_engine(
 
 
 def test_importing_rule_book_is_bundle_safe_transitively():
-    # Importing rule_book pulls in no banksync, boto3 or SpreadSeeder — a source-text guard misses
+    # Importing rule_book pulls in no banksync or boto3 — a source-text guard misses
     # a top-level import of a module that itself imports those. (`constants` is allowed since
     # WHIT-608: rule_engine reads the rule vocabulary from the one shared constants file.)
     probe = (
         "import sys; import rule_book; "
-        "print(sorted(m for m in ('banksync', 'boto3', 'rule_spreading', 'spend', "
+        "print(sorted(m for m in ('banksync', 'boto3', 'spend', "
         "'repository_transaction') if m in sys.modules))"
     )
     result = subprocess.run([sys.executable, "-c", probe], cwd=SHARED_DIR,
@@ -317,28 +301,6 @@ def test_rule_to_a_deleted_category_is_skipped_but_its_stamps_survive_reconcile(
     assert repo._table.store[owned]["filed_by_rule"] == rule["id"]
 
 
-def test_sweep_seeds_the_winning_spread_rule_but_not_on_the_inline_path(
-        rule_book, rule_repo, repo, load):
-    spread, _ = rule_repo.create_rule("description", "contains", "NETFLIX", "subs", spread=True,
-                                      spread_amount=Decimal("20"), spread_gap_days=30)
-    _store_charge(repo, "t1", "NETFLIX")
-    book = load()
-    transactions, plan = _plan(book, repo)
-    seeder = RecordingSeeder()
-    book.sweep(repo, transactions, plan, limit=rule_book.WriteLimit.none(), run_reconcile=False,
-               seeder=seeder)
-    assert seeder.seeded == [spread["id"]]
-
-    _store_charge(repo, "t2", "COLES")
-    narrowed = load().only({"value": "COLES", "categoryId": "groceries"},
-                           field="description", operator="contains")
-    transactions, plan = _plan(narrowed, repo)
-    inline_seeder = RecordingSeeder()
-    narrowed.sweep(repo, transactions, plan, limit=rule_book.WriteLimit.none(),
-                   inline_stamp="minted", run_reconcile=False, seeder=inline_seeder)
-    assert inline_seeder.seeded == []
-
-
 # --- the inline "file this shop" narrowing -----------------------------------------------------
 
 
@@ -479,20 +441,17 @@ def test_refile_touched_skips_a_failing_row_and_finishes_the_rest(rule_book, rul
 
 def test_file_charges_files_an_agreed_charge_with_its_rules_actions(rule_book, rule_repo, load):
     rule, _ = rule_repo.create_rule("description", "contains", "COLES", "groceries",
-                                    budget_excluded=True, spread=True,
-                                    spread_amount=Decimal("40"), spread_gap_days=30)
+                                    budget_excluded=True)
     first = {"transaction_id": "t1", "account_id": ACCOUNT, "description": "COLES 1",
              "amount": Decimal("-5")}
     second = {**first, "transaction_id": "t2"}
-    seeder = RecordingSeeder()
 
-    load().file_charges([first, second], seeder, counts_to_budget=_counts_to_budget)
+    load().file_charges([first, second], counts_to_budget=_counts_to_budget)
 
     assert first["category"] == "groceries"
     assert first["filed_by_rule"] == rule["id"]
     assert first["budget_excluded"] is True
     assert first["counts_to_budget"] is True
-    assert seeder.seeded == [rule["id"], rule["id"]]
 
 
 def test_file_charges_leaves_a_charge_unfiled_when_rules_disagree(rule_repo, load):

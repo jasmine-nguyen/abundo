@@ -137,11 +137,10 @@ def shared():
         import repayment_rules
         import repository_rule
         import repository_job
-        import rule_spreading
 
         ns = types.SimpleNamespace(
             repository=repository_transaction,
-            rule=repository_rule, job=repository_job, rule_spreading=rule_spreading,
+            rule=repository_rule, job=repository_job,
             balance_fetch=balance_fetch,
             balance=repository_balance, loanfacts=repository_loanfacts,
             milestone=repository_milestone,

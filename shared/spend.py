@@ -20,7 +20,6 @@ from constants import (
     HOMELOAN_ACCOUNT_ID, MONTHLY_PAY_CYCLE_LENGTH, NON_BUDGET_CATEGORIES,
     PENDING_STATUS, POSTED_STATUS,
     ROLLOVER_HISTORY_MAX_CYCLES, ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
-    SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
 )
 from rule_engine import is_unfiled_category
 
@@ -120,21 +119,6 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     if cycle_start > today:
         cycle_start = today
     return cycle_start.isoformat(), today.isoformat()
-
-
-def cadence_cycles(gap_days, length: int) -> int:
-    """How many pay cycles a bill on a `gap_days` cadence is spread over (WHIT-559): the bill's
-    period in pay cycles, rounded, clamped to [SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES].
-
-    A monthly (~30-day) bill on a fortnightly (14-day) pay cycle → ~2 cycles; a weekly bill → the
-    floor (1). `gap_days` may arrive as a Decimal off a stored rule row, so the division stays
-    numeric. A non-positive gap or length falls back to the minimum rather than dividing by zero or
-    returning nonsense — a malformed cadence spreads over one cycle, never crashes.
-    """
-    if length <= 0 or gap_days <= 0:
-        return SPREAD_MIN_CYCLES
-    cycles = round(gap_days / length)
-    return max(SPREAD_MIN_CYCLES, min(cycles, SPREAD_MAX_CYCLES))
 
 
 def nth_prior_cycle_window(cycle_start: str, length: int, n: int, last_pay_date: str) -> tuple[str, str]:

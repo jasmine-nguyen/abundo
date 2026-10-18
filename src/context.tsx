@@ -537,8 +537,8 @@ export interface AppContext {
   createCategoryInline: (form: CategoryForm, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
-  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite, spread?: boolean) => Promise<void>;
-  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite, spread?: boolean) => Promise<void>;
+  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite) => Promise<void>;
+  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite) => Promise<void>;
   saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
@@ -564,16 +564,6 @@ export function spreadPreview(amount: number, cycles: number): { cushion: number
   const firstSlice = (base + (extra > 0 ? 1 : 0)) / 100;
   const lastSlice = base / 100;
   return { cushion: amount, firstSlice, lastSlice };
-}
-
-// WHIT-559: a spread rule save can be refused for a spread-specific reason the user can act on —
-// 422 (no recurring bill matches the rule yet) or 409 (the category already has a spread rule).
-// Only a write that ACTUALLY requested spread gets this copy: 409/422 mean spread on the rules
-// endpoint today, but gating on `spread` keeps a future non-spread 409/422 from showing spread words.
-function ruleWriteErrorMessage(error: unknown, fallback: string, spread: boolean): string {
-  if (spread && error instanceof ApiError && error.status === 422) return "We couldn't find a recurring bill matching this rule";
-  if (spread && error instanceof ApiError && error.status === 409) return 'This category already has a spread rule';
-  return fallback;
 }
 
 // A category from the ['categories'] cache the screens read (undefined on a cold cache).
@@ -629,8 +619,8 @@ function listRemoval<T extends { id: string }>(key: QueryKey, id: string): NonNu
 // WHIT-563: the shared pieces of a rule create/edit. A multi-condition rule has no single pattern —
 // its stored value is the first condition's value (what the server derives too). `fields` is the
 // optimistic row's rule fields; `body` is the API body.
-function ruleFields(pattern: string, categoryId: string, budgetExcluded: boolean, spread: boolean, write?: RuleWrite) {
-  const shared = { categoryId, budgetExcluded, spread };
+function ruleFields(pattern: string, categoryId: string, budgetExcluded: boolean, write?: RuleWrite) {
+  const shared = { categoryId, budgetExcluded };
   if (!write) {
     const value = pattern.trim();
     return { value, fields: { pattern: value, ...shared }, body: { value, ...shared } };
@@ -1433,8 +1423,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
   // not upper-cased) so both rule-creation paths POST a consistent `value`.
-  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite, spread = false) => {
-    const { value, fields, body } = ruleFields(pattern, categoryId, budgetExcluded, spread, write);
+  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite) => {
+    const { value, fields, body } = ruleFields(pattern, categoryId, budgetExcluded, write);
     if (!value || !categoryId) return;
     // WHIT-192: the toast copy needs the category name — sourced from the ['categories']
     // query cache the screens read, not a store useState.
@@ -1464,7 +1454,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // sweep, so invalidate the suggestions itself or an accepted "make a rule?" card lingers.
         queryClient.invalidateQueries({ queryKey: filingSuggestionsKey });
       },
-      onFailed: (e) => showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.', spread)),
+      onFailed: () => showToast('Could not save rule. Please try again.'),
       whenSignedOut: undefined,
     });
   }, [showToast, patchRules, runSave]);
@@ -1472,8 +1462,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
   // non-default rule isn't silently reset to description/contains.
-  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite, spread = false) => {
-    const { value, fields, body } = ruleFields(pattern, categoryId, budgetExcluded, spread, write);
+  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite) => {
+    const { value, fields, body } = ruleFields(pattern, categoryId, budgetExcluded, write);
     if (!value || !categoryId) return;
     // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
     // query caches the screens read, not store useStates.
@@ -1500,7 +1490,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
         refreshAfterApplyRules({ skipRules: true });
       },
-      onFailed: (e) => showToast(ruleWriteErrorMessage(e, 'Could not update rule. Please try again.', spread)),
+      onFailed: () => showToast('Could not update rule. Please try again.'),
       whenSignedOut: undefined,
     });
   }, [showToast, patchRules, refreshAfterApplyRules, runSave]);

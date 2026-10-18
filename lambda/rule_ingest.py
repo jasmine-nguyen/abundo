@@ -20,7 +20,6 @@ import logging
 from typing import Callable, Optional
 
 from rule_book import RuleBook
-from rule_spreading import SpreadSeeder
 from spend import counts_to_budget
 
 logger = logging.getLogger(__name__)
@@ -38,8 +37,7 @@ def load_rules(rule_repo, category_repo):
     return book
 
 
-def apply(rows: list, *, rule_repo, category_repo,
-          budget_repo, paycycle_repo) -> Optional[Callable]:
+def apply(rows: list, *, rule_repo, category_repo) -> Optional[Callable]:
     """File each unfiled charge in `rows` by the user's rules, in place, and return
     `is_unfiled`.
 
@@ -47,9 +45,6 @@ def apply(rows: list, *, rule_repo, category_repo,
     category can't clobber a rule-fill on settlement. It is None when no rules/taxonomy were
     read — a data-less delivery or a read failure — in which case the caller leaves the carry
     unchanged.
-
-    A spread rule filing a matching charge auto-creates the category's spread plan (WHIT-559),
-    seeded once per delivery via a shared SpreadSeeder.
 
     Reads the rules + taxonomy once for the whole batch. A read failure leaves every charge
     unfiled (still lands, logged). An empty rule store is a no-op — the rows are left
@@ -59,6 +54,5 @@ def apply(rows: list, *, rule_repo, category_repo,
     book = load_rules(rule_repo, category_repo)
     if book is None:
         return None
-    seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
-    book.file_charges(rows, seeder, counts_to_budget=counts_to_budget)
+    book.file_charges(rows, counts_to_budget=counts_to_budget)
     return book.is_unfiled

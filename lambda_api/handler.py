@@ -91,11 +91,9 @@ from repository_milestone import MilestoneRepository
 from repository_paycycle import PayCycleRepository
 from repository_rule import RuleRepository
 from repository_job import STATUS_RUNNING, STATUS_FAILED, JobRepository
-from rule_engine import rule_identity
 from repository_transaction import TransactionRepository, read_window
 from budget_standing import budget_spend, budget_standing, standing_window
-from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
-from rule_spreading import SpreadSeeder
+from rule_book import RuleBook, WriteLimit, rule_from_row
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -131,10 +129,7 @@ from merchant_groups import (
 from filing_habits import suggest_rules_from_filing_habits
 from transaction_search import SEARCH_QUERY_MAX_LEN, search_transactions
 from milestones import notify_homeloan_milestone
-from rule_engine import (
-    is_unfiled_category, existing_at_least_as_specific, rule_matches,
-    rule_id_for)
-from recurring_bills import detect_recurring_bills
+from rule_engine import is_unfiled_category, existing_at_least_as_specific, rule_id_for
 from repository_notify import NotifyRepository
 from goal_checkpoints import check_goal_checkpoints, notify_goal_checkpoint_crossing
 import base64
@@ -205,8 +200,7 @@ _EXACT_ROUTES = {
         CategoryRepository()),
     # Previews unless the body says {"dryRun": false} (WHIT-502).
     ("POST", UNCATEGORIZED_APPLY_RULES_PATH): lambda event: apply_rules_to_uncategorized(
-        event, TransactionRepository(), CategoryRepository(), RuleRepository(),
-        BudgetRepository(), PayCycleRepository()),
+        event, TransactionRepository(), CategoryRepository(), RuleRepository()),
     # Async apply-rules job (WHIT-537): 202 + jobId; the {id} GET reports progress.
     ("POST", UNCATEGORIZED_APPLY_RULES_JOBS_PATH): lambda event: start_apply_rules_job(
         event, CategoryRepository(), RuleRepository(), JobRepository()),
@@ -250,7 +244,7 @@ _EXACT_ROUTES = {
     ("GET", GOALS_PATH): lambda event: _json_response(200, list_goals(GoalsRepository())),
     ("GET", RULES_PATH): lambda event: list_rules_route(RuleRepository()),
     ("POST", RULES_PATH): lambda event: create_rule_route(
-        event, RuleRepository(), CategoryRepository(), TransactionRepository()),
+        event, RuleRepository(), CategoryRepository()),
     # Device push-token registration (it controls who receives the user's notifications).
     ("POST", DEVICES_PATH): lambda event: register_device(event, DeviceRepository()),
 }
@@ -1067,18 +1061,7 @@ def _validate_rule_body(event: dict):
     if not isinstance(budget_excluded, bool):
         return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
 
-    spread = body.get("spread", False)
-    if not isinstance(spread, bool):
-        return None, _json_response(400, {"error": "spread must be a boolean"})
-
-    # A rule can't both keep a charge OUT of the budget and spread it INTO it (WHIT-559) — the two
-    # actions contradict, so the combo is refused rather than stored for a later path to reconcile.
-    if spread and budget_excluded:
-        return None, _json_response(
-            400, {"error": "a rule can't both spread a bill and keep it out of the budget"})
-
-    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded,
-            "spread": spread}
+    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded}
 
     if "conditions" in body:
         conditions, logic, error = _validate_conditions(body)
@@ -1176,101 +1159,18 @@ def list_rules_route(rule_repo: RuleRepository) -> dict:
         rules = rule_repo.list_rules()
     except DatabaseError:
         return _json_response(500, {"error": "could not read your rules"})
-    return _json_response(200, [rule_reply(rule_from_row(row)) for row in rules])
-
-
-def _spread_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
-    """Does another rule already auto-spread this category? At most one spread rule per category
-    (WHIT-559 — spreading is one plan per category, so two would fight). `exclude_id` skips the rule
-    being edited so re-saving it is not a self-clash.
-
-    Read-then-write, not a locked invariant: two near-simultaneous spread-rule creates on one category
-    could both pass this read and both persist. Accepted for a single-user app — rule writes are a
-    deliberate, rare user action, not a concurrent workload — and the create-only spread write means
-    even two spread rules can only ever seed ONE plan between them, never clobber."""
-    return any(rule.get("spread") and rule.get("category_id") == category_id
-               and rule.get("id") != exclude_id
-               for rule in rules)
-
-
-def _capture_spread_bill(parsed: dict, transaction_repo: TransactionRepository):
-    """Find the recurring bill a spread rule will spread, returning (amount, gap_days, None), or
-    (None, None, error) with a 400/409 when it can't.
-
-    The amount + cadence are grounded in the charges THIS rule matches — not the merchant name — so
-    any rule shape (description, amount, multi-condition) maps cleanly: run the same predicate the
-    apply paths use over full history, then the WHIT-568 detector over that matched set. A rule that
-    matches no recurring bill, or more than one, is rejected — there is no single amount to capture.
-    """
-    engine_rule = {"field": parsed["field"], "operator": parsed["operator"],
-                   "value": parsed["value"], "conditions": parsed["conditions"],
-                   "logic": parsed["logic"]}
-    transactions = read_window(transaction_repo, None, None)
-    matched = [transaction for transaction in transactions if rule_matches(engine_rule, transaction)]
-    bills = detect_recurring_bills(matched)["bills"]
-    if not bills:
-        return None, None, _json_response(
-            422, {"error": "we can't find a recurring bill for this rule yet"})
-    if len(bills) > 1:
-        return None, None, _json_response(
-            422, {"error": "this rule matches more than one recurring bill; make it more specific"})
-    bill = bills[0]
-    return bill["typicalAmount"], bill["medianGapDays"], None
-
-
-def _parsed_rule_id(parsed: dict) -> str:
-    """The id a parsed rule body would store — the store's own identity function, so the handler's
-    self-exclude / preserve id compare can never drift from the id the row is written under."""
-    return rule_identity(parsed["field"], parsed["operator"], parsed["value"],
-                         parsed["conditions"], parsed["logic"])
-
-
-def _resolve_spread(parsed: dict, rule_repo: RuleRepository,
-                    transaction_repo: TransactionRepository, exclude_id: str | None,
-                    preserved: tuple | None = None):
-    """The (spread_amount, spread_gap_days, None) a spread rule stores, or (None, None, error).
-
-    (None, None, None) for a non-spread rule — nothing to capture. For a spread rule: reject a second
-    spread rule on the same category, then either REUSE a `preserved` (amount, gap) — the caller
-    passes the stored capture when an edit leaves the rule's match text unchanged, so the amount is
-    frozen at create and an unrelated edit (e.g. a category change) neither re-detects nor 422s when
-    the bill history has aged out — or capture the bill afresh. One place so POST and PUT resolve a
-    spread rule identically.
-    """
-    if not parsed["spread"]:
-        return None, None, None
-    try:
-        existing_rules = rule_repo.list_rules()
-    except DatabaseError:
-        return None, None, _json_response(500, {"error": "could not read your rules"})
-    if _spread_rule_on_category(existing_rules, parsed["category_id"], exclude_id):
-        return None, None, _json_response(
-            409, {"error": "a spread rule already covers this category"})
-    if preserved is not None:
-        return preserved[0], preserved[1], None
-    return _capture_spread_bill(parsed, transaction_repo)
+    return _json_response(200, [rule_from_row(row) for row in rules])
 
 
 def create_rule_route(event: dict, rule_repo: RuleRepository,
-                      category_repo: CategoryRepository,
-                      transaction_repo: TransactionRepository) -> dict:
+                      category_repo: CategoryRepository) -> dict:
     """POST /rules — create a rule in our store.
 
     Returns 201 with the rule, whether it was newly created or the SAME text already existed
     (parity with the old proxy; the app checks only response.ok). A same-text/different-category
-    write is a 409 carrying the existing rule. A `spread` rule (WHIT-559) captures the recurring
-    bill it will spread at create time; a rule that matches no single recurring bill is a 422.
+    write is a 409 carrying the existing rule.
     """
     parsed, error = _validate_rule_write(event, category_repo)
-    if error:
-        return error
-
-    # Exclude the rule being created from the one-spread-rule-per-category check: its id is the
-    # rule TEXT, so re-POSTing the SAME spread rule matches itself and would wrongly 409 an idempotent
-    # create. A DIFFERENT-text second spread rule still 409s; a same-text-but-flag-differs write
-    # still clashes inside create_rule.
-    spread_amount, spread_gap_days, error = _resolve_spread(
-        parsed, rule_repo, transaction_repo, exclude_id=_parsed_rule_id(parsed))
     if error:
         return error
 
@@ -1278,14 +1178,13 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
         rule, _created = rule_repo.create_rule(
             parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
-            conditions=parsed["conditions"], logic=parsed["logic"],
-            spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
+            conditions=parsed["conditions"], logic=parsed["logic"])
     except RuleClashError as e:
         return _rule_clash_response(rule_from_row(e.existing))
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    return _json_response(201, rule_reply(rule_from_row(rule)))
+    return _json_response(201, rule_from_row(rule))
 
 
 def _apply_rules_limit(started: float) -> WriteLimit:
@@ -1317,25 +1216,11 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     if error:
         return error
 
-    # Preserve the amount/cadence captured at create when this edit leaves the rule's MATCH TEXT
-    # unchanged (its id is unchanged) and it was already spreading — so a category or unrelated edit
-    # keeps the frozen bill rather than re-detecting (and 422-ing when the history has aged out). A
-    # text change (id moves) or turning spreading on afresh re-captures against the new match.
-    prior = rule_repo.get_rule(rule_id)
-    preserved = None
-    if prior is not None and prior.get("spread") and _parsed_rule_id(parsed) == rule_id:
-        preserved = (prior.get("spread_amount"), prior.get("spread_gap_days"))
-    spread_amount, spread_gap_days, error = _resolve_spread(
-        parsed, rule_repo, transaction_repo, exclude_id=rule_id, preserved=preserved)
-    if error:
-        return error
-
     try:
         rule = rule_repo.update_rule(
             rule_id, parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
-            conditions=parsed["conditions"], logic=parsed["logic"],
-            spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
+            conditions=parsed["conditions"], logic=parsed["logic"])
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1345,7 +1230,7 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
 
     edited = rule_from_row(rule)
     remaining = RuleBook.refile_touched(rule_id, edited, transaction_repo, _apply_rules_limit(started))
-    return _json_response(200, {**rule_reply(edited), "remaining": remaining})
+    return _json_response(200, {**edited, "remaining": remaining})
 
 
 def delete_rule_route(event: dict, rule_repo: RuleRepository,
@@ -1547,7 +1432,7 @@ def _rule_clash_response(existing: dict) -> dict:
     rule. One definition so the pre-scan clash and the mint-time race clash can't drift apart."""
     return _json_response(409, {
         "error": f"you already have a rule for that filing to '{existing['categoryId']}'",
-        "existingRule": rule_reply(existing),
+        "existingRule": existing,
     })
 
 
@@ -1699,7 +1584,7 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
 
 def apply_rules_to_uncategorized(
     event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository,
-    rule_repo: RuleRepository, budget_repo: BudgetRepository, paycycle_repo: PayCycleRepository,
+    rule_repo: RuleRepository,
 ) -> dict:
     """POST /transactions/uncategorized/apply-rules — file charges already stored that a rule
     covers, across ALL history.
@@ -1788,16 +1673,14 @@ def apply_rules_to_uncategorized(
             return _rule_clash_response(rule_from_row(e.existing))
         except DatabaseError:
             return _json_response(500, {"error": "could not save your rule"})
-        created_rule = rule_reply(rule_from_row(row))
+        created_rule = rule_from_row(row)
 
-    seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     filed, vanished, failed, already_filed, matched_remaining = book.sweep(
         transaction_repo, transactions, plan,
         limit=_apply_rules_limit(started),
         inline_stamp=(created_rule["id"] if inline_rule is not None else None),
         inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
         run_reconcile=(inline_rule is None),
-        seeder=seeder,
     )
 
     return _apply_rules_response(
