@@ -7,10 +7,13 @@ the real TransactionRepository, RuleRepository and JobRepository over FakeTables
 the "no cap", progress, failure, and idempotency behaviours are exercised for real.
 """
 
+from types import SimpleNamespace
+
 from _feed_fakes import (
     SPENDING, FakeCategoryRepo, fail_writes, _row, _rule, stored, vanish_on_write,
 )
 from _job_fakes import progress_writes, wire_apply_rules_worker
+from _lambda_context import FakeContext
 
 
 def test_worker_files_the_whole_backlog_past_the_300_cap(apply_rules_worker, monkeypatch):
@@ -20,7 +23,8 @@ def test_worker_files_the_whole_backlog_past_the_300_cap(apply_rules_worker, mon
     table, _, job_repo = wire_apply_rules_worker(
         worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
 
-    result = worker.lambda_handler({"jobId": "job1"})
+    # A real Lambda context with plenty of time left: the deadline guard must not cut a normal run.
+    result = worker.lambda_handler({"jobId": "job1"}, FakeContext())
 
     assert result == {"jobId": "job1", "status": "succeeded"}
     # FAIL-ON-REVERT: this is the card. Reintroduce APPLY_RULES_MAX_WRITES on the worker path and
@@ -46,6 +50,29 @@ def test_worker_records_progress_as_it_files(apply_rules_worker, monkeypatch):
     assert filed_values == sorted(filed_values)
     assert all(c.get("filed", 0) <= c.get("matched", 120) for c in progress_writes(job_repo))
     assert 50 in filed_values and 100 in filed_values
+
+
+def test_worker_that_runs_out_of_time_marks_the_job_failed_with_partial_counts(
+        apply_rules_worker, monkeypatch):
+    # ABU-98: a sweep that hits the Lambda timeout is killed before its `except` runs, leaving the
+    # job "running" forever. With no time left before the deadline margin, the worker must stop
+    # early and end the job failed, saving how far it got. WriteLimit always allows one write.
+    # FAIL-ON-REVERT: restore WriteLimit.none() and all 3 are filed and the job succeeds.
+    worker = apply_rules_worker
+    rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES") for i in range(3)]
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
+
+    result = worker.lambda_handler({"jobId": "job1"}, FakeContext(remaining_ms=0))
+
+    assert result == {"jobId": "job1", "status": "failed"}
+    job = job_repo.get_job("job1")
+    assert job["status"] == "failed"
+    assert job["error"] == "ran out of time"
+    assert job["matched"] == 3
+    assert job["filed"] == 1 and job["remaining"] == 2
+    assert len(table.update_calls) == 1
+    assert job["vanished"] == 0 and job["failed"] == 0 and job["alreadyFiled"] == 0
 
 
 def test_worker_marks_the_job_failed_when_a_read_raises(apply_rules_worker, monkeypatch):
@@ -212,3 +239,30 @@ def test_worker_counts_filed_vanished_failed_and_alreadyfiled_in_one_sweep(apply
     assert job["failed"] == 2          # e1 (DB error) + c1 (changed but still unfiled)
     assert job["alreadyFiled"] == 1    # a1 (changed to a real category)
     assert job["attempted"] == 6 and job["remaining"] == 0
+
+
+def test_worker_that_runs_out_of_time_mid_sweep_saves_what_it_filed(apply_rules_worker, monkeypatch):
+    # ABU-98 [A1]: the deadline lands DURING the file loop, after some charges were written. The job
+    # must end failed with the real partial counts (not "succeeded across all your history").
+    # A fake clock ticks 6s per transaction write; the context leaves a 10s budget past the margin,
+    # so two writes land and the third is left. FAIL-ON-REVERT: drop the post-sweep
+    # `matched_remaining > 0` check and the job succeeds; ignore the margin and all 3 are filed.
+    worker = apply_rules_worker
+    rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES") for i in range(3)]
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
+    now = {"t": 1000.0}
+    table.before_write(lambda key, tbl: now.update(t=now["t"] + 6))
+    real_write_limit = worker.WriteLimit
+    monkeypatch.setattr(worker, "WriteLimit", lambda max_writes, budget, started: real_write_limit(
+        max_writes, budget, started, clock=lambda: now["t"]))
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: now["t"]))
+    margin_ms = worker.APPLY_RULES_WORKER_DEADLINE_MARGIN_SECONDS * 1000
+
+    result = worker.lambda_handler({"jobId": "job1"}, FakeContext(remaining_ms=margin_ms + 10_000))
+
+    assert result == {"jobId": "job1", "status": "failed"}
+    job = job_repo.get_job("job1")
+    assert job["status"] == "failed" and job["error"] == "ran out of time"
+    assert (job["matched"], job["filed"], job["remaining"], job["attempted"]) == (3, 2, 1, 2)
+    assert len(table.update_calls) == 2

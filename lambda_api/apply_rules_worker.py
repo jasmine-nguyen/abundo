@@ -2,9 +2,10 @@
 
 The synchronous POST /transactions/uncategorized/apply-rules caps itself at 300 writes / 15s to
 stay inside the 30s API Gateway window, so a large history takes repeated "apply the rest" taps.
-This worker runs the SAME sweep with NO cap: the app's POST .../apply-rules/jobs creates a job
-row and async-invokes this function; it files every matched charge, writes its progress to the
-job row as it goes, and marks the row succeeded/failed at the end. The app polls GET .../jobs/{id}.
+This worker runs the SAME sweep uncapped on writes, stopping only before the Lambda deadline: the
+app's POST .../apply-rules/jobs creates a job row and async-invokes this function; it files every
+matched charge, writes its progress to the job row as it goes, and marks the row succeeded/failed
+at the end. The app polls GET .../jobs/{id}.
 
 It lives in the lambda_api bundle (not the webhook bundle) because the APPLY_RULES_* handling and the
 job row are lambda_api code. The sweep itself is the shared RuleBook (WHIT-623), the same one the
@@ -12,8 +13,11 @@ sync route runs, so the two can never drift on WHAT gets filed; only the write l
 """
 
 import logging
+import time
 
-from api_constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
+from api_constants import (
+    APPLY_RULES_WORKER_DEADLINE_MARGIN_SECONDS, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
+)
 from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError, RuleClashError
@@ -35,6 +39,21 @@ def _zero_counts() -> dict:
     return {field: 0 for field in COUNT_FIELDS}
 
 
+def _write_limit(context) -> WriteLimit:
+    if context is None:
+        return WriteLimit.none()
+    budget = context.get_remaining_time_in_millis() / 1000 - APPLY_RULES_WORKER_DEADLINE_MARGIN_SECONDS
+    return WriteLimit(None, budget, time.monotonic())
+
+
+def _fail_out_of_time(job_repo: JobRepository, job_id: str, counts: dict, created_rule) -> dict:
+    logger.warning("apply-rules worker ran out of time for job %s, %d left",
+                   job_id, counts["remaining"])
+    job_repo.finish_job(job_id, STATUS_FAILED, counts, created_rule=created_rule,
+                        error="ran out of time")
+    return {"jobId": job_id, "status": STATUS_FAILED}
+
+
 def lambda_handler(event: dict, context=None) -> dict:
     """Run the uncapped apply-rules sweep for one job.
 
@@ -42,6 +61,7 @@ def lambda_handler(event: dict, context=None) -> dict:
       {"jobId": "<id>"}                                   — sweep ALL the user's rules.
       {"jobId": "<id>", "rule": {"value", "categoryId"}}  — mint that rule and sweep with only it.
     """
+    limit = _write_limit(context)
     job_id = event["jobId"]
     inline_rule = event.get("rule")
 
@@ -94,7 +114,7 @@ def lambda_handler(event: dict, context=None) -> dict:
 
         filed, vanished, failed, already_filed, matched_remaining = book.sweep(
             transaction_repo, transactions, plan,
-            limit=WriteLimit.none(),
+            limit=limit,
             inline_stamp=(created_rule["id"] if inline_rule is not None else None),
             inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
             run_reconcile=(inline_rule is None),
@@ -109,6 +129,9 @@ def lambda_handler(event: dict, context=None) -> dict:
             "failed": len(failed), "alreadyFiled": len(already_filed),
             "remaining": matched_remaining,
         }
+        if matched_remaining > 0:
+            # A worker limit has no max_writes, so unfiled matches mean the deadline stopped it.
+            return _fail_out_of_time(job_repo, job_id, counts, created_rule)
         job_repo.finish_job(job_id, STATUS_SUCCEEDED, counts, created_rule=created_rule)
         return {"jobId": job_id, "status": STATUS_SUCCEEDED}
     except Exception as e:
