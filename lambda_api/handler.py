@@ -106,6 +106,7 @@ from spend import (
     build_category_children,
     contributes_to_budget,
     current_cycle_window,
+    cycle_clock,
     drop_transfer_rows,
     fold_subtree,
     melbourne_today,
@@ -2012,7 +2013,7 @@ def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) ->
     pay_cycle = paycycle_repo.get_paycycle()
     cycle_start, cycle_end = current_cycle_window(pay_cycle["last_pay_date"], pay_cycle["length"])
     if cycle >= 1:
-        return nth_prior_cycle_window(cycle_start, pay_cycle["length"], cycle)
+        return nth_prior_cycle_window(cycle_start, pay_cycle["length"], cycle, pay_cycle["last_pay_date"])
     return cycle_start, cycle_end
 
 
@@ -2027,15 +2028,15 @@ def _windowed_rows(transactions: list[dict], predicate: Callable[[dict], bool]) 
 
 
 def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
-    """GET /paycycle — the stored pay cycle plus `days_left`: the days from today to the
-    next payday, computed fresh from the payday + length using the SAME window math the
-    /budgets total uses. The client reads this instead of computing its own countdown, so
-    app and server can't drift a day at the UTC/Melbourne seam (WHIT-341).
+    """GET /paycycle — the stored pay cycle plus `days_left` (today to the next payday) and
+    `cycle_days` (this cycle's real length: a monthly cycle is 28-31 days, ABU-44), computed
+    fresh using the SAME window math the /budgets total uses. The client reads these instead
+    of computing its own countdown, so app and server can't drift a day at the UTC/Melbourne
+    seam (WHIT-341).
     """
     cycle = paycycle_repo.get_paycycle()
-    cycle_start, today = current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    next_payday = date.fromisoformat(cycle_start) + timedelta(days=cycle["length"])
-    return {**cycle, "days_left": (next_payday - date.fromisoformat(today)).days}
+    days_left, cycle_days = cycle_clock(cycle["last_pay_date"], cycle["length"])
+    return {**cycle, "days_left": days_left, "cycle_days": cycle_days}
 
 
 def _persist_spread_settlements(budget_repo: BudgetRepository, targets: dict, finished: list,
@@ -2218,7 +2219,7 @@ def list_category_breakdown(
     `cycle` selects the window (WHIT-68): 0 = the current cycle (default — byte-identical
     to the pre-WHIT-68 behaviour), n >= 1 = the nth FULL cycle before this one, for the
     historical look-back. The current window is [cycle_start, today]; a prior window is a
-    full length-day span from `nth_prior_cycle_window`. The window is the only thing
+    full pay cycle from `nth_prior_cycle_window`. The window is the only thing
     `cycle` changes — same summariser, same response shape — so the client renderer and
     the `categoryBreakdown` selector need no per-cycle branching.
 
@@ -2397,7 +2398,8 @@ def get_category_transactions(
             return _json_response(400, {"error": "from and to must both be YYYY-MM-DD dates"})
         pay_cycle = paycycle_repo.get_paycycle()
         cycle_start, today = current_cycle_window(pay_cycle["last_pay_date"], pay_cycle["length"])
-        floor = lookback_floor(cycle_start, pay_cycle["length"], today, CHAT_LINK_GRACE_PERIODS)
+        floor = lookback_floor(cycle_start, pay_cycle["length"], pay_cycle["last_pay_date"], today,
+                               CHAT_LINK_GRACE_PERIODS)
         if not floor <= start <= end <= today:
             return _json_response(
                 400, {"error": f"from/to must be in order within [{floor}, {today}]"})
@@ -2716,7 +2718,7 @@ def assemble_insight_input(
     # so the trend and the historical breakdown can never disagree on cycle boundaries.
     prior = []
     for n in range(1, INSIGHTS_PRIOR_CYCLES + 1):
-        prev_start, prev_end = nth_prior_cycle_window(start, length, n)
+        prev_start, prev_end = nth_prior_cycle_window(start, length, n, cycle["last_pay_date"])
         prev_txns = drop_transfer_rows(read_window(transaction_repo, prev_start, prev_end), categories)
         prev_entry = {
             "start": prev_start,

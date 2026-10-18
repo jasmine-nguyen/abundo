@@ -8,6 +8,8 @@ paydays land Jun6, Jun20, Jul4, Jul18, Aug1, Aug15, Aug29; "today" = Sat 11 Jul 
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 CYCLE = {"length": 14, "last_pay_date": "2026-06-06"}
 TODAY = date(2026, 7, 11)
 
@@ -47,6 +49,15 @@ class TestPaydaysUntil:
 
     def test_unparseable_date_is_zero(self, shared):
         assert self._n(shared, "not-a-date") == 0
+
+    @pytest.mark.parametrize("last_pay_date, today, target, expected", [
+        ("2026-01-31", date(2026, 1, 31), "2026-04-30", 3),   # Feb 28, Mar 31, Apr 30
+        ("2028-01-31", date(2028, 1, 31), "2028-02-29", 1),   # leap-year Feb 29 is a payday
+        ("2028-01-31", date(2028, 1, 31), "2028-02-28", 0),
+    ])
+    def test_monthly_counts_calendar_month_paydays(self, shared, last_pay_date, today, target, expected):
+        # ABU-44: monthly paydays step by calendar month, the day clamped to the month's last day.
+        assert shared.goal_pace.paydays_until(30, last_pay_date, target, today) == expected
 
 
 # --- goal_pace: grow ---------------------------------------------------------

@@ -17,7 +17,7 @@ export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
 import type { BankSyncedAccount } from './queries';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
-import { paydaysPerYear, elapsedFrac } from './payCycle';
+import { paydaysPerYear, elapsedFrac, cycleIndex } from './payCycle';
 import { contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
 import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
@@ -1651,26 +1651,20 @@ export interface BalanceGoalView {
   checkpointReached: boolean[] | null;
 }
 
-// Count the paydays remaining before a target date: the payday dates `last_pay_date +
-// n*length` that fall in the half-open window (today, target] — strictly after today, on or
-// before target. Whole-day UTC math via the shared dateutil helpers (also used by cycleClock)
-// so a Melbourne daylight-saving change can't shift the count. The count of integers n with
-// today < pay + n*len <= target is floor(dTarget/len) − floor(dToday/len); floor handles a
-// last_pay_date in the future (n<0).
+// Count the paydays remaining before a target date: the paydays (paydayAtMs, so a monthly cycle
+// steps by calendar month — ABU-44) that fall in the half-open window (today, target] — strictly
+// after today, on or before target. Whole-day UTC math via the shared payCycle helpers (also used
+// by cycleClock) so a Melbourne daylight-saving change can't shift the count. The count is
+// cycleIndex(target) − cycleIndex(today); negative indices handle a last_pay_date in the future.
 export function paydaysUntil(
   payCycle: PayCycle,
   targetISO: string,
   today?: Date,
 ): number {
-  const len = payCycle.length;
-  if (!(len > 0)) return 0;
-  const pay = isoToUtcDayMs(payCycle.last_pay_date);
-  const target = isoToUtcDayMs(targetISO);
-  const now = today ?? new Date();
-  const dToday = wholeDaysBetween(pay, dateToUtcDayMs(now));
-  const dTarget = wholeDaysBetween(pay, target);
-  if (Number.isNaN(dTarget) || Number.isNaN(dToday)) return 0; // this selector's contract: bad date -> 0
-  return Math.max(0, Math.floor(dTarget / len) - Math.floor(dToday / len));
+  if (!(payCycle.length > 0)) return 0;
+  const count = cycleIndex(payCycle, isoToUtcDayMs(targetISO)) - cycleIndex(payCycle, dateToUtcDayMs(today ?? new Date()));
+  if (Number.isNaN(count)) return 0; // this selector's contract: bad date -> 0
+  return Math.max(0, count);
 }
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));

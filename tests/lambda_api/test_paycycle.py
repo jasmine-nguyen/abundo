@@ -99,7 +99,8 @@ def test_get_paycycle_dispatch(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     # days_left = next payday (03 + 14 = 17) - today (10) = 7.
-    assert json.loads(resp["body"]) == {"length": 14, "last_pay_date": "2024-01-03", "days_left": 7}
+    assert json.loads(resp["body"]) == {"length": 14, "last_pay_date": "2024-01-03", "days_left": 7,
+                                        "cycle_days": 14}
 
 
 def test_get_paycycle_view_days_left(handler, monkeypatch):
@@ -114,10 +115,20 @@ def test_get_paycycle_view_days_left(handler, monkeypatch):
     assert _view(14, "2024-01-03", date(2024, 1, 17))["days_left"] == 14
     # Mid-cycle -> counts down to the next payday.
     assert _view(14, "2024-01-03", date(2024, 1, 16))["days_left"] == 1
-    # The day after payday.
+    # The day after payday: June has 30 days.
     assert _view(30, "2024-06-01", date(2024, 6, 2))["days_left"] == 29
     # A future last_pay_date clamps to today (no negative days_left).
     assert _view(14, "2024-06-01", date(2024, 1, 10))["days_left"] == 14
+
+
+def test_get_paycycle_view_gives_a_monthly_cycle_its_real_length(handler, monkeypatch):
+    # (ABU-44) Payday the 15th, today Feb 20: this cycle is Feb 15 -> Mar 15, 28 days, 23 left.
+    from datetime import date
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 2, 20))
+    view = handler.get_paycycle_view(paycycle_repo({"length": 30, "last_pay_date": "2026-01-15"})[1])
+
+    assert (view["days_left"], view["cycle_days"]) == (23, 28)
 
 
 def test_put_paycycle_dispatch(handler, monkeypatch):

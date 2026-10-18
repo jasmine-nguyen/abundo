@@ -476,7 +476,7 @@ export function usePayCycle(): PayCycleData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const view = readPayCycle(payCycleQuery.data);
-  return { ...view, cycleName: cycleName(view.cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
+  return { ...view, cycleName: cycleName(view.payCycle.length), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
 }
 
 // --- shared screen-composite status plumbing (WHIT-204) ----------------------
@@ -546,6 +546,7 @@ export interface BudgetsScreenData {
   budgets: Budget[];
   category: (id: string) => Category | undefined;
   cycleLen: number;
+  cycleName: string;
   daysLeft: number;
   nextPayday: string; // ISO "YYYY-MM-DD" of the payday that ends the current cycle, for the hero and the income rows' "next pay ~Fri" ('' if unknown)
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
@@ -589,6 +590,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     budgets: budgetsQuery.data ?? [],
     category,
     cycleLen,
+    cycleName: cycleName(payCycle.length),
     daysLeft,
     nextPayday: nextPaydayDate,
     payCycleError,

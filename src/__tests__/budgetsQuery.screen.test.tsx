@@ -169,8 +169,10 @@ it('sustained payCycle failure → inline error + Retry (payCycleError), never a
 // stay FALSE. A bare `.isError` (no data guard) would flip it true and blank cached budgets.
 describe('WHIT-72 payCycleError guard', () => {
   beforeEach(() => {
+    pinToday(new Date('2026-09-18T09:40:00+10:00')); // monthly from the 1st: Sep 1 → Oct 1 is 30 days (ABU-44)
     seedBudgets(server, { categories: [{ ...COFFEE }] });
   });
+  afterEach(() => { jest.useRealTimers(); });
 
   it('BACKGROUND payCycle refetch failure over a cached cycle → payCycleError stays FALSE, rows + last-good cycle survive (cache-first)', async () => {
     const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });

@@ -374,9 +374,9 @@ def test_summarise_refund_reduces_spent(handler):
     ("2024-01-03", 14, date(2024, 1, 17), "2024-01-17", "2024-01-17"),
     # length-1 days on: still the last_pay_date's cycle.
     ("2024-01-03", 14, date(2024, 1, 16), "2024-01-03", "2024-01-16"),
-    # 58 days on: weekly k=8 -> +56; monthly k=1 -> +30.
+    # 58 days on: weekly k=8 -> +56; monthly k=1 -> the next calendar month (ABU-44).
     ("2024-01-03", 7, date(2024, 3, 1), "2024-02-28", "2024-03-01"),
-    ("2024-01-03", 30, date(2024, 3, 1), "2024-02-02", "2024-03-01"),
+    ("2024-01-03", 30, date(2024, 3, 1), "2024-02-03", "2024-03-01"),
     # A future last_pay_date has no valid k: the window collapses to [today, today], never inverts.
     ("2024-06-05", 14, date(2024, 6, 1), "2024-06-01", "2024-06-01"),
 ])

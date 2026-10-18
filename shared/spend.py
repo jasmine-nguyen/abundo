@@ -10,13 +10,14 @@ WHIT-22 needed it reachable from the webhook). Imports POSTED_STATUS/PENDING_STA
 from the shared constants.
 """
 
+import calendar
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from constants import (
-    HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
+    HOMELOAN_ACCOUNT_ID, MONTHLY_PAY_CYCLE_LENGTH, NON_BUDGET_CATEGORIES,
     PENDING_STATUS, POSTED_STATUS,
     ROLLOVER_HISTORY_MAX_CYCLES, ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
@@ -42,12 +43,65 @@ def melbourne_today() -> date:
     return datetime.now(melbourne).date()
 
 
+def add_months(d: date, k: int) -> date:
+    """`d` moved by `k` calendar months, the day clamped to the month's last day (Jan 31 + 1 → Feb 28)."""
+    year, month = divmod(d.year * 12 + d.month - 1 + k, 12)
+    month += 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def payday_at(last_pay_date: str, length: int, k: int) -> date:
+    """The k-th payday from `last_pay_date` (k may be negative). Monthly (ABU-44) steps by calendar
+    month, always from `last_pay_date`'s own day, so a 31st payday goes Apr 30 → May 31; every other
+    length steps a fixed `length` days."""
+    pay = date.fromisoformat(last_pay_date)
+    if length == MONTHLY_PAY_CYCLE_LENGTH:
+        return add_months(pay, k)
+    return pay + timedelta(days=k * length)
+
+
+def cycle_index(last_pay_date: str, length: int, day: date) -> int:
+    """The largest k with payday_at(k) <= day: which pay cycle `day` falls in (negative before
+    the first payday)."""
+    pay = date.fromisoformat(last_pay_date)
+    if length != MONTHLY_PAY_CYCLE_LENGTH:
+        return (day - pay).days // length
+    months = (day.year - pay.year) * 12 + day.month - pay.month
+    if payday_at(last_pay_date, length, months) > day:
+        months -= 1
+    return months
+
+
+def cycle_clock(last_pay_date: str, length: int, today: date | None = None) -> tuple[int, int]:
+    """(days_left, cycle_days) for today's pay cycle: the days until the next payday and this
+    cycle's real length (a monthly cycle is 28-31 days). Mirrors the app's cycleClock: before
+    the first payday the cycle is the first one, and days_left is held to its length."""
+    if today is None:
+        today = melbourne_today()
+    k = max(0, cycle_index(last_pay_date, length, today))
+    next_payday = payday_at(last_pay_date, length, k + 1)
+    cycle_days = (next_payday - payday_at(last_pay_date, length, k)).days
+    return min(cycle_days, (next_payday - today).days), cycle_days
+
+
+def snap_to_pay_cycle(day: str, length: int, last_pay_date: str, current_start: str) -> str:
+    """`day` moved to the nearest payday (a tie goes to the earlier one), then moved back to
+    `current_start` if it lands later. A plan saved on the old 30-day monthly grid (ABU-44) sits
+    between paydays; this puts it on the calendar-month grid. An on-grid `day` is unchanged."""
+    target = date.fromisoformat(day)
+    k = cycle_index(last_pay_date, length, target)
+    earlier = payday_at(last_pay_date, length, k)
+    later = payday_at(last_pay_date, length, k + 1)
+    nearest = earlier if target - earlier <= later - target else later
+    return min(nearest.isoformat(), current_start)
+
+
 def current_cycle_window(last_pay_date: str, length: int, today: date | None = None) -> tuple[str, str]:
     """Return (start, end) ISO dates for the CURRENT pay cycle: the inclusive
     window [cycle_start, today] that resets on the user's payday.
 
     `cycle_start` is the most recent payday on or before today — the latest
-    `last_pay_date + k*length` days (integer k >= 0) that is <= today. `today` defaults
+    `payday_at(k)` (integer k >= 0) that is <= today. `today` defaults
     to the Melbourne-local date (injectable for deterministic tests). Both bounds are
     inclusive: transaction `date` is stored date-only (YYYY-MM-DD) and the date-range
     query uses DynamoDB `between`, which is inclusive on both ends, so `end = today`
@@ -61,14 +115,11 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     """
     if today is None:
         today = melbourne_today()
-    pay_date = date.fromisoformat(last_pay_date)
-    elapsed_days = (today - pay_date).days
-    cycles_elapsed = max(0, elapsed_days // length)
-    cycle_start = pay_date + timedelta(days=cycles_elapsed * length)
+    k = max(0, cycle_index(last_pay_date, length, today))
+    cycle_start = payday_at(last_pay_date, length, k)
     if cycle_start > today:
         cycle_start = today
-    end = today
-    return cycle_start.isoformat(), end.isoformat()
+    return cycle_start.isoformat(), today.isoformat()
 
 
 def cadence_cycles(gap_days, length: int) -> int:
@@ -86,13 +137,13 @@ def cadence_cycles(gap_days, length: int) -> int:
     return max(SPREAD_MIN_CYCLES, min(cycles, SPREAD_MAX_CYCLES))
 
 
-def nth_prior_cycle_window(cycle_start: str, length: int, n: int) -> tuple[str, str]:
+def nth_prior_cycle_window(cycle_start: str, length: int, n: int, last_pay_date: str) -> tuple[str, str]:
     """Return (start, end) ISO dates for the Nth full pay cycle BEFORE the one that
     begins at `cycle_start` (n >= 1).
 
-    Each prior window is a full `length`-day span that abuts the next with no overlap
-    or gap: the 1st prior is [cycle_start - length, cycle_start - 1], the 2nd steps back
-    another `length`, and so on — the same stepping the AI-insight trend already walks
+    Each prior window is one full pay cycle [payday, next payday - 1] that abuts the next
+    with no overlap or gap (a monthly cycle is a calendar month long, ABU-44, so
+    `last_pay_date` is needed to clamp a 31st payday correctly) — the same stepping the AI-insight trend already walks
     (WHIT-104), extracted here so /breakdown and the insight share one implementation
     (WHIT-68). Both bounds are inclusive, matching the DynamoDB `between` date query.
 
@@ -104,18 +155,23 @@ def nth_prior_cycle_window(cycle_start: str, length: int, n: int) -> tuple[str, 
     """
     if n < 1:
         raise ValueError(f"nth_prior_cycle_window needs n >= 1, got {n}")
-    start = date.fromisoformat(cycle_start)
-    prior_start = start - timedelta(days=n * length)
-    prior_end = start - timedelta(days=(n - 1) * length + 1)
-    return prior_start.isoformat(), prior_end.isoformat()
+    k = cycle_index(last_pay_date, length, date.fromisoformat(cycle_start)) - n
+    return _cycle_window(last_pay_date, length, k)
+
+
+def _cycle_window(last_pay_date: str, length: int, k: int) -> tuple[str, str]:
+    """The k-th full pay cycle [payday_at(k), payday_at(k + 1) - 1], as ISO dates."""
+    start = payday_at(last_pay_date, length, k)
+    end = payday_at(last_pay_date, length, k + 1) - timedelta(days=1)
+    return start.isoformat(), end.isoformat()
 
 
 def completed_cycle_windows(anchor_start: str, current_start: str, length: int,
-                            max_cycles: int) -> list[tuple[str, str]]:
+                            max_cycles: int, last_pay_date: str) -> list[tuple[str, str]]:
     """The FULLY-COMPLETED pay cycles between `anchor_start` (inclusive) and the current
     cycle `current_start` (exclusive), oldest-first, capped to the most recent `max_cycles`.
 
-    Each window is one `length`-day span `[s, s + length - 1]`, abutting the next with no
+    Each window is one full pay cycle, abutting the next with no
     gap or overlap (the same stepping as `nth_prior_cycle_window`), so bucketing a
     transaction by its inclusive date lands it in exactly one. Used by the rollover
     settlement to fold each elapsed cycle's leftover once.
@@ -125,38 +181,37 @@ def completed_cycle_windows(anchor_start: str, current_start: str, length: int,
     the most recent `max_cycles` cycles are returned (older leftovers are dropped, and the
     caller advances its anchor past them — an accepted cold-start limit).
     """
-    anchor = date.fromisoformat(anchor_start)
-    current = date.fromisoformat(current_start)
-    starts = []
-    step = anchor
-    while step < current:
-        starts.append(step)
-        step = step + timedelta(days=length)
-    if len(starts) > max_cycles:
-        starts = starts[-max_cycles:]
-    return [(s.isoformat(), (s + timedelta(days=length - 1)).isoformat()) for s in starts]
+    first = cycle_index(last_pay_date, length, date.fromisoformat(anchor_start))
+    current = cycle_index(last_pay_date, length, date.fromisoformat(current_start))
+    first = max(first, current - max_cycles)
+    return [_cycle_window(last_pay_date, length, k) for k in range(first, current)]
 
 
-def spread_index(spread_from: str, current_start: str, length: int) -> int:
+def spread_index(spread_from: str, current_start: str, length: int, last_pay_date: str) -> int:
     """How many whole pay cycles the current cycle is past a bill spread's anchor cycle:
     0 while still in the cycle the spread was created in, 1 the next cycle, and so on.
 
     A plain, UNCAPPED count — deliberately not `len(completed_cycle_windows(...))`, whose
     `max_cycles` cap truncates the list and would pin the position at the cap, so a plan
     could never be seen to end. `spread_from` is a cycle-aligned start captured at write
-    (like `carryover_from`), so on an unchanged pay cycle the day delta is an exact multiple
-    of `length` and this steps 0, 1, 2, ... with no drift.
+    (like `carryover_from`), so on an unchanged pay cycle this steps 0, 1, 2, ... with no drift.
     """
-    return (date.fromisoformat(current_start) - date.fromisoformat(spread_from)).days // length
+    def index(day: str) -> int:
+        return cycle_index(last_pay_date, length, date.fromisoformat(day))
+    return index(current_start) - index(spread_from)
 
 
 def same_pay_cycle(stored_len, stored_paydate, length: int, last_pay_date: str) -> bool:
     """Whether a plan saved under (stored_len, stored_paydate) sits on the CURRENT pay-cycle grid:
     same length, and the payday moved by a whole number of cycles (re-picking a later or earlier
-    payday on the same schedule is not a change)."""
+    payday on the same schedule is not a change). Monthly: the same day of the month."""
     if stored_paydate is None or int(stored_len) != length:
         return False
-    return (date.fromisoformat(last_pay_date) - date.fromisoformat(stored_paydate)).days % length == 0
+    stored = date.fromisoformat(stored_paydate)
+    current = date.fromisoformat(last_pay_date)
+    if length == MONTHLY_PAY_CYCLE_LENGTH:
+        return stored.day == current.day
+    return (current - stored).days % length == 0
 
 
 def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
@@ -218,7 +273,10 @@ def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: st
     """
     amount = entry["spread_amount"]
     cycles = int(entry["spread_cycles"])
-    elapsed = spread_index(entry["spread_from"], today, int(entry["spread_len"]))
+    stored_len = int(entry["spread_len"])
+    stored_paydate = entry["spread_paydate"]
+    spread_from = snap_to_pay_cycle(entry["spread_from"], stored_len, stored_paydate, today)
+    elapsed = spread_index(spread_from, today, stored_len, stored_paydate)
     if elapsed <= 0:
         return None
     taken_through = min(cycles, elapsed - 1)
@@ -226,7 +284,7 @@ def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: st
     outstanding = amount - taken
     if outstanding == 0:
         return None
-    previous_start = (date.fromisoformat(cycle_start) - timedelta(days=length)).isoformat()
+    previous_start, _ = nth_prior_cycle_window(cycle_start, length, 1, last_pay_date)
     return {
         "spread_amount": outstanding, "spread_cycles": Decimal(1), "spread_from": previous_start,
         "spread_len": Decimal(length), "spread_paydate": last_pay_date,
@@ -245,7 +303,8 @@ def spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str,
     Aligned (the plan was created under the CURRENT pay cycle): index 0 shows the `+amount`
     cushion, cycles 1..N take back a slice each, and past N the plan is finished — nothing
     shown, fields cleared. Alignment is the same length and the payday a whole number of
-    cycles from the stored one (same_pay_cycle), as rollover_windows checks.
+    cycles from the stored one (same_pay_cycle), as rollover_windows checks. An aligned anchor
+    saved on the old 30-day monthly grid is snapped to the nearest payday first (ABU-44).
     Misaligned: the settle plan is computed and then read exactly like an aligned one.
 
     An entry missing any of the five fields (a hand-edited item — every write sets and
@@ -263,7 +322,8 @@ def spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str,
             return None, True, None
         spread_row, _, _ = spread_state(reanchor, cycle_start, length, last_pay_date, today)
         return spread_row, False, reanchor
-    index = spread_index(spread_from, cycle_start, length)
+    spread_from = snap_to_pay_cycle(spread_from, length, last_pay_date, cycle_start)
+    index = spread_index(spread_from, cycle_start, length, last_pay_date)
     if index > cycles:
         return None, True, None
     return {"amount": amount, "cycles": cycles, "index": index,
@@ -587,7 +647,8 @@ def rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: 
     since the stored anchor (oldest-first, capped). `reanchor` is a
     {carryover, carryover_from} payload when the stored anchor is missing or was sealed
     under a different pay-cycle grid (see same_pay_cycle); `windows` is then [] (a
-    changed cycle makes the old windows fictional).
+    changed cycle makes the old windows fictional). An aligned anchor saved on the old 30-day
+    monthly grid is snapped to the nearest payday (ABU-44); the seal then saves the snapped one.
     """
     anchor = entry.get("carryover_from")
     aligned = anchor is not None and same_pay_cycle(
@@ -595,7 +656,8 @@ def rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: 
     if not aligned:
         reanchor = {"carryover": entry.get("carryover", Decimal(0)), "carryover_from": cycle_start}
         return [], reanchor
-    windows = completed_cycle_windows(anchor, cycle_start, length, ROLLOVER_MAX_LOOKBACK_CYCLES)
+    anchor = snap_to_pay_cycle(anchor, length, last_pay_date, cycle_start)
+    windows = completed_cycle_windows(anchor, cycle_start, length, ROLLOVER_MAX_LOOKBACK_CYCLES, last_pay_date)
     return windows, None
 
 
@@ -621,8 +683,7 @@ def rollover_history_view(history: list, sealed: Decimal) -> tuple[list, Decimal
     return cycles, earlier
 
 
-def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
-                  length: int, today: str):
+def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list, today: str):
     """Fold each completed cycle's leftover (target - spend) for one rollover category,
     sealing cycles older than the settle lag into the stored balance.
 
@@ -648,7 +709,7 @@ def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
         if date.fromisoformat(window_end) < lag_cutoff:
             sealed += record["leftover"]
             newly_sealed.insert(0, record)
-            new_anchor = (date.fromisoformat(window_start) + timedelta(days=length)).isoformat()
+            new_anchor = (date.fromisoformat(window_end) + timedelta(days=1)).isoformat()
         else:
             unsealed += record["leftover"]
             settling.insert(0, {**record, "settling": True})

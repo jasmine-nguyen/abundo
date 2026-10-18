@@ -304,6 +304,21 @@ def test_assemble_input_has_spend_budgets_prior_and_no_loan_data(handler):
     assert "loan" not in blob and "balance" not in blob and "mortgage" not in blob
 
 
+def test_assemble_input_monthly_prior_cycle_steps_from_the_stored_payday(handler, monkeypatch):
+    # [A6] (ABU-44) Payday the 31st, today 2026-10-10: this cycle starts on the clamped Sep 30, so
+    # the prior cycle is [Aug 31, Sep 29] — stepped from the stored payday, not from Sep 30 (Aug 30).
+    import spend
+    from datetime import date
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 10, 10))
+
+    model_input, _ = handler.assemble_insight_input(
+        FakeCategoryRepo(), _FakeBudgetRepo(), _WindowKeyedTransactionRepo({}),
+        _FakePayCycleRepo(length=30, last_pay_date="2026-01-31"))
+
+    first_prior = model_input["prior_cycles"][0]
+    assert (first_prior["start"], first_prior["end"]) == ("2026-08-31", "2026-09-29")
+
+
 # Two spend categories that SHARE a display name but differ by id + budget —
 # the case a name-join would collapse.
 _DupNameCategoryRepo = partial(_FakeCategoryRepo, [

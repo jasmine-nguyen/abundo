@@ -461,7 +461,7 @@ def load_chat_data(transaction_repo, category_repo, budget_repo, paycycle_repo) 
     targets = budget_repo.list_budgets()
     window = standing_window(targets, paycycle_repo.get_paycycle())
     cycle_start, length, today = window.cycle_start, window.length, window.today
-    floor = lookback_floor(cycle_start, length, today)
+    floor = lookback_floor(cycle_start, length, window.last_pay_date, today)
     categories = category_repo.list_categories()
     transactions = drop_transfer_rows(
         read_window(transaction_repo, min(floor, window.fetch_start), today), categories
@@ -474,6 +474,7 @@ def load_chat_data(transaction_repo, category_repo, budget_repo, paycycle_repo) 
         budgets=budgets,
         cycle_start=cycle_start,
         length=length,
+        last_pay_date=window.last_pay_date,
         today=today,
         floor=floor,
         transactions=transactions_in_window(transactions, floor, today),

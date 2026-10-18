@@ -1,0 +1,19 @@
+{
+  "_comment": "ABU-44 shared parity fixture: the pay-cycle clock for the same dates on the server (shared/spend.py current_cycle_window + cycle_clock) and the app (src/payCycle.ts cycleClock + nextPayday). Hand-worked. tests/shared/test_monthly_pay_cycle_parity.py and src/__tests__/monthlyPayCycleParity.logic.test.ts both check every case. cycle_start is checked on the server only and next_payday on the app only (each side's own output); days_left and cycle_days on both.",
+  "cases": [
+    {"length": 30, "last_pay_date": "2026-01-15", "today": "2026-01-15", "cycle_start": "2026-01-15", "next_payday": "2026-02-15", "days_left": 31, "cycle_days": 31},
+    {"length": 30, "last_pay_date": "2026-01-15", "today": "2026-02-20", "cycle_start": "2026-02-15", "next_payday": "2026-03-15", "days_left": 23, "cycle_days": 28},
+    {"length": 30, "last_pay_date": "2026-01-15", "today": "2026-06-15", "cycle_start": "2026-06-15", "next_payday": "2026-07-15", "days_left": 30, "cycle_days": 30},
+    {"length": 30, "last_pay_date": "2026-01-15", "today": "2026-10-14", "cycle_start": "2026-09-15", "next_payday": "2026-10-15", "days_left": 1, "cycle_days": 30},
+    {"length": 30, "last_pay_date": "2026-01-15", "today": "2026-12-31", "cycle_start": "2026-12-15", "next_payday": "2027-01-15", "days_left": 15, "cycle_days": 31},
+    {"length": 30, "last_pay_date": "2026-01-31", "today": "2026-02-28", "cycle_start": "2026-02-28", "next_payday": "2026-03-31", "days_left": 31, "cycle_days": 31},
+    {"length": 30, "last_pay_date": "2026-01-31", "today": "2026-04-29", "cycle_start": "2026-03-31", "next_payday": "2026-04-30", "days_left": 1, "cycle_days": 30},
+    {"length": 30, "last_pay_date": "2026-01-31", "today": "2026-04-30", "cycle_start": "2026-04-30", "next_payday": "2026-05-31", "days_left": 31, "cycle_days": 31},
+    {"length": 30, "last_pay_date": "2028-01-29", "today": "2028-02-29", "cycle_start": "2028-02-29", "next_payday": "2028-03-29", "days_left": 29, "cycle_days": 29},
+    {"length": 30, "last_pay_date": "2028-01-30", "today": "2028-03-01", "cycle_start": "2028-02-29", "next_payday": "2028-03-30", "days_left": 29, "cycle_days": 30},
+    {"length": 30, "last_pay_date": "2027-01-29", "today": "2027-02-28", "cycle_start": "2027-02-28", "next_payday": "2027-03-29", "days_left": 29, "cycle_days": 29},
+    {"length": 30, "last_pay_date": "2026-03-31", "today": "2026-01-10", "cycle_start": "2026-01-10", "next_payday": "2026-03-31", "days_left": 30, "cycle_days": 30},
+    {"length": 14, "last_pay_date": "2026-06-06", "today": "2026-06-13", "cycle_start": "2026-06-06", "next_payday": "2026-06-20", "days_left": 7, "cycle_days": 14},
+    {"length": 7, "last_pay_date": "2026-06-06", "today": "2026-06-13", "cycle_start": "2026-06-13", "next_payday": "2026-06-20", "days_left": 7, "cycle_days": 7}
+  ]
+}

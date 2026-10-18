@@ -27,6 +27,7 @@ from iso_date import valid_iso_date
 from repository_category import SEED_CATEGORIES
 from rule_engine import is_unfiled_category
 from spend import (
+    add_months,
     build_category_children,
     contributes_to_budget,
     fold_subtree,
@@ -61,6 +62,7 @@ class ChatData:
     budgets: dict
     cycle_start: str
     length: int
+    last_pay_date: str
     today: str
     floor: str
     transactions: list[dict]
@@ -77,27 +79,24 @@ class ChatData:
         self.children = build_category_children(self.categories)
 
 
-def _shift_month(first: date, months: int) -> date:
-    index = first.year * 12 + first.month - 1 + months
-    return date(index // 12, index % 12 + 1, 1)
-
-
-def lookback_floor(cycle_start: str, length: int, today: str, grace_periods: int = 0) -> str:
+def lookback_floor(cycle_start: str, length: int, last_pay_date: str, today: str,
+                   grace_periods: int = 0) -> str:
     """The earliest date the chat (and the drill-in date range) may reach: the earlier of the
     start of the 12th completed pay cycle back and the 1st of the month 12 months back. Pay
     cycles alone aren't enough — on a weekly cycle 12 cycles is 84 days, too short for
     "last 3 months". `grace_periods` reaches that many cycles/months further back (the drill-in
     passes CHAT_LINK_GRACE_PERIODS so an answer's link survives the floor moving forward)."""
-    cycles_floor, _ = nth_prior_cycle_window(cycle_start, length, CHAT_MAX_LOOKBACK_CYCLES + grace_periods)
+    cycles_floor, _ = nth_prior_cycle_window(cycle_start, length, CHAT_MAX_LOOKBACK_CYCLES + grace_periods,
+                                             last_pay_date)
     this_month = date.fromisoformat(today).replace(day=1)
-    months_floor = _shift_month(this_month, -(CHAT_MAX_LOOKBACK_MONTHS + grace_periods)).isoformat()
+    months_floor = add_months(this_month, -(CHAT_MAX_LOOKBACK_MONTHS + grace_periods)).isoformat()
     return min(cycles_floor, months_floor)
 
 
-def cycle_windows(cycle_start: str, length: int, today: str, n: int,
+def cycle_windows(cycle_start: str, length: int, last_pay_date: str, today: str, n: int,
                   include_current: bool) -> list[tuple[str, str]]:
     """The last `n` completed pay cycles, oldest first, plus the current one if asked."""
-    windows = [nth_prior_cycle_window(cycle_start, length, k) for k in range(n, 0, -1)]
+    windows = [nth_prior_cycle_window(cycle_start, length, k, last_pay_date) for k in range(n, 0, -1)]
     if include_current:
         windows.append((cycle_start, today))
     return windows
@@ -108,8 +107,8 @@ def month_windows(today: str, n: int, include_current: bool) -> list[tuple[str, 
     this_month = date.fromisoformat(today).replace(day=1)
     windows = []
     for back in range(n, 0, -1):
-        start = _shift_month(this_month, -back)
-        end = _shift_month(start, 1) - timedelta(days=1)
+        start = add_months(this_month, -back)
+        end = add_months(start, 1) - timedelta(days=1)
         windows.append((start.isoformat(), end.isoformat()))
     if include_current:
         windows.append((this_month.isoformat(), today))
@@ -195,7 +194,7 @@ def _resolve_period(data: ChatData, filters: dict):
         clamped = last_n != requested
         include_current = bool(spec.get("include_current", False))
         if kind == "pay_cycles":
-            windows = cycle_windows(data.cycle_start, data.length, data.today, last_n, include_current)
+            windows = cycle_windows(data.cycle_start, data.length, data.last_pay_date, data.today, last_n, include_current)
         else:
             windows = month_windows(data.today, last_n, include_current)
 
@@ -388,7 +387,7 @@ def get_budgets(data: ChatData, args: dict) -> dict:
     offset = int(pay_cycle["offset"])
     if not 1 <= offset <= CHAT_MAX_LOOKBACK_CYCLES:
         raise ValueError(f"offset must be 1..{CHAT_MAX_LOOKBACK_CYCLES}")
-    start, end = nth_prior_cycle_window(data.cycle_start, data.length, offset)
+    start, end = nth_prior_cycle_window(data.cycle_start, data.length, offset, data.last_pay_date)
     in_window = transactions_in_window(data.transactions, start, end)
     rows = []
     for category_id, row in data.budgets.items():
@@ -406,7 +405,8 @@ def get_budgets(data: ChatData, args: dict) -> dict:
 def get_pay_cycles(data: ChatData, args: dict) -> list[dict]:
     """The last `last_n` completed pay cycles plus the current one, oldest first."""
     last_n = min(max(int(args.get("last_n") or 6), 1), CHAT_MAX_LOOKBACK_CYCLES)
-    windows = cycle_windows(data.cycle_start, data.length, data.today, last_n, include_current=True)
+    windows = cycle_windows(data.cycle_start, data.length, data.last_pay_date, data.today, last_n,
+                            include_current=True)
     return [{"start": start, "end": end, "is_current": start == data.cycle_start}
             for start, end in windows]
 

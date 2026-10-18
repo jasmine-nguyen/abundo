@@ -169,7 +169,7 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
                 rollover_settlements[cat_id] = window.reanchor_by_id[cat_id]
             else:
                 carryover, cycles, earlier, persist = seal_rollover(
-                    entry, window.windows_by_id[cat_id], ids_by_target[cat_id], transactions, length, today
+                    entry, window.windows_by_id[cat_id], ids_by_target[cat_id], transactions, today
                 )
                 if persist is not None:
                     rollover_settlements[cat_id] = persist

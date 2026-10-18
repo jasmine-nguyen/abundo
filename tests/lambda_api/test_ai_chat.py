@@ -45,8 +45,9 @@ SECRETS = ("4821", "98765432", "12345678", "062-123", "8765.43", "4444", "Jas Ev
 def _data(ai_chat, transactions=SECRET_ROWS):
     import chat_tools
     return chat_tools.ChatData(
-        categories=CATEGORIES, budgets={}, cycle_start=CYCLE_START, length=14, today=TODAY,
-        floor=chat_tools.lookback_floor(CYCLE_START, 14, TODAY), transactions=list(transactions))
+        categories=CATEGORIES, budgets={}, cycle_start=CYCLE_START, length=14, last_pay_date=CYCLE_START,
+        today=TODAY, floor=chat_tools.lookback_floor(CYCLE_START, 14, CYCLE_START, TODAY),
+        transactions=list(transactions))
 
 
 AVG_QUERY = {"filters": {"category_ids": ["eatingout"], "pay_cycles": {"last_n": 3}}, "metric": "avg"}
@@ -408,12 +409,25 @@ def _groceries_row(txn_id, amount, day):
             "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
 
 
-def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo, categories=CATEGORIES):
+def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo, categories=CATEGORIES,
+                    pay_cycle=None, today=TODAY):
     import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
-    return ai_chat.load_chat_data(
-        transaction_repo, _FakeCategoryRepo(categories), budget_repo,
-        _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date.fromisoformat(today))
+    pay_cycle = pay_cycle or _FakePayCycleRepo(length=14, last_pay_date="2026-09-10")
+    return ai_chat.load_chat_data(transaction_repo, _FakeCategoryRepo(categories), budget_repo, pay_cycle)
+
+
+def test_load_chat_data_steps_monthly_cycles_from_the_stored_payday(ai_chat, monkeypatch):
+    # [A4] (ABU-44) Payday the 31st, today Oct 10: this cycle starts on the clamped Sep 30. The
+    # prior cycle starts Aug 31 (stepped from the stored payday), not Aug 30 (from the cycle start).
+    import chat_tools
+    data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo([]), _FakeBudgetRepo({}),
+                           pay_cycle=_FakePayCycleRepo(length=30, last_pay_date="2026-01-31"), today="2026-10-10")
+
+    assert chat_tools.get_pay_cycles(data, {"last_n": 1}) == [
+        {"start": "2026-08-31", "end": "2026-09-29", "is_current": False},
+        {"start": "2026-09-30", "end": "2026-10-10", "is_current": True},
+    ]
 
 
 def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch):
@@ -428,7 +442,7 @@ def test_rollover_history_older_than_the_chat_floor_still_counts(ai_chat, monkey
     # WHIT-622: if the chat's floor ever sits later than the rollover read start, the read still
     # reaches back for the carryover, but the chat's own transactions stop at the floor.
     # Prior cycle 2026-08-27..09-09 spent $60 of $100 → carryover $40.
-    monkeypatch.setattr(ai_chat, "lookback_floor", lambda cycle_start, length, today: cycle_start)
+    monkeypatch.setattr(ai_chat, "lookback_floor", lambda cycle_start, length, last_pay_date, today: cycle_start)
     rows = [_groceries_row("prior", "-60", "2026-08-30"), _groceries_row("now", "-25", "2026-09-15")]
     data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo(rows), RolloverBudgetRepo())
 

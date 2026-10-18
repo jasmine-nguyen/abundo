@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, budgetEditInfo } from '../../src/context';
-import { cycleName } from '../../src/payCycle';
 import { useBudgetsScreenData } from '../../src/queries';
 import { queryClient } from '../../src/queryClient';
 import { Header } from '../../src/components/Header';
@@ -19,8 +18,8 @@ export default function BudgetEdit() {
   const insets = useSafeAreaInsets();
   const { categoryId } = useLocalSearchParams<{ categoryId: string; from?: string }>();
   // WHIT-203: the taxonomy + budgets + cycle name feed budgetEditInfo from the query layer.
-  const { budgets, category, cycleLen } = useBudgetsScreenData();
-  const info = budgetEditInfo({ budgets, category, cycleName: cycleName(cycleLen) }, categoryId);
+  const { budgets, category, cycleName } = useBudgetsScreenData();
+  const info = budgetEditInfo({ budgets, category, cycleName }, categoryId);
   const [input, setInput] = useState(info.existing ? String(info.existing.budget) : '');
   // Rollover toggle, seeded from the stored flag. Like the amount, `budgets` may resolve
   // after mount (cold cache), so re-seed when the existing budget arrives.

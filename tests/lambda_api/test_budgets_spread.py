@@ -25,9 +25,9 @@ from _transaction_range_fakes import _QueuedTransactionRepo
 
 pytestmark = pytest.mark.usefixtures("fixed_window")
 
-# Same fixed grid as the rollover suite: monthly, cycle_start 2026-08-06, payday grid from
-# 2026-01-01. Anchors used below: 2026-08-06 (this cycle), 2026-07-07 (1 back),
-# 2026-05-08 (3 back), 2026-04-08 (4 back), 2026-03-09 (5 back).
+# Same fixed grid as the rollover suite: monthly on the 6th, cycle_start 2026-08-06.
+# Anchors used below: 2026-08-06 (this cycle), 2026-07-06 (1 back),
+# 2026-04-06 (4 back), 2026-03-06 (5 back).
 
 BILL = Decimal("1390.91")   # over 4 cycles: slices 347.73, 347.73, 347.73, 347.72
 
@@ -69,7 +69,7 @@ def test_the_anchor_cycle_carries_the_full_bill_as_a_cushion(handler):
 def test_the_last_payback_cycle_is_still_part_of_the_plan(handler):
     # index == cycles: the final (odd-cent) slice is taken and the plan is NOT yet cleared.
     # FAIL-ON-REVERT for an off-by-one that would finish the plan a cycle early.
-    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-04-08")})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-04-06")})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"]["index"] == 4
@@ -80,7 +80,7 @@ def test_the_last_payback_cycle_is_still_part_of_the_plan(handler):
 def test_a_finished_plan_shows_nothing_and_is_cleared_best_effort(handler):
     # index == cycles + 1: every slice has been taken. The row is byte-identical to a plain
     # budget (no `spread` key) and the stale fields are cleared on this read.
-    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-03-09")})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-03-06")})
     result = _list(handler, budget_repo)
 
     assert result["insurance"] == {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
@@ -119,7 +119,7 @@ def test_a_pay_cycle_change_settles_the_outstanding_balance_over_this_cycle_then
     assert original - taken_before + result["insurance"]["spread"]["adjustment"] == 0
     # It is PERSISTED as a fresh one-cycle plan anchored one cycle back on the new grid —
     # not shown once and cleared. FAIL-ON-REVERT for the settle surviving past one read.
-    assert budget_repo.set_spread_calls == [("insurance", Decimal("50.00"), 1, "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.set_spread_calls == [("insurance", Decimal("50.00"), 1, "2026-07-06", LENGTH, PAYDATE)]
     assert budget_repo.clear_spread_calls == []
 
     second_read = _list(handler, budget_repo)   # same cycle, plan now re-anchored + aligned
@@ -128,55 +128,55 @@ def test_a_pay_cycle_change_settles_the_outstanding_balance_over_this_cycle_then
 
     # Next cycle on the new grid: the settle plan is at index 2 of 1 -> finished, nothing
     # shown, cleared. The settle never lingers past the cycle it was owed in.
-    pin_cycle_window(handler, monkeypatch, "2026-09-05", "2026-09-06")
+    pin_cycle_window(handler, monkeypatch, "2026-09-06", "2026-09-06")
     third_read = _list(handler, budget_repo)
     assert "spread" not in third_read["insurance"]
     assert budget_repo.clear_spread_calls == ["insurance"]
 
 
 def test_taken_slices_are_measured_by_what_was_shown_under_the_old_grid_not_the_new_start(handler):
-    # The bill (1390.91 over 4) was anchored 2026-06-09 under a grid paid 2026-01-10: cycles
-    # 06-09, 07-09, 08-08. By today (08-10) the user has been shown slice 1 (-347.73) for
-    # the WHOLE 07-09..08-07 cycle and is on slice 2. They now correct the payday to 01-01,
-    # so the new cycle start is 08-06 — a day inside that completed old cycle. Counting
+    # The bill (1390.91 over 4) was anchored 2026-06-10 under a grid paid the 10th: cycles
+    # 06-10, 07-10, 08-10. By today (08-10) the user has been shown slice 1 (-347.73) for
+    # the WHOLE 07-10..08-09 cycle and is on slice 2. They now correct the payday to the 6th,
+    # so the new cycle start is 08-06 — inside that completed old cycle. Counting
     # taken slices against the new start would un-take slice 1 and settle the whole bill
     # (charging slice 1 twice). Measured against today under the old grid: 1 taken, so
     # outstanding = 1390.91 - 347.73 = 1043.18. FAIL-ON-REVERT for using today, not cycle_start.
-    entry = _entry(spread_from="2026-06-09")
+    entry = _entry(spread_from="2026-06-10")
     entry["spread_paydate"] = "2026-01-10"
     budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"] == {
         "amount": Decimal("1043.18"), "cycles": 1, "index": 1, "adjustment": Decimal("-1043.18")}
-    assert budget_repo.set_spread_calls == [("insurance", Decimal("1043.18"), 1, "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.set_spread_calls == [("insurance", Decimal("1043.18"), 1, "2026-07-06", LENGTH, PAYDATE)]
     import spend
     slice_one = -spend.spread_adjustment(BILL, 4, 1)
     assert BILL - slice_one + result["insurance"]["spread"]["adjustment"] == 0
 
 
 def test_a_second_pay_cycle_change_re_settles_the_settle_plan_instead_of_forgiving_it(handler):
-    # A persisted settle plan ($50 over 1, anchored 2026-07-09 under a grid paid 01-03) is hit
-    # by ANOTHER payday fix (to 01-01, cycle start 08-06 — before its anchor). Its index
+    # A persisted settle plan ($50 over 1, anchored 2026-07-03 under a grid paid the 3rd) is hit
+    # by ANOTHER payday fix (to the 6th, cycle start 08-06). Its index
     # under its own grid today is 1 (owed now, not yet shown for a full cycle), so it is
     # re-settled as -50 on the new grid — never treated as "still in the anchor cycle" and
     # forgiven. FAIL-ON-REVERT for the same today-vs-cycle_start measure.
-    entry = _entry(spread_from="2026-07-09", amount=Decimal("50.00"), cycles=1)
+    entry = _entry(spread_from="2026-07-03", amount=Decimal("50.00"), cycles=1)
     entry["spread_paydate"] = "2026-01-03"
     budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"]["adjustment"] == Decimal("-50.00")
-    assert budget_repo.set_spread_calls == [("insurance", Decimal("50.00"), 1, "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.set_spread_calls == [("insurance", Decimal("50.00"), 1, "2026-07-06", LENGTH, PAYDATE)]
     assert budget_repo.clear_spread_calls == []
 
 
 def test_a_payday_moved_backwards_within_the_anchor_cycle_is_not_a_debt(handler):
     # The user set their payday a few days EARLIER while still in the cycle the plan was
-    # created in (anchor 2026-08-08, today 08-10): under its own grid the plan is still at
+    # created in (anchor 2026-08-03, today 08-10): under its own grid the plan is still at
     # index 0, so the cushion and the settle cancel — never "claw the whole bill back this
     # cycle". The new cycle_start (08-06) sitting BEFORE the anchor must not matter.
-    entry = _entry(spread_from="2026-08-08")
+    entry = _entry(spread_from="2026-08-03")
     entry["spread_paydate"] = "2026-01-03"
     budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
@@ -199,7 +199,7 @@ def test_a_pay_cycle_change_after_every_slice_was_taken_owes_nothing(handler):
 def test_a_payday_change_alone_also_counts_as_a_cycle_change(handler):
     # Same length, different payday: the grid moved, so the plan settles + closes rather
     # than reading slices off a fictional grid (mirrors the rollover alignment rule).
-    entry = _entry(spread_from="2026-07-07")
+    entry = _entry(spread_from="2026-07-03")
     entry["spread_paydate"] = "2026-01-03"
     budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
@@ -207,16 +207,42 @@ def test_a_payday_change_alone_also_counts_as_a_cycle_change(handler):
     # One old cycle elapsed -> no slice was ever fully taken, so the WHOLE bill settles now,
     # re-saved as a one-cycle plan on the new grid.
     assert result["insurance"]["spread"] == {"amount": BILL, "cycles": 1, "index": 1, "adjustment": -BILL}
-    assert budget_repo.set_spread_calls == [("insurance", BILL, 1, "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.set_spread_calls == [("insurance", BILL, 1, "2026-07-06", LENGTH, PAYDATE)]
     assert budget_repo.clear_spread_calls == []
     # [A2] Nothing changed during the read, so the settle really lands (the guard only skips stale writes).
     assert stored_budgets(budget_repo)["insurance"]["spread_paydate"] == PAYDATE
 
 
+def test_an_old_30_day_grid_anchor_keeps_its_slice_on_the_monthly_grid(handler):
+    # (ABU-44) Saved when monthly stepped 30 days, the anchor 2026-06-03 now sits 3 days before
+    # a payday. It snaps to 2026-06-06 and reads index 2 with the same slice: no settle, no lump sum.
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-06-03")})
+    result = _list(handler, budget_repo)
+
+    assert result["insurance"]["spread"] == {
+        "amount": BILL, "cycles": 4, "index": 2, "adjustment": Decimal("-347.73")}
+    assert budget_repo.set_spread_calls == []
+    assert budget_repo.clear_spread_calls == []
+
+
+def test_a_cycle_change_snaps_an_old_30_day_anchor_onto_its_own_grid_before_counting(handler):
+    # (ABU-44) A monthly plan on the 15th saved on the old 30-day grid at 2026-06-12, 3 days
+    # before a payday, last shown at index 1 (today 08-10 is in the 07-15 cycle). The user moves
+    # to fortnightly. Snapped to 06-15 it is still index 1, so no slice was taken for a full
+    # cycle: the whole bill settles. Without the snap 06-12 reads index 2 and charges slice 1 twice.
+    entry = _entry(spread_from="2026-06-12")
+    entry["spread_paydate"] = "2026-01-15"
+    budget_repo = recording_budget_repo({"insurance": entry})
+    handler.list_budgets(budget_repo, _QueuedTransactionRepo(), _FakePayCycleRepo(14, "2026-07-23"),
+                         _SpendCategoryRepo())
+
+    assert budget_repo.set_spread_calls == [("insurance", BILL, 1, "2026-07-23", 14, "2026-07-23")]
+
+
 def test_a_spread_deleted_during_the_read_stays_deleted(handler):
     # (ABU-88) The read snapshots a spread that needs settling after a payday change; before it
     # saves the settle, the user deletes the spread. The read's settle must not bring it back.
-    entry = _entry(spread_from="2026-07-07")
+    entry = _entry(spread_from="2026-07-03")
     entry["spread_paydate"] = "2026-01-03"
     budget_repo = recording_budget_repo({"insurance": entry})
     snapshot_read = budget_repo.list_budgets
@@ -269,8 +295,8 @@ def test_one_failing_clear_does_not_skip_the_other_finished_spreads(handler):
     # Two finished plans on one read; the first id's clear raises. The second must still be
     # attempted (each write is its own best-effort try), and the read succeeds.
     categories = _spend_cat("a") + _spend_cat("b")
-    budget_repo = recording_budget_repo({"a": _entry(spread_from="2026-03-09"),
-                                      "b": _entry(spread_from="2026-03-09")})
+    budget_repo = recording_budget_repo({"a": _entry(spread_from="2026-03-06"),
+                                      "b": _entry(spread_from="2026-03-06")})
     budget_repo._table.before_next_write(_fail_write)   # the first clear ("a") fails
 
     result = _list(handler, budget_repo, categories=categories)

@@ -304,6 +304,14 @@ describe('paydaysUntil — phases/lengths/boundaries', () => {
   it('[A23] target BEFORE last_pay_date -> 0 (no negative count)', () => {
     expect(paydaysUntil(W, '2026-06-20', TODAY)).toBe(0);
   });
+
+  it.each([
+    ['2026-01-31', new Date(2026, 0, 31), '2026-04-30', 3], // Feb 28, Mar 31, Apr 30
+    ['2028-01-31', new Date(2028, 0, 31), '2028-02-29', 1], // leap-year Feb 29 is a payday
+    ['2028-01-31', new Date(2028, 0, 31), '2028-02-28', 0],
+  ])('monthly (ABU-44) counts calendar-month paydays: payday %s', (last_pay_date, today, target, n) => {
+    expect(paydaysUntil({ length: 30, last_pay_date }, target, today)).toBe(n);
+  });
 });
 
 describe('balanceGoalView — sign/source matrix', () => {

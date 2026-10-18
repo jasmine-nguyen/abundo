@@ -1179,6 +1179,9 @@ export interface PayCycle {
   // client prefers this over its own cycleClock so the countdown can't drift a day at the
   // UTC/Melbourne seam. Optional: absent from an older server / cold cache → cycleClock fallback.
   days_left?: number;
+  // This cycle's real length in days, from the same server clock (a monthly cycle is 28-31 days,
+  // ABU-44). Optional like days_left: absent → cycleClock fallback.
+  cycle_days?: number;
 }
 
 /**
