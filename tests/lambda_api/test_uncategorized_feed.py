@@ -17,6 +17,7 @@ from _feed_fakes import (
     uncategorized_feed_event,
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, real_repos, _row, date_reads,
 )
+from _transaction_range_fakes import _AccountPagesTransactionRepo
 
 
 def _drain(handler, repo, category_repo, limit=None):
@@ -186,6 +187,7 @@ def test_page_stops_at_target_and_resumes_gap_free(handler, monkeypatch):
     )
     assert [t["transaction_id"] for t in first["transactions"]] == ["u6", "u5"]
     assert first["nextCursor"] is not None
+    assert [read for read in date_reads(table) if read[0] == SPENDING] == [(SPENDING, None, None, 3, None)]
 
     drained = _drain(handler, repo, FakeCategoryRepo(set()), limit=2)
     ids = [t["transaction_id"] for t in drained]
@@ -221,3 +223,38 @@ def test_one_load_more_reads_each_row_at_most_once(handler):
     assert len(reads) == len(set(reads)), "a database page was read twice in one request"
     pages_per_account = math.ceil((filed_per_account + 2) / handler.MAX_PAGE_SIZE) + 1
     assert len(reads) <= 4 * pages_per_account
+
+
+# --- edges of the shared walker ------------------------------------------------
+
+
+@pytest.mark.parametrize("filed_before, listed", [(4, True), (5, False)])
+def test_scan_cap_counts_rows_exactly(handler, monkeypatch, filed_before, listed):
+    # [A2] A cap of 5 rows: an unfiled row that is the 5th row scanned is returned; the 6th is not
+    # (the next Load More finds it).
+    monkeypatch.setattr(handler, "_MAX_UNCATEGORIZED_SCAN_ROWS", 5)
+    rows = [_row(SPENDING, f"2026-06-{20 - i:02d}", f"f{i}", category="groceries")
+            for i in range(filed_before)]
+    rows.append(_row(SPENDING, "2026-01-01", "u", category=None))
+    table, repo, _ = real_repos({SPENDING: rows})
+
+    body = json.loads(handler.get_uncategorized_feed(
+        uncategorized_feed_event({"limit": "5"}), repo, FakeCategoryRepo({"groceries"}))["body"])
+
+    assert [t["transaction_id"] for t in body["transactions"]] == (["u"] if listed else [])
+    assert (body["nextCursor"] is None) == listed
+
+
+def test_empty_database_page_with_a_cursor_is_read_past_before_picking(handler):
+    # [A1] DynamoDB can return no rows but a LastEvaluatedKey (its 1MB page). The walker must
+    # read on before picking, or an older row from another account jumps ahead of a newer one.
+    key = {"account_id": SPENDING, "date": "2026-07-20", "pk": f"ACCOUNT#{SPENDING}", "sk": "TXN#x"}
+    repo = _AccountPagesTransactionRepo({
+        ANZ: [([_row(ANZ, "2026-07-01", "a_old", category=None)], None)],
+        SPENDING: [([], key), ([_row(SPENDING, "2026-07-10", "s_new", category=None)], None)],
+    })
+
+    body = json.loads(handler.get_uncategorized_feed(
+        uncategorized_feed_event({"limit": "1"}), repo, FakeCategoryRepo(set()))["body"])
+
+    assert [t["transaction_id"] for t in body["transactions"]] == ["s_new"]
