@@ -10,7 +10,8 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
 import { getAuthToken } from '../auth';
-import { createCategory, ApiError } from '../api';
+import { createCategory } from '../api';
+import { ApiError } from '../apiError';
 import { makeQueryClient } from '../queryClient';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;

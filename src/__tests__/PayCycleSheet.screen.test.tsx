@@ -18,6 +18,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { renderedPickerProps } from './support/mockDatePicker';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -69,4 +70,10 @@ it('picking a date calls setPayday with the ISO date (via the onChange event,dat
   // The mocked picker fires the real onChange({type:'set'}, Date(2026-06-20)).
   fireEvent.press(screen.getByTestId('mock-datepicker'));
   expect(fns.setPayday).toHaveBeenCalledWith('2026-06-20');
+});
+
+// [A1] A payday is never in the future: the sheet must cap the shared picker at today.
+it('caps the payday picker at today', async () => {
+  await openPayCycle(14);
+  expect((renderedPickerProps().maximumDate as Date).toDateString()).toBe(new Date().toDateString());
 });
