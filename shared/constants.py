@@ -74,6 +74,9 @@ EVENT_MARKER_TTL_SECONDS = 30 * 24 * 60 * 60
 # Maximum number of items requested per DynamoDB query page.
 MAX_PAGE_SIZE = 100
 
+# Parallel workers for a batch category update; matches botocore's default max_pool_connections.
+BATCH_CATEGORY_WORKERS = 10
+
 # Page ceiling for one account's date-range read. 1000 × MAX_PAGE_SIZE is far beyond any
 # real window, so hitting it means the cursor isn't advancing.
 DATE_RANGE_MAX_PAGES = 1000

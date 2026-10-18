@@ -320,7 +320,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
       expect(foodList()).toEqual([]);
       expect(sentBodies('/transactions')).toEqual([{
-        updates: [{ id: 't1', category: 'transport' }, { id: 't2', category: 'transport' }],
+        updates: [{ id: 't1', category: 'transport', account_id: 'a1' }, { id: 't2', category: 'transport', account_id: 'a1' }],
       }]);
     });
 

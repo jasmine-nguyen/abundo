@@ -5,6 +5,8 @@ and _Field conditions installed in conftest.py.
 """
 
 import json
+import threading
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -346,6 +348,7 @@ def test_batch_updates_every_row_and_reports_updated(repo):
     ]
     assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
     assert repo._table.store[("ACCOUNT#a", "TXN#t2")]["category"] == "groceries"
+    assert repo._table.query_calls == 2
 
 
 def test_batch_unknown_id_is_not_found_others_still_written(repo):
@@ -395,6 +398,60 @@ def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, da
 
     with pytest.raises(database_error):
         repo.update_transaction_categories([{"id": "t1", "category": "coffee"}])
+
+
+def test_batch_with_account_writes_in_parallel_without_the_index_lookup(repo):
+    # ABU-57: with each charge's account the keys are built directly (no index query),
+    # and the writes overlap — the barrier only opens when two writes are in flight at once.
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1", "category": "OLD"},
+        ("ACCOUNT#b", "TXN#t2"): {"pk": "ACCOUNT#b", "sk": "TXN#t2", "transaction_id": "t2", "category": "OLD"},
+    }
+    barrier = threading.Barrier(2, timeout=2)
+    repo._table.before_write(lambda key, table: barrier.wait())
+
+    results = repo.update_transaction_categories([
+        {"id": "t1", "category": "coffee", "account_id": "a"},
+        {"id": "t2", "category": "groceries", "account_id": "b"},
+    ])
+
+    assert results == [
+        {"id": "t1", "status": "updated"},
+        {"id": "t2", "status": "updated"},
+    ]
+    assert repo._table.query_calls == 0
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
+    assert repo._table.store[("ACCOUNT#b", "TXN#t2")]["category"] == "groceries"
+
+
+def test_batch_wrong_account_falls_back_to_lookup_without_creating_a_row(repo):
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1", "category": "OLD"},
+    }
+
+    results = repo.update_transaction_categories([{"id": "t1", "category": "coffee", "account_id": "wrong"}])
+
+    assert results == [{"id": "t1", "status": "updated"}]
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
+    assert list(repo._table.store) == [("ACCOUNT#a", "TXN#t1")]
+
+
+def test_batch_real_error_cancels_queued_updates(repo, database_error):
+    # The first write fails at once while the others are slowed, so without cancelling
+    # the queue every one of the 30 writes would still run after the error.
+    repo._table.store = {
+        ("ACCOUNT#a", f"TXN#t{n}"): {"pk": "ACCOUNT#a", "sk": f"TXN#t{n}", "transaction_id": f"t{n}"}
+        for n in range(30)
+    }
+    repo._table.fail("update_item", when=lambda key: key["sk"] == "TXN#t0")
+    repo._table.before_write(lambda key, table: key["sk"] != "TXN#t0" and time.sleep(0.05))
+
+    with pytest.raises(database_error):
+        repo.update_transaction_categories([
+            {"id": f"t{n}", "category": "coffee", "account_id": "a"} for n in range(30)
+        ])
+
+    assert len(repo._table.update_calls) < 30
 
 
 def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeypatch):

@@ -561,7 +561,9 @@ def delete_transaction(event: dict, repo: TransactionRepository) -> dict:
 def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:
     """PATCH /transactions — set the category on many transactions in one request.
 
-    Body: {"updates": [{"id": "<txn id>", "category": "<non-empty string>"}, ...]}.
+    Body: {"updates": [{"id": "<txn id>", "category": "<non-empty string>",
+    "account_id"?: "<non-empty string>"}, ...]}. The optional account_id lets the
+    repository skip the id-index lookup.
     This exists so the "All from this merchant" sweep persists in ONE round-trip
     instead of N single PATCHes. Each update is applied INDEPENDENTLY (best-effort):
     the response is {"results": [{"id", "status"}, ...]} where status is "updated"
@@ -588,6 +590,10 @@ def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:
         category = item.get("category")
         if not isinstance(category, str) or not category.strip():
             return _json_response(400, {"error": "category is required"})
+        if "account_id" in item:
+            account_id = item["account_id"]
+            if not isinstance(account_id, str) or not account_id.strip():
+                return _json_response(400, {"error": "account_id must be a non-empty string"})
 
     results = repo.update_transaction_categories(updates)
     return _json_response(200, {"results": results})
