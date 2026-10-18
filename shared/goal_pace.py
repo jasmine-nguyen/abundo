@@ -24,11 +24,10 @@ def paydays_until(length: int, last_pay_date: str, target_date: str, today: date
     if length <= 0:
         return 0
     try:
-        date.fromisoformat(last_pay_date)
         target = date.fromisoformat(target_date)
+        return max(0, cycle_index(last_pay_date, length, target) - cycle_index(last_pay_date, length, today))
     except ValueError:
         return 0
-    return max(0, cycle_index(last_pay_date, length, target) - cycle_index(last_pay_date, length, today))
 
 
 def goal_pace(

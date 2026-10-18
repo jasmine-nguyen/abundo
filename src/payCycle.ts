@@ -17,12 +17,12 @@ export function paydaysPerYear(length: number): number {
 
 // The stored length that means "monthly" (ABU-44): it steps by calendar month, not 30 days.
 // Mirrors MONTHLY_PAY_CYCLE_LENGTH in shared/constants.py.
-export const MONTHLY_CYCLE_LENGTH = 30;
+const MONTHLY_CYCLE_LENGTH = 30;
 
 // The k-th payday from last_pay_date (k may be negative), as a UTC-day timestamp. Mirrors the
 // server's payday_at: monthly steps by calendar month from last_pay_date's own day, clamped to the
 // month's last day (a 31st payday goes Feb 28, Mar 31, Apr 30); other lengths step fixed days.
-export function paydayAtMs(payCycle: PayCycle, k: number): number {
+function paydayAtMs(payCycle: PayCycle, k: number): number {
   const pay = isoToUtcDayMs(payCycle.last_pay_date);
   if (payCycle.length !== MONTHLY_CYCLE_LENGTH) return pay + k * payCycle.length * MS_PER_DAY;
   const anchor = new Date(pay);
@@ -97,8 +97,9 @@ export function cycleClockView(
 ): { cycleLen: number; daysLeft: number } {
   // Clamp to [0, cycleLen] like cycleClock does — the server path bypasses cycleClock's own
   // clamp, so a corrupt/older cache value can't drive elapsedFrac out of [0,1] (negative bars).
-  const cycleLen = payCycle.cycle_days ?? cycleClock(payCycle).cycleLen;
-  const daysLeft = payCycle.days_left ?? cycleClock(payCycle).daysLeft;
+  const fallback = cycleClock(payCycle);
+  const cycleLen = payCycle.cycle_days ?? fallback.cycleLen;
+  const daysLeft = payCycle.days_left ?? fallback.daysLeft;
   return { cycleLen, daysLeft: Math.max(0, Math.min(cycleLen, daysLeft)) };
 }
 
