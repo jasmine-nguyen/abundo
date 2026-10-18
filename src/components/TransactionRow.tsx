@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { C, FONT, tint, PRESSED } from '../theme';
@@ -13,12 +14,16 @@ import type { Transaction, Category } from '../types';
 // the trailing chevron (its own Pressable) also opens the detail page, as a hint of where taps go.
 // WHIT-291: in the Transactions selection mode (`selectable`), the row is a checkbox instead —
 // the whole row toggles selection, and the single-tap categorise + detail chevron are suppressed.
-export function TransactionRow({ t, category, selectable = false, selected = false, onToggleSelect }: {
+// ABU-58: memoised, so a screen redraw (a search keystroke, a Select-mode tick) skips rows whose
+// props didn't change. Callers pass a stable onToggleSelect; it receives the row's transaction id.
+export const TransactionRow = memo(TransactionRowView);
+
+function TransactionRowView({ t, category, selectable = false, selected = false, onToggleSelect }: {
   t: Transaction;
   category: (id: string | null) => Category | undefined;
   selectable?: boolean;
   selected?: boolean;
-  onToggleSelect?: () => void;
+  onToggleSelect?: (transactionId: string) => void;
 }) {
   const s = useAppContext();
   const router = useRouter();
@@ -30,7 +35,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
   );
   const openDetail = () => router.push(`/transaction/${t.transaction_id}`);
   const onPress = () => {
-    if (selectable) return onToggleSelect?.();
+    if (selectable) return onToggleSelect?.(t.transaction_id);
     if (v.tappable) return s.openPicker(t.transaction_id);
     openDetail();
   };
@@ -38,7 +43,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
     <View style={[styles.row, selectable && selected && styles.rowSelected]}>
       {selectable && (
         <Pressable
-          onPress={onToggleSelect}
+          onPress={() => onToggleSelect?.(t.transaction_id)}
           hitSlop={6}
           accessibilityRole="checkbox"
           accessibilityState={{ checked: selected }}
