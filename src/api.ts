@@ -3,9 +3,6 @@ import { ApiError } from "./apiError";
 import { getAuthToken } from "./auth";
 import { withBodyTimeout } from "./httpTimeout";
 
-// Re-exported for the api-level tests, which assert the thrown shape alongside the fetchers.
-// Production callers import it from ./apiError directly.
-export { ApiError } from "./apiError";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**

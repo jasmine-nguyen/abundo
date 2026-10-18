@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform, ActivityIndicator, StyleProp, ViewStyle } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
@@ -15,12 +14,9 @@ import { useInFlightGuard } from '../hooks/useInFlightGuard';
 import { useTransactionResolver, useCategories, useRulesScreenData, useRecentTransactionsScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants, useFilingSuggestions } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
-// The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
-// date components (not UTC) so the calendar and label show the day the user picked —
-// no midnight-timezone drift. Shared with the loan form's goal-date picker (WHIT-126).
-import { parseISODate, toISODate, formatDayMonthYear, formatTimeOfDay } from '../dateutil';
+import { toISODate, formatDayMonthYear, formatTimeOfDay } from '../dateutil';
 import { isBankSyncBehind } from './ListStates';
-import { useNativeDate } from './NativeDateField';
+import { NativeDateField } from './NativeDateField';
 import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
 import { useSheetDraft } from '../hooks/useSheetDraft';
@@ -740,10 +736,6 @@ function PayCycleSheet() {
   // here immediately.
   const { payCycle } = usePayCycle();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
-  // iOS shows a COMPACT date pill inline; Android opens the modal dialog off a row.
-  // The pick-vs-dismiss + arg-extraction quirk lives in the shared hook (WHIT-255).
-  const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => s.setPayday(iso));
-
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
 
@@ -769,37 +761,9 @@ function PayCycleSheet() {
 
       <Text style={styles.cycleSectionLabel}>Last payday</Text>
       <Text style={styles.cycleSectionHint}>The budget window resets on this date — set it to your (or your partner's) actual last pay, including any public-holiday shift.</Text>
-      {isIOS ? (
-        <View style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
-          <Text style={[styles.cycleText, { color: C.textMid }]}>Set date</Text>
-          <DateTimePicker
-            value={parseISODate(payCycle.last_pay_date)}
-            mode="date"
-            display="compact"          // small native date pill, not the big inline grid
-            maximumDate={today}
-            themeVariant="dark"        // light text on the dark sheet
-            accentColor={C.accent}     // selected day + popover accent match the palette
-            onChange={commit}
-          />
-        </View>
-      ) : (
-        <Pressable
-          onPress={openPicker}
-          style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
-        >
-          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(payCycle.last_pay_date)}</Text>
-          <Glyph name="calendar" size={18} color={C.textDim} />
-        </Pressable>
-      )}
-      {!isIOS && showPicker && (
-        <DateTimePicker
-          value={parseISODate(payCycle.last_pay_date)}
-          mode="date"
-          display="default"
-          maximumDate={today}
-          onChange={commit}
-        />
-      )}
+      <View style={{ marginTop: 10 }}>
+        <NativeDateField value={payCycle.last_pay_date} onChange={(iso) => { if (iso) s.setPayday(iso); }} maximumDate={today} alwaysShowPillIOS />
+      </View>
 
       <SheetButton primary label="Done" onPress={() => s.setSheet(null)} style={{ marginTop: 16 }} />
     </View>
@@ -865,7 +829,6 @@ function GoalBalanceSheet() {
     if (prev.asOf === value) return prev;
     return { ...prev, asOf: value };
   });
-  const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => setAsOf(iso));
   const [saving, setSaving] = useState(false);
   const runSave = useInFlightGuard();
 
@@ -910,38 +873,9 @@ function GoalBalanceSheet() {
       />
 
       <Text style={[styles.fieldLabel, { marginTop: 14 }]}>AS OF</Text>
-      {isIOS ? (
-        <View style={[styles.cycleRow, { marginTop: 6, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
-          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(asOf)}</Text>
-          <DateTimePicker
-            value={parseISODate(asOf)}
-            mode="date"
-            display="compact"
-            maximumDate={today}
-            themeVariant="dark"
-            accentColor={C.accent}
-            onChange={commit}
-          />
-        </View>
-      ) : (
-        <Pressable
-          testID="goal-asof-open"
-          onPress={openPicker}
-          style={[styles.cycleRow, { marginTop: 6, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
-        >
-          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(asOf)}</Text>
-          <Glyph name="calendar" size={18} color={C.textDim} />
-        </Pressable>
-      )}
-      {!isIOS && showPicker && (
-        <DateTimePicker
-          value={parseISODate(asOf)}
-          mode="date"
-          display="default"
-          maximumDate={today}
-          onChange={commit}
-        />
-      )}
+      <View style={{ marginTop: 6 }}>
+        <NativeDateField value={asOf} onChange={(iso) => { if (iso) setAsOf(iso); }} maximumDate={today} alwaysShowPillIOS />
+      </View>
 
       <Pressable testID="goal-balance-save" onPress={() => runSave(onSave)} disabled={saving} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }, saving && { opacity: 0.6 }]}>
         <Text style={styles.btnPrimaryText}>{saving ? 'Saving…' : 'Save balance'}</Text>

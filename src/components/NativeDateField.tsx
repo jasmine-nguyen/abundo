@@ -3,12 +3,7 @@
 // load-bearing quirk — Android fires onChange for BOTH a pick and a dismiss, and the Date
 // is the SECOND arg — copy-pasted four times and already drifting. This centralises that
 // logic so a fix lands everywhere.
-//
-// Two exports:
-//  - useNativeDate: the headless quirk logic (pick-vs-dismiss + arg extraction). The two
-//    sheets keep their own card chrome and just call this.
-//  - NativeDateField: a styled inline field row for the two forms (they share row chrome).
-// Both preserve every call-site's behaviour and look exactly.
+// Every call site renders NativeDateField; useNativeDate is its headless quirk logic.
 import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -19,7 +14,7 @@ import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
 // whichever position it lands in rather than assume arg 0 (assuming arg 0 crashed once:
 // `event.getMonth()` is undefined). Android fires on BOTH a pick and a dismiss, so close
 // the dialog either way and commit only when a Date actually came through.
-export function useNativeDate(onPick: (iso: string) => void) {
+function useNativeDate(onPick: (iso: string) => void) {
   const [showPicker, setShowPicker] = useState(false);
   const isIOS = Platform.OS === 'ios';
   const commit = (a?: unknown, b?: unknown) => {

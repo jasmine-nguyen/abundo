@@ -18,6 +18,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { usePlatform } from './support/platform';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -69,4 +70,16 @@ it('picking a date calls setPayday with the ISO date (via the onChange event,dat
   // The mocked picker fires the real onChange({type:'set'}, Date(2026-06-20)).
   fireEvent.press(screen.getByTestId('mock-datepicker'));
   expect(fns.setPayday).toHaveBeenCalledWith('2026-06-20');
+});
+
+describe('on Android', () => {
+  usePlatform('android');
+
+  it('opens the dialog from the shared date field and sets the payday', async () => {
+    await openPayCycle(14);
+    expect(screen.queryByTestId('mock-datepicker')).toBeNull();
+    fireEvent.press(screen.getByTestId('date-open'));
+    fireEvent.press(screen.getByTestId('mock-datepicker'));
+    expect(fns.setPayday).toHaveBeenCalledWith('2026-06-20');
+  });
 });
