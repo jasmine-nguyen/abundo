@@ -475,6 +475,19 @@ def test_breakdown_prior_window_weekly_length_7_end_to_end(handler, monkeypatch)
     assert txns.calls[0][2] == "2024-01-14"
 
 
+def test_breakdown_prior_window_monthly_steps_from_the_stored_payday(handler, monkeypatch):
+    # [A5] (ABU-44) Payday the 31st, today 2026-10-10: this cycle starts on the clamped Sep 30, so
+    # cycle=1 is [Aug 31, Sep 29] — stepped from the stored payday, not from Sep 30 (Aug 30).
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 10, 10))
+    txns = _DateFilteringTransactionRepo([])
+
+    handler.list_category_breakdown(_FakeCategoryRepo([_category("coffee", "Lifestyle")]), txns,
+                                    FakePayCycleRepo(length=30, last_pay_date="2026-01-31"), cycle=1)
+
+    assert txns.calls[0][1:3] == ("2026-08-31", "2026-09-29")
+
+
 def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategorized_bucket(handler):
     # WHIT-296: an excluded charge with a raw (un-mapped) category must NOT land in
     # __uncategorized__; a lone excluded charge yields no uncategorized row.

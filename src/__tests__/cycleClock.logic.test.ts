@@ -120,6 +120,8 @@ describe('cycleClockView', () => {
     // A corrupt/older-cache value can't drive elapsedFrac out of [0,1] → no negative bars.
     expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: 21 }).daysLeft).toBe(14);
     expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: -3 }).daysLeft).toBe(0);
+    // [A3] A monthly cycle clamps to its real length (a 28-day Feb), not the stored 30.
+    expect(cycleClockView({ length: 30, last_pay_date: '2026-01-15', days_left: 30, cycle_days: 28 }).daysLeft).toBe(28);
   });
 });
 

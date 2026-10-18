@@ -110,16 +110,26 @@ def test_re_picking_the_payday_on_the_same_schedule_keeps_the_unsealed_leftover(
     assert budget_repo.settle_calls == []
 
 
-def test_an_old_30_day_grid_anchor_snaps_to_the_nearest_payday_and_keeps_its_leftover(handler):
-    # (ABU-44) Saved when monthly stepped 30 days, the anchor 2026-07-09 sits 3 days after the
-    # 07-06 payday. It snaps back to 07-06: the completed, unsealed cycle 07-06..08-05 (spent 30)
-    # still counts live (+70) instead of being dropped, and the snapped anchor is saved.
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-09")})
+@pytest.mark.parametrize("anchor, carryover, settle_calls", [
+    # 3 days after the 07-06 payday: snaps back to 07-06, so the completed, unsealed cycle
+    # 07-06..08-05 (spent 30) still counts live (+70) and the snapped anchor is saved.
+    ("2026-07-09", Decimal(70), [("sink", Decimal(0), "2026-07-06", LENGTH, PAYDATE)]),
+    # [A1] 3 days BEFORE the 07-06 payday (the usual case: the old grid runs early): snaps
+    # forward. Without the snap the already-sealed 06-06..07-05 cycle is folded again (+100).
+    ("2026-07-03", Decimal(70), [("sink", Decimal(0), "2026-07-06", LENGTH, PAYDATE)]),
+    # [A2] The old grid's current cycle, 3 days before this cycle's 08-06 payday: snaps onto the
+    # current start, so no completed cycle is folded and nothing is saved.
+    ("2026-08-03", Decimal(0), []),
+])
+def test_an_old_30_day_grid_anchor_snaps_to_the_nearest_payday_and_keeps_its_leftover(
+        handler, anchor, carryover, settle_calls):
+    # (ABU-44) A rollover anchor saved when monthly stepped 30 days sits between paydays.
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from=anchor)})
     txns = _QueuedTransactionRepo([_txn("sink", -30, "2026-07-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
-    assert result["sink"]["carryover"] == Decimal(70)
-    assert budget_repo.settle_calls == [("sink", Decimal(0), "2026-07-06", LENGTH, PAYDATE)]
+    assert result["sink"]["carryover"] == carryover
+    assert budget_repo.settle_calls == settle_calls
 
 
 def test_a_legacy_buffer_with_no_saved_payday_still_re_anchors(handler):

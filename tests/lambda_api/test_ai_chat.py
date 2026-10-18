@@ -409,12 +409,25 @@ def _groceries_row(txn_id, amount, day):
             "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
 
 
-def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo, categories=CATEGORIES):
+def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo, categories=CATEGORIES,
+                    pay_cycle=None, today=TODAY):
     import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
-    return ai_chat.load_chat_data(
-        transaction_repo, _FakeCategoryRepo(categories), budget_repo,
-        _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date.fromisoformat(today))
+    pay_cycle = pay_cycle or _FakePayCycleRepo(length=14, last_pay_date="2026-09-10")
+    return ai_chat.load_chat_data(transaction_repo, _FakeCategoryRepo(categories), budget_repo, pay_cycle)
+
+
+def test_load_chat_data_steps_monthly_cycles_from_the_stored_payday(ai_chat, monkeypatch):
+    # [A4] (ABU-44) Payday the 31st, today Oct 10: this cycle starts on the clamped Sep 30. The
+    # prior cycle starts Aug 31 (stepped from the stored payday), not Aug 30 (from the cycle start).
+    import chat_tools
+    data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo([]), _FakeBudgetRepo({}),
+                           pay_cycle=_FakePayCycleRepo(length=30, last_pay_date="2026-01-31"), today="2026-10-10")
+
+    assert chat_tools.get_pay_cycles(data, {"last_n": 1}) == [
+        {"start": "2026-08-31", "end": "2026-09-29", "is_current": False},
+        {"start": "2026-09-30", "end": "2026-10-10", "is_current": True},
+    ]
 
 
 def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch):
