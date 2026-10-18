@@ -20,6 +20,7 @@ from constants import (
 )
 from models import Transaction
 from repository_base import RepositoryBase, conditional_write, db_errors, logger, update_expression
+from spend import counts_to_budget
 
 # Sentinel for update_transaction_fields: distinguishes "field not in this request"
 # (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
@@ -64,6 +65,10 @@ def read_window(repo: Any, start: Optional[str], end: Optional[str]) -> list[dic
 
 def _build_pk(account_id: str) -> str:
     return f"ACCOUNT#{account_id}"
+
+
+def _counts_to_budget(pk: str, category: str) -> bool:
+    return counts_to_budget(pk.removeprefix("ACCOUNT#"), category)
 
 
 def _build_sk(transaction_id: str) -> str:
@@ -254,21 +259,25 @@ class TransactionRepository(RepositoryBase):
         return synced
 
     def update_transaction_category(self, pk: str, sk: str, category: str) -> bool:
-        """Sets a transaction's category, leaving all other attributes intact.
+        """Sets a transaction's category and recomputes counts_to_budget (ABU-31), leaving
+        all other attributes intact.
 
-        Uses a #c alias because 'category' is a reserved word in DynamoDB. The
-        attribute_exists(pk) guard makes the write conditional on the row still
+        The attribute_exists(pk) guard makes the write conditional on the row still
         existing: get_transaction_keys_by_id and this update are not atomic, so a
         row deleted in between yields ConditionalCheckFailedException, which we
         surface as False (a 404 for the caller) rather than a 500.
         """
+        # Filing by hand clears any rule stamp (WHIT-536) — REMOVE of an absent
+        # attribute is a harmless no-op on a never-stamped row.
+        expression, names, values = update_expression(
+            {"category": category, "counts_to_budget": _counts_to_budget(pk, category)},
+            ["filed_by_rule"],
+        )
         return conditional_write("write", lambda: self._get_table().update_item(
             Key={"pk": pk, "sk": sk},
-            # Filing by hand clears any rule stamp (WHIT-536) — REMOVE of an absent
-            # attribute is a harmless no-op on a never-stamped row.
-            UpdateExpression="SET #c = :category REMOVE #p",
-            ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
-            ExpressionAttributeValues={":category": category},
+            UpdateExpression=expression,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
             ConditionExpression="attribute_exists(pk)",
         ))
 
@@ -299,7 +308,8 @@ class TransactionRepository(RepositoryBase):
         missing row as vanished, and the app then drops it from the list entirely. "gone" is
         therefore only ever returned on a clean, definite absence — a failed read raises.
         """
-        sets = {"category": category}
+        # category must stay the first key: the condition below refers to it as #f0.
+        sets = {"category": category, "counts_to_budget": _counts_to_budget(pk, category)}
         # A rule filed this (WHIT-536): stamp filed_by_rule alongside the category, in the one
         # conditional write, so the stamp can never land on a row the tap-wins guard rejected.
         if filed_by_rule is not None:
@@ -358,8 +368,8 @@ class TransactionRepository(RepositoryBase):
         self, pk: str, sk: str, category: str, old_rule_id: str, new_rule_id: str
     ) -> bool:
         """Re-file ONE charge an edited rule already filed: SET its category to the rule's new
-        target and re-key the stamp to the rule's (possibly new) id, but ONLY while the stamp
-        still equals `old_rule_id` (WHIT-540).
+        target (recomputing counts_to_budget, ABU-31) and re-key the stamp to the rule's (possibly
+        new) id, but ONLY while the stamp still equals `old_rule_id` (WHIT-540).
 
         Same stamp condition, same reason as clear_rule_fill: it targets a charge BECAUSE the rule
         owns it (stamp == old id), so the guard must be the stamp, not the category — a user who
@@ -373,10 +383,10 @@ class TransactionRepository(RepositoryBase):
         """
         return conditional_write("write", lambda: self._get_table().update_item(
             Key={"pk": pk, "sk": sk},
-            UpdateExpression="SET #c = :category, #p = :new",
-            ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
-            ExpressionAttributeValues={":category": category, ":new": new_rule_id,
-                                       ":old": old_rule_id},
+            UpdateExpression="SET #c = :category, #b = :counts, #p = :new",
+            ExpressionAttributeNames={"#c": "category", "#b": "counts_to_budget", "#p": "filed_by_rule"},
+            ExpressionAttributeValues={":category": category, ":new": new_rule_id, ":old": old_rule_id,
+                                       ":counts": _counts_to_budget(pk, category)},
             ConditionExpression="attribute_exists(pk) AND #p = :old",
         ))
 
@@ -427,6 +437,7 @@ class TransactionRepository(RepositoryBase):
         # budget-only edit leaves category _UNSET, so the stamp survives. REMOVE of an absent
         # stamp is a no-op.
         if category is not _UNSET:
+            sets["counts_to_budget"] = _counts_to_budget(pk, category)
             removes.append("filed_by_rule")
 
         # No field supplied (all _UNSET) — nothing to write. Return without issuing a
