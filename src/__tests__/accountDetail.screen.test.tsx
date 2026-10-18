@@ -242,3 +242,17 @@ it('Load More appends this account\'s older rows, and a pull snaps back to the n
   await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
 });
 
+// [A1] ABU-58: a full first page (30 rows, each on its own day) draws every row and the Load More
+// footer without scrolling, so the list's first window must also count each day's heading cells.
+it('a full first page over 30 different days draws every row and Load More without scrolling', async () => {
+  const page = Array.from({ length: 30 }, (_, i) => {
+    const date = `2026-06-${String(i + 1).padStart(2, '0')}`;
+    return { ...ROW, transaction_id: `p${i}`, date, authorized_date: date, amount: -(i + 1) };
+  });
+  seedFeedPage(server, FEED, page, 'c1');
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByText('−⁠$30.00')).toBeTruthy();
+  expect(screen.getByText('−⁠$1.00')).toBeTruthy();
+  expect(screen.getByTestId('account-load-more')).toBeTruthy();
+});
+

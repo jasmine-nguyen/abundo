@@ -1,4 +1,5 @@
-import { View, Text, Pressable, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import { View, Text, Pressable, StyleSheet, SectionList, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, PRESSED } from '../../src/theme';
@@ -16,11 +17,14 @@ import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { BalanceFreshnessPill } from '../../src/components/BalanceFreshnessPill';
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
+import type { Transaction } from '../../src/types';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
 // route is the account_id. ABU-67: the rows are this account's own paged history — the newest
 // page first, Load More for older ones — grouped by date. WHIT-212: the live balance comes from
 // the account-balances query (poller-fed), keyed by the same account_id.
+// ABU-58: a SectionList, so only the rows on screen are drawn. The loading/error states, the
+// balance card and the empty messages live in the list header, inside the pull-to-refresh scroller.
 export default function AccountDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -30,7 +34,11 @@ export default function AccountDetail() {
   const refreshLiveBalances = useRefreshLiveBalances();
   // ABU-66: the same pull as Accounts — re-read the list and fetch live balances.
   const { pulling, onRefresh } = usePullToRefresh(refetch, refreshLiveBalances, showToast, 'Balances up to date');
-  const detail = accountDetail({ transactions, category }, id);
+  const detail = useMemo(() => accountDetail({ transactions, category }, id), [transactions, category, id]);
+  const sections = useMemo(
+    () => detail?.groups.map((g) => ({ key: g.label, dayTotal: g.dayTotal, data: g.items })) ?? [],
+    [detail],
+  );
   const bal = balances.get(id);
   const credit = availableCredit(bal);
   const display = bal ? balanceDisplay(bal.amount) : null;
@@ -39,80 +47,89 @@ export default function AccountDetail() {
   if (bal) title = accountNameFromId(id);
   if (detail) title = detail.name;
 
+  const renderSectionHeader = useCallback(({ section }: { section: { key: string; dayTotal: string | null } }) => (
+    <View style={{ marginTop: 14 }}>
+      <DayHeading label={section.key} dayTotal={section.dayTotal} />
+    </View>
+  ), []);
+  const renderItem = useCallback(({ item }: { item: Transaction }) => <TransactionRow t={item} category={category} />, [category]);
+
+  const header = (
+    <DetailStates
+      isLoading={isLoading}
+      isError={isError}
+      hasCache={transactions.length > 0}
+      idPrefix="account"
+      errorText="Couldn't load your transactions."
+      retryLabel="Retry loading this account"
+      onRetry={refetch}
+    >
+      {bal && display && (
+        <View testID="account-balance" style={styles.balCard}>
+          <Text style={styles.balLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Current balance</Text>
+          <Text
+            style={[styles.balAmount, { color: display.color }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}
+          >
+            {display.text}
+          </Text>
+          {display.owed && <Text style={styles.balOwed} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>owed</Text>}
+          {credit !== null && (
+            <Text style={styles.balAvailable} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmt(credit)} available</Text>
+          )}
+          <BalanceFreshnessPill asOf={bal.as_of} tone="card" />
+        </View>
+      )}
+      {/* ABU-64: the home loan opens into its payoff progress on the Home loan screen. */}
+      {isHomeLoanAccount(bal) && (
+        <Pressable
+          testID="account-payoff-link"
+          accessibilityRole="button"
+          onPress={() => router.push('/mortgage')}
+          style={({ pressed }) => [styles.payoffLink, pressed && PRESSED]}
+        >
+          <Text style={styles.payoffText} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>See payoff progress</Text>
+          <Glyph name="chevron" size={16} color={C.textFaint} />
+        </Pressable>
+      )}
+      {/* WHIT-643: a saved balance but no transactions at all — a quiet account. */}
+      {!detail && bal && <Text style={styles.quiet} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>No transactions yet</Text>}
+      {!detail && !bal && (
+        // No transaction or balance carries this id (unknown/stale account) — settled, not loading.
+        <EmptyState title="No transactions" sub="This account has no transactions yet." />
+      )}
+    </DetailStates>
+  );
+
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title={title} />
-      <ScrollView
+      <SectionList
+        style={{ flex: 1 }}
+        sections={sections}
+        keyExtractor={(t) => t.transaction_id}
+        renderSectionHeader={renderSectionHeader}
+        renderItem={renderItem}
+        ListHeaderComponent={header}
+        ListFooterComponent={detail && hasMore ? (
+          <LoadMoreButton
+            testID="account-load-more"
+            onPress={loadMore}
+            loading={isLoadingMore}
+            accessibilityLabel="Load older transactions for this account"
+          />
+        ) : null}
+        // The window counts each day's heading and section footer as cells too (3 per day at worst):
+        // 90 draws a whole first page of 30 rows over 30 days.
+        initialNumToRender={90}
+        stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         // WHIT-363: never double-spin — the cold-load spinner owns an empty first load.
         refreshControl={<RefreshControl refreshing={pulling && !(isLoading && transactions.length === 0)} onRefresh={onRefresh} tintColor={C.accent} />}
-      >
-        <DetailStates
-          isLoading={isLoading}
-          isError={isError}
-          hasCache={transactions.length > 0}
-          idPrefix="account"
-          errorText="Couldn't load your transactions."
-          retryLabel="Retry loading this account"
-          onRetry={refetch}
-        >
-          {bal && display && (
-            <View testID="account-balance" style={styles.balCard}>
-              <Text style={styles.balLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>Current balance</Text>
-              <Text
-                style={[styles.balAmount, { color: display.color }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}
-              >
-                {display.text}
-              </Text>
-              {display.owed && <Text style={styles.balOwed} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>owed</Text>}
-              {credit !== null && (
-                <Text style={styles.balAvailable} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{fmt(credit)} available</Text>
-              )}
-              <BalanceFreshnessPill asOf={bal.as_of} tone="card" />
-            </View>
-          )}
-          {/* ABU-64: the home loan opens into its payoff progress on the Home loan screen. */}
-          {isHomeLoanAccount(bal) && (
-            <Pressable
-              testID="account-payoff-link"
-              accessibilityRole="button"
-              onPress={() => router.push('/mortgage')}
-              style={({ pressed }) => [styles.payoffLink, pressed && PRESSED]}
-            >
-              <Text style={styles.payoffText} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>See payoff progress</Text>
-              <Glyph name="chevron" size={16} color={C.textFaint} />
-            </Pressable>
-          )}
-          {detail && (
-            <>
-              {detail.groups.map((g) => (
-                <View key={g.label} style={{ marginTop: 14 }}>
-                  <DayHeading label={g.label} dayTotal={g.dayTotal} />
-                  {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} category={category} />)}
-                </View>
-              ))}
-              {hasMore && (
-                <LoadMoreButton
-                  testID="account-load-more"
-                  onPress={loadMore}
-                  loading={isLoadingMore}
-                  accessibilityLabel="Load older transactions for this account"
-                />
-              )}
-            </>
-          )}
-          {/* WHIT-643: a saved balance but no transactions at all — a quiet account. */}
-          {!detail && bal && <Text style={styles.quiet} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>No transactions yet</Text>}
-          {!detail && !bal && (
-            // No transaction or balance carries this id (unknown/stale account) — settled, not loading.
-            <EmptyState title="No transactions" sub="This account has no transactions yet." />
-          )}
-        </DetailStates>
-      </ScrollView>
+      />
     </View>
   );
 }

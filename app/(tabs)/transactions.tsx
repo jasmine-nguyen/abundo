@@ -266,7 +266,7 @@ export default function Transactions() {
                 category={category}
                 selectable={selectionMode}
                 selected={selected.has(t.transaction_id)}
-                onToggleSelect={() => toggleSelect(t.transaction_id)}
+                onToggleSelect={toggleSelect}
               />
             ))}
           </View>
