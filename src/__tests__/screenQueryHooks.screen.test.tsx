@@ -13,18 +13,20 @@ import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
 import { useCategories, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData } from '../queries';
 import { categoriesKey } from '../queryKeys';
+import { cycleClock } from '../payCycle';
 
 const server = installFakeServer();
 const COFFEE_BUDGET_TX = '/budgets/coffee/transactions';
 const COFFEE_TX = '/categories/coffee/transactions';
 const SALARY_TX = '/categories/salary/transactions';
 
+const PAY_CYCLE = { length: 30, last_pay_date: '2024-01-03' };
 const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' }];
 
 beforeEach(() => {
   resetAuth();
   server.seed('/categories', CATS);
-  server.seed('/paycycle', { length: 30, last_pay_date: '2024-01-03' });
+  server.seed('/paycycle', PAY_CYCLE);
   server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
 });
 
@@ -46,7 +48,7 @@ it('useBudgetDetailScreenData assembles the budget list + budgets + categories f
   server.seed(COFFEE_BUDGET_TX, [{ transaction_id: 'x', category: 'coffee', date: '2026-07-18' }]);
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect(result.current.cycleLen).toBe(30);
+  expect(result.current.cycleLen).toBe(cycleClock(PAY_CYCLE).cycleLen); // a monthly cycle is 28-31 days, so it follows today's date
   expect(result.current.category('coffee')?.name).toBe('Coffee');
   expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 100 }]);
   expect(server.sent('GET', COFFEE_BUDGET_TX).length).toBeGreaterThanOrEqual(1); // the list is fetched per-budget
