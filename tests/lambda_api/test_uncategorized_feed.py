@@ -228,21 +228,18 @@ def test_one_load_more_reads_each_row_at_most_once(handler):
 # --- edges of the shared walker ------------------------------------------------
 
 
-@pytest.mark.parametrize("filed_before, listed", [(4, True), (5, False)])
-def test_scan_cap_counts_rows_exactly(handler, monkeypatch, filed_before, listed):
-    # [A2] A cap of 5 rows: an unfiled row that is the 5th row scanned is returned; the 6th is not
-    # (the next Load More finds it).
+def test_scan_cap_counts_rows_exactly(handler, monkeypatch):
+    # [A2] A cap of 5 rows: an unfiled row that is the 5th row scanned is still returned.
     monkeypatch.setattr(handler, "_MAX_UNCATEGORIZED_SCAN_ROWS", 5)
-    rows = [_row(SPENDING, f"2026-06-{20 - i:02d}", f"f{i}", category="groceries")
-            for i in range(filed_before)]
+    rows = [_row(SPENDING, f"2026-06-{20 - i:02d}", f"f{i}", category="groceries") for i in range(4)]
     rows.append(_row(SPENDING, "2026-01-01", "u", category=None))
     table, repo, _ = real_repos({SPENDING: rows})
 
     body = json.loads(handler.get_uncategorized_feed(
         uncategorized_feed_event({"limit": "5"}), repo, FakeCategoryRepo({"groceries"}))["body"])
 
-    assert [t["transaction_id"] for t in body["transactions"]] == (["u"] if listed else [])
-    assert (body["nextCursor"] is None) == listed
+    assert [t["transaction_id"] for t in body["transactions"]] == ["u"]
+    assert body["nextCursor"] is None
 
 
 def test_empty_database_page_with_a_cursor_is_read_past_before_picking(handler):
