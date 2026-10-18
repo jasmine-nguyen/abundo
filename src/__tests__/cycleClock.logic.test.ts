@@ -72,7 +72,8 @@ describe('cycleName', () => {
 
 describe('nextPayday', () => {
   // One clock: at any time of day, every day of a year with both daylight-saving changes,
-  // nextPayday === today + daysLeft and lands on a whole cycle from the anchor.
+  // nextPayday === today + daysLeft and lands on a payday: a whole cycle from the anchor, or for
+  // monthly (ABU-44) the anchor's day of the month.
   it('[A1] matches today + daysLeft at 00:01 and 23:59, every day of a year', () => {
     for (const length of [7, 14, 30]) {
       const pc = { length, last_pay_date: '2026-01-05' };
@@ -82,7 +83,8 @@ describe('nextPayday', () => {
           const next = nextPayday(pc, today);
           const { daysLeft } = cycleClock(pc, today);
           expect(next).toBe(utcDayMsToISO(dateToUtcDayMs(today) + daysLeft * MS_PER_DAY));
-          expect(((isoToUtcDayMs(next) - isoToUtcDayMs('2026-01-05')) / MS_PER_DAY) % length).toBe(0);
+          if (length === 30) expect(next.slice(8)).toBe('05');
+          else expect(((isoToUtcDayMs(next) - isoToUtcDayMs('2026-01-05')) / MS_PER_DAY) % length).toBe(0);
         }
       }
     }
@@ -102,6 +104,11 @@ describe('cycleClockView', () => {
     // No days_left → same result the raw cycleClock gives for "today". cycleLen always = length.
     const payCycle = { length: 14, last_pay_date: '2026-06-06' };
     expect(cycleClockView(payCycle)).toEqual({ cycleLen: 14, daysLeft: cycleClock(payCycle).daysLeft });
+  });
+
+  it('prefers the server cycle_days for the cycle length (ABU-44)', () => {
+    expect(cycleClockView({ length: 30, last_pay_date: '2026-01-15', days_left: 23, cycle_days: 28 }))
+      .toEqual({ cycleLen: 28, daysLeft: 23 });
   });
 
   it('takes days_left === 0 from the server (not the fallback)', () => {
@@ -124,5 +131,39 @@ describe('dayOfCycle', () => {
     ['an out-of-range 0 left is capped at the final day', 14, 0, 14],
   ])('%s', (_label, cycleLen, daysLeft, day) => {
     expect(dayOfCycle({ cycleLen, daysLeft })).toBe(day);
+  });
+});
+
+describe('monthly pay cycle steps by calendar month (ABU-44)', () => {
+  const monthly = (last_pay_date: string) => ({ length: 30, last_pay_date });
+
+  it.each([
+    [day(2026, 2, 20), '2026-03-15'],
+    [day(2026, 6, 15), '2026-07-15'],
+    [day(2026, 10, 14), '2026-10-15'],
+  ])('a 15th payday keeps landing on the 15th (today %p → %s)', (today, expected) => {
+    expect(nextPayday(monthly('2026-01-15'), today)).toBe(expected);
+  });
+
+  it.each([
+    [day(2026, 2, 1), '2026-02-28'],
+    [day(2026, 3, 1), '2026-03-31'],
+    [day(2026, 4, 1), '2026-04-30'],
+  ])('a 31st payday uses the month\'s last day (today %p → %s)', (today, expected) => {
+    expect(nextPayday(monthly('2026-01-31'), today)).toBe(expected);
+  });
+
+  it('the cycle length is the real month length: Feb 15 → Mar 15 is 28 days', () => {
+    expect(cycleClock(monthly('2026-01-15'), day(2026, 2, 20))).toEqual({ cycleLen: 28, daysLeft: 23 });
+  });
+
+  it('a 31-day month is a 31-day cycle', () => {
+    expect(cycleClock(monthly('2026-01-15'), day(2026, 7, 15))).toEqual({ cycleLen: 31, daysLeft: 31 });
+  });
+
+  it('before the first payday: the days left are held to the first cycle and the next payday is it', () => {
+    const payCycle = monthly('2026-03-31');
+    expect(cycleClock(payCycle, day(2026, 1, 10))).toEqual({ cycleLen: 30, daysLeft: 30 });
+    expect(nextPayday(payCycle, day(2026, 1, 10))).toBe('2026-03-31');
   });
 });

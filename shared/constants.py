@@ -144,6 +144,9 @@ SKEW_FEE_HEADROOM = Decimal("0.05")
 # fortnightly length.
 DEFAULT_PAYCYCLE = {"length": 14, "last_pay_date": "2024-01-03"}
 
+# The stored pay-cycle length that means "monthly" (ABU-44): it steps by calendar month, not 30 days.
+MONTHLY_PAY_CYCLE_LENGTH = 30
+
 # BankSync feeds triggered on every scheduled sync run, keyed by feed id -> label.
 SYNC_FEED_IDS = {
     "ZDlL4aShYkOd8A3dw8Tb": "up-spending",

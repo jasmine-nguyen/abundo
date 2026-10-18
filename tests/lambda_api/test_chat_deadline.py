@@ -22,8 +22,9 @@ def _data():
     categories = [{"id": "eatingout", "name": "Eating Out", "bucket": "Lifestyle", "parent": None,
                    "colorSlot": 0}]
     return chat_tools.ChatData(
-        categories=categories, budgets={}, cycle_start="2026-09-10", length=14, today="2026-09-20",
-        floor=chat_tools.lookback_floor("2026-09-10", 14, "2026-09-20"), transactions=[])
+        categories=categories, budgets={}, cycle_start="2026-09-10", length=14, last_pay_date="2026-09-10",
+        today="2026-09-20", floor=chat_tools.lookback_floor("2026-09-10", 14, "2026-09-10", "2026-09-20"),
+        transactions=[])
 
 
 def _clock(*readings):

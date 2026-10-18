@@ -45,8 +45,9 @@ SECRETS = ("4821", "98765432", "12345678", "062-123", "8765.43", "4444", "Jas Ev
 def _data(ai_chat, transactions=SECRET_ROWS):
     import chat_tools
     return chat_tools.ChatData(
-        categories=CATEGORIES, budgets={}, cycle_start=CYCLE_START, length=14, today=TODAY,
-        floor=chat_tools.lookback_floor(CYCLE_START, 14, TODAY), transactions=list(transactions))
+        categories=CATEGORIES, budgets={}, cycle_start=CYCLE_START, length=14, last_pay_date=CYCLE_START,
+        today=TODAY, floor=chat_tools.lookback_floor(CYCLE_START, 14, CYCLE_START, TODAY),
+        transactions=list(transactions))
 
 
 AVG_QUERY = {"filters": {"category_ids": ["eatingout"], "pay_cycles": {"last_n": 3}}, "metric": "avg"}
@@ -428,7 +429,7 @@ def test_rollover_history_older_than_the_chat_floor_still_counts(ai_chat, monkey
     # WHIT-622: if the chat's floor ever sits later than the rollover read start, the read still
     # reaches back for the carryover, but the chat's own transactions stop at the floor.
     # Prior cycle 2026-08-27..09-09 spent $60 of $100 → carryover $40.
-    monkeypatch.setattr(ai_chat, "lookback_floor", lambda cycle_start, length, today: cycle_start)
+    monkeypatch.setattr(ai_chat, "lookback_floor", lambda cycle_start, length, last_pay_date, today: cycle_start)
     rows = [_groceries_row("prior", "-60", "2026-08-30"), _groceries_row("now", "-25", "2026-09-15")]
     data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo(rows), RolloverBudgetRepo())
 

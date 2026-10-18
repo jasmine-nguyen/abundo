@@ -3,33 +3,32 @@
 Ports two pure functions from ``src/context.tsx`` — ``paydaysUntil`` and the
 remaining/``pacePerPayday`` slice of ``balanceGoalView`` — so the nudge computes pace
 identically to the app. Pure over its inputs: the nudge job (``goal_nudge``) supplies the
-live balance and "today". Kept dependency-free (no ``constants`` import).
+live balance and "today". Payday stepping comes from ``spend.cycle_index`` so it matches the
+budget windows (ABU-44).
 """
 
 from datetime import date
 from decimal import Decimal
 from typing import Optional
 
+from spend import cycle_index
+
 
 def paydays_until(length: int, last_pay_date: str, target_date: str, today: date) -> int:
-    """Count the paydays remaining before a target date: the dates ``last_pay_date +
-    n*length`` that fall in the half-open window (today, target] — strictly after today,
-    on or before target. Whole-day math (date ordinals) so a daylight-saving change can't
-    shift the count. Mirrors ``paydaysUntil``: the count is
-    ``floor(dTarget/length) - floor(dToday/length)`` (floor handles a future last_pay_date,
-    where n<0). Returns 0 for a non-positive length or an unparseable date.
+    """Count the paydays remaining before a target date: the paydays (``payday_at``, so a
+    monthly cycle steps by calendar month) that fall in the half-open window (today, target]
+    — strictly after today, on or before target. Mirrors ``paydaysUntil``: the count is
+    ``cycle_index(target) - cycle_index(today)`` (negative indices handle a future
+    last_pay_date). Returns 0 for a non-positive length or an unparseable date.
     """
     if length <= 0:
         return 0
     try:
-        pay = date.fromisoformat(last_pay_date)
+        date.fromisoformat(last_pay_date)
         target = date.fromisoformat(target_date)
     except ValueError:
         return 0
-    days_to_today = today.toordinal() - pay.toordinal()
-    days_to_target = target.toordinal() - pay.toordinal()
-    # `//` is floor division (toward -inf), matching the client's Math.floor.
-    return max(0, (days_to_target // length) - (days_to_today // length))
+    return max(0, cycle_index(last_pay_date, length, target) - cycle_index(last_pay_date, length, today))
 
 
 def goal_pace(

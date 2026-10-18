@@ -25,7 +25,7 @@ from _transaction_range_fakes import _QueuedTransactionRepo
 pytestmark = pytest.mark.usefixtures("fixed_window")
 
 # A fixed monthly cycle: current cycle_start 2026-08-06, today 2026-08-10 (4 days in), payday
-# grid anchored at 2026-01-01. The settle lag is 10 days, so the cutoff is 2026-07-31: a
+# grid anchored at 2026-01-06 (the 6th of each month). The settle lag is 10 days, so the cutoff is 2026-07-31: a
 # completed cycle whose end is before that seals; a more recent one stays live.
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -49,27 +49,27 @@ def _entry(target, **extra):
 
 
 def test_empty_cycles_accumulate_into_the_buffer_and_seal_the_settled_ones(handler):
-    # Anchor 3 cycles back (2026-05-08), all empty, target 100/cycle. Two oldest cycles are
+    # Anchor 3 cycles back (2026-05-06), all empty, target 100/cycle. Two oldest cycles are
     # older than the 10-day lag -> sealed (200); the most recent completed cycle is still live
     # (+100). Displayed carryover = 300; the seal advances the anchor past the two sealed cycles.
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-06")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["rollover"] is True
     assert result["sink"]["carryover"] == Decimal(300)
     # Only the two lag-cleared cycles were sealed into the stored balance (200), anchor -> the
-    # start of the still-live cycle (2026-07-07).
-    assert budget_repo.settle_calls == [("sink", Decimal(200), "2026-07-07", LENGTH, PAYDATE)]
+    # start of the still-live cycle (2026-07-06).
+    assert budget_repo.settle_calls == [("sink", Decimal(200), "2026-07-06", LENGTH, PAYDATE)]
 
 
 # --- spike / borrow: overspend carries as a deficit --------------------------
 
 
 def test_overspend_in_the_live_cycle_carries_as_a_negative_buffer_without_sealing(handler):
-    # Anchor one cycle back (2026-07-07): that completed cycle is still within the lag (ends
+    # Anchor one cycle back (2026-07-06): that completed cycle is still within the lag (ends
     # 2026-08-05), so it is NOT sealed. A $150 spend against target 100 => leftover -50, shown
     # live as a -50 buffer. Nothing seals, so the anchor doesn't move and no settle is written.
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-06")})
     txns = _QueuedTransactionRepo([_txn("sink", -150, "2026-07-20")])  # in the completed (unsealed) cycle
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
@@ -89,7 +89,7 @@ def test_a_pay_cycle_length_change_freezes_the_buffer_and_re_anchors(handler):
     # current cycle_start under the new length — no cycles are folded this read.
     budget_repo = recording_budget_repo({"sink": {
         "target": Decimal(100), "rollover": True, "carryover": Decimal(40),
-        "carryover_from": "2026-05-08", "carryover_len": Decimal(14), "carryover_paydate": PAYDATE,
+        "carryover_from": "2026-05-06", "carryover_len": Decimal(14), "carryover_paydate": PAYDATE,
     }})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
@@ -98,20 +98,32 @@ def test_a_pay_cycle_length_change_freezes_the_buffer_and_re_anchors(handler):
 
 
 def test_re_picking_the_payday_on_the_same_schedule_keeps_the_unsealed_leftover(handler):
-    # (ABU-88) The buffer was sealed when the payday was saved as 2025-12-02; the user has since
-    # re-picked 2026-01-01 — a whole cycle later, same 30-day schedule. Not a cycle change:
-    # the completed-but-unsealed cycle (2026-07-07..08-05, nothing spent, target 100) still
+    # (ABU-88) The buffer was sealed when the payday was saved as 2025-12-06; the user has since
+    # re-picked 2026-01-01 — a whole cycle later, same monthly schedule. Not a cycle change:
+    # the completed-but-unsealed cycle (2026-07-06..08-05, nothing spent, target 100) still
     # counts live (+100), and nothing re-anchors.
     budget_repo = recording_budget_repo({"sink": _entry(
-        100, carryover=Decimal(0), carryover_from="2026-07-07", carryover_paydate="2025-12-02")})
+        100, carryover=Decimal(0), carryover_from="2026-07-06", carryover_paydate="2025-12-06")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(100)
     assert budget_repo.settle_calls == []
 
 
+def test_an_old_30_day_grid_anchor_snaps_to_the_nearest_payday_and_keeps_its_leftover(handler):
+    # (ABU-44) Saved when monthly stepped 30 days, the anchor 2026-07-09 sits 3 days after the
+    # 07-06 payday. It snaps back to 07-06: the completed, unsealed cycle 07-06..08-05 (spent 30)
+    # still counts live (+70) instead of being dropped, and the snapped anchor is saved.
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-09")})
+    txns = _QueuedTransactionRepo([_txn("sink", -30, "2026-07-20")])
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
+
+    assert result["sink"]["carryover"] == Decimal(70)
+    assert budget_repo.settle_calls == [("sink", Decimal(0), "2026-07-06", LENGTH, PAYDATE)]
+
+
 def test_a_legacy_buffer_with_no_saved_payday_still_re_anchors(handler):
-    entry = _entry(100, carryover=Decimal(40), carryover_from="2026-05-08")
+    entry = _entry(100, carryover=Decimal(40), carryover_from="2026-05-06")
     del entry["carryover_paydate"]
     budget_repo = recording_budget_repo({"sink": entry})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
@@ -127,7 +139,7 @@ def test_a_spread_created_during_the_read_is_not_overwritten_by_its_rollover_set
     # (ABU-88) The read snapshots a rollover budget that needs sealing; before it saves the
     # seal, the user swaps rollover for a bill spread (which strips the rollover fields). The
     # read's seal must not land carryover fields back next to the new spread.
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-06")})
     snapshot_read = budget_repo.list_budgets
 
     def list_budgets_then_user_edits():
@@ -152,7 +164,7 @@ def test_rollover_flag_on_a_re_bucketed_income_category_is_ignored(handler):
     # The flag was set while the category was spend; it was later re-bucketed to Income. On
     # read it falls through to the plain earn-target output (no rollover/carryover keys), and
     # nothing is sealed — earnings must never fold into a spend buffer.
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-06")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(),
                                   _FakeCategoryRepo(_spend_cat("sink", "Income")))
 
@@ -167,7 +179,7 @@ def test_rollover_flag_on_a_re_bucketed_income_category_is_ignored(handler):
 def test_a_failed_settle_write_never_500s_the_read(handler):
     # The seal write is best-effort: even if settle_carryover raises, the live carryover is
     # still computed and returned (it just re-seals on the next read).
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-06")})
     budget_repo._table.fail("update_item")
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
@@ -179,7 +191,7 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
     # Anchor 20 empty cycles back but the cap is 12 -> only 12 are folded (12 * 100 = 1200),
     # NOT 2000; the older leftovers are dropped and the anchor jumps forward. Fail-on-revert
     # for the cold-start bound: without the cap this would read 2000.
-    old_anchor = "2025-01-09"  # ~20 monthly cycles before 2026-08-06
+    old_anchor = "2025-01-06"  # ~20 monthly cycles before 2026-08-06
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from=old_anchor)})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
@@ -190,7 +202,7 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
 
 
 @pytest.mark.parametrize("today, settle_calls", [
-    # cutoff = today-10 = 2026-08-05: the completed cycle [2026-07-07, 2026-08-05] ends EXACTLY
+    # cutoff = today-10 = 2026-08-05: the completed cycle [2026-07-06, 2026-08-05] ends EXACTLY
     # on it. The seal test is a strict `<`, so it stays live (recomputed each read).
     ("2026-08-15", []),
     # cutoff 2026-08-06: the same cycle now ends strictly before it, so it seals and the anchor
@@ -199,7 +211,7 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
 ])
 def test_the_lag_cutoff_seals_only_cycles_ending_strictly_before_it(handler, monkeypatch, today, settle_calls):
     pin_cycle_window(handler, monkeypatch, "2026-08-06", today)
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-06")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(),
                                   _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
@@ -216,14 +228,14 @@ def test_a_parents_sealed_leftover_folds_child_spend_across_the_subtree(handler,
     # not 100 — _seal_rollover has to fold the whole subtree per cycle, exactly as the current
     # window does. Fail-on-revert: sealing on {parent} only would read 100 sealed / carryover 200.
     pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
-    budget_repo = recording_budget_repo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
+    budget_repo = recording_budget_repo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-06")})
     cats = _FakeCategoryRepo(_spend_cat("food", "Lifestyle") + _spend_cat("dining", "Lifestyle", parent="food"))
-    # dining spend lands in the sealed cycle [2026-06-07, 2026-07-06]; the live cycle is empty.
+    # dining spend lands in the sealed cycle [2026-06-06, 2026-07-05]; the live cycle is empty.
     txns = _QueuedTransactionRepo([_txn("dining", -30, "2026-06-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), cats)
 
     assert result["food"]["carryover"] == Decimal(170)   # sealed 70 + live 100
-    assert budget_repo.settle_calls == [("food", Decimal(70), "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.settle_calls == [("food", Decimal(70), "2026-07-06", LENGTH, PAYDATE)]
     # The past child spend is NOT in the current cycle, so the bar shows 0 spent this cycle.
     assert result["food"]["posted"] == Decimal(0)
 
@@ -236,13 +248,13 @@ def test_a_refund_in_a_sealed_cycle_cannot_push_leftover_above_target(handler, m
     # per-cycle spend at >= 0, so the sealed leftover caps at the target (100), never 150. Pins
     # the aggregate-then-clamp rule for sealing. (A user-visible surprise — see the critique.)
     pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-06")})
     # +50 amount with the default spend sign is a refund (negative contribution) in the sealed cycle.
     txns = _QueuedTransactionRepo([_txn("sink", 50, "2026-06-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(200)   # sealed 100 (capped) + live 100, NOT 250
-    assert budget_repo.settle_calls == [("sink", Decimal(100), "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.settle_calls == [("sink", Decimal(100), "2026-07-06", LENGTH, PAYDATE)]
 
 
 # --- current-cycle slice boundary: a txn dated exactly cycle_start is current -
@@ -250,17 +262,17 @@ def test_a_refund_in_a_sealed_cycle_cannot_push_leftover_above_target(handler, m
 
 def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handler, monkeypatch):
     # A spend dated EXACTLY on cycle_start (2026-08-06) must count as this cycle's posted spend,
-    # never leak back into the just-completed cycle [2026-07-07, 2026-08-05]. The completed
+    # never leak back into the just-completed cycle [2026-07-06, 2026-08-05]. The completed
     # windows are end-inclusive to 08-05, and the current slice is [cycle_start, today]. Fail-on-
     # revert: an off-by-one that bucketed 08-06 into the live cycle would drop posted to 0 and
     # shrink that cycle's leftover.
     pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
-    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-06")})
     # A spend in a PAST sealed cycle (25) + a spend dated exactly cycle_start (40). Only the
     # cycle_start one is this cycle's posted spend; the past one belongs to the sealed cycle,
     # so it must NOT inflate `posted`. Without the current-cycle slice, posted would read 65.
     txns = _QueuedTransactionRepo([
-        _txn("sink", -25, "2026-06-20"),   # sealed cycle [2026-06-07, 2026-07-06]
+        _txn("sink", -25, "2026-06-20"),   # sealed cycle [2026-06-06, 2026-07-05]
         _txn("sink", -40, "2026-08-06"),   # exactly cycle_start -> current
     ])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
@@ -268,7 +280,7 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
     assert result["sink"]["posted"] == Decimal(40)       # ONLY the cycle_start spend, not the past 25
     # sealed cycle leftover 100-25=75, live cycle empty +100 -> carryover 175.
     assert result["sink"]["carryover"] == Decimal(175)
-    assert budget_repo.settle_calls == [("sink", Decimal(75), "2026-07-07", LENGTH, PAYDATE)]
+    assert budget_repo.settle_calls == [("sink", Decimal(75), "2026-07-06", LENGTH, PAYDATE)]
 
 
 # --- PUT /budgets rollover: anchor + validation gaps -------------------------

@@ -68,10 +68,10 @@ OTHER = [
 
 
 def _data(chat_tools, transactions=None, budgets=None, length=14, cycle_start=CYCLE_START, today=TODAY):
-    floor = chat_tools.lookback_floor(cycle_start, length, today)
+    floor = chat_tools.lookback_floor(cycle_start, length, cycle_start, today)
     return chat_tools.ChatData(
         categories=CATEGORIES, budgets=budgets or {}, cycle_start=cycle_start, length=length,
-        today=today, floor=floor,
+        last_pay_date=cycle_start, today=today, floor=floor,
         transactions=list(EATING_OUT + OTHER) if transactions is None else transactions)
 
 
@@ -235,11 +235,12 @@ def test_dates_before_the_floor_are_clamped(chat_tools):
     # Weekly: 12 cycles is only 84 days, so the month floor (1 Sep last year) wins.
     (7, "2026-09-17", "2026-09-20", "2025-09-01"),
     (14, CYCLE_START, TODAY, "2025-09-01"),
-    # Monthly, late in the cycle, early in the month: 12 cycles reach past the month floor.
-    (30, "2026-08-05", "2026-09-02", "2025-08-10"),
+    # Monthly, late in the cycle, early in the month: 12 calendar months of cycles reach past
+    # the month floor.
+    (30, "2026-08-05", "2026-09-02", "2025-08-05"),
 ])
 def test_lookback_floor_is_the_earlier_of_twelve_cycles_and_twelve_months(chat_tools, length, cycle_start, today, floor):
-    assert chat_tools.lookback_floor(cycle_start, length, today) == floor
+    assert chat_tools.lookback_floor(cycle_start, length, cycle_start, today) == floor
 
 
 # --- privacy ---------------------------------------------------------------------------------

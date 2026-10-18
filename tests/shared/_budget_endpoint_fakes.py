@@ -18,7 +18,7 @@ from _api_event import api_event
 CYCLE_START = "2026-08-06"
 TODAY = "2026-08-10"
 LENGTH = 30
-PAYDATE = "2026-01-01"
+PAYDATE = "2026-01-06"   # monthly on the 6th, so CYCLE_START is a real payday
 
 
 class _FakePayCycleRepo:

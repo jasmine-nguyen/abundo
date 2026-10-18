@@ -8,12 +8,13 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import LENGTH, TODAY  # settle cutoff 2026-07-31
+from _budget_endpoint_fakes import TODAY  # settle cutoff 2026-07-31
 from _rollover_fakes import charge, cycle_record
 
 OLDER_SEALED = ("2026-05-08", "2026-06-06")
 SEALED = ("2026-06-07", "2026-07-06")
 SETTLING = ("2026-07-07", "2026-08-05")
+PAYDAY_6TH = "2026-01-06"
 
 
 def _txn(amount, *, category="salary", status="posted", counts=True, budget_excluded=None):
@@ -38,7 +39,7 @@ def _entry(**extra):
 
 
 def _seal(shared, entry, windows, charges):
-    return shared.spend.seal_rollover(entry, windows, {"sink"}, charges, LENGTH, TODAY)
+    return shared.spend.seal_rollover(entry, windows, {"sink"}, charges, TODAY)
 
 
 def _record(start, end, leftover):
@@ -93,21 +94,28 @@ def test_the_last_payback_cycle_is_index_n_and_the_plan_is_over_at_n_plus_one(sh
 # --- spread_index: an UNCAPPED elapsed-cycle count ------------------------------
 
 
-def test_spread_index_counts_whole_cycles_since_the_anchor(shared):
-    assert shared.spend.spread_index("2026-08-06", "2026-08-06", 30) == 0   # still the anchor cycle
-    assert shared.spend.spread_index("2026-07-07", "2026-08-06", 30) == 1   # the next cycle
-    assert shared.spend.spread_index("2026-05-08", "2026-08-06", 30) == 3
+@pytest.mark.parametrize("length, last_pay_date, spread_from, current_start, expected", [
+    (14, "2026-07-23", "2026-08-06", "2026-08-06", 0),   # still the anchor cycle
+    (14, "2026-07-23", "2026-07-23", "2026-08-06", 1),   # the next cycle
+    (14, "2026-07-23", "2026-06-25", "2026-08-06", 3),
+    (30, "2026-01-31", "2026-01-31", "2026-01-31", 0),   # monthly from the 31st, across Feb (ABU-44)
+    (30, "2026-01-31", "2026-01-31", "2026-02-28", 1),
+    (30, "2026-01-31", "2026-01-31", "2026-03-31", 2),
+])
+def test_spread_index_counts_whole_cycles_since_the_anchor(shared, length, last_pay_date, spread_from,
+                                                           current_start, expected):
+    assert shared.spend.spread_index(spread_from, current_start, length, last_pay_date) == expected
 
 
 def test_spread_index_is_not_capped_by_a_lookback_limit(shared):
     # FAIL-ON-REVERT for the saturation bug: deriving the position from the CAPPED
     # `completed_cycle_windows` (max 12 or 24) would pin a long-gap read at the cap, so a
     # plan whose `cycles` equals the cap could never be seen to end. The direct count keeps
-    # climbing: ~948 days on a 30-day cycle is 31 cycles, past any cap.
-    index = shared.spend.spread_index("2024-01-01", "2026-08-06", 30)
+    # climbing: Jan 2024 to Aug 2026 on a monthly cycle is 31 cycles, past any cap.
+    index = shared.spend.spread_index("2024-01-06", "2026-08-06", 30, "2024-01-06")
     assert index == 31
     assert index > 24
-    assert index != len(shared.spend.completed_cycle_windows("2024-01-01", "2026-08-06", 30, 24))
+    assert index != len(shared.spend.completed_cycle_windows("2024-01-06", "2026-08-06", 30, 24, "2024-01-06"))
 
 
 def test_excluded_charge_removed_from_a_mixed_set(shared):
@@ -261,7 +269,7 @@ def test_the_listed_cycles_plus_earlier_add_up_to_the_carryover(shared, stored, 
     entry = {"target": Decimal(100), "carryover": Decimal(stored), "carryover_from": OLDER_SEALED[0],
              "carryover_history": history}
 
-    carryover, cycles, earlier, persist = shared.spend.seal_rollover(entry, windows, {"sink"}, CHARGES, LENGTH, TODAY)
+    carryover, cycles, earlier, persist = shared.spend.seal_rollover(entry, windows, {"sink"}, CHARGES, TODAY)
 
     assert sum((c["leftover"] for c in cycles), Decimal(0)) + earlier == carryover
     assert [c["start"] for c in cycles] == sorted((c["start"] for c in cycles), reverse=True)
@@ -358,27 +366,27 @@ def test_unified_available_does_not_clamp_a_negative_result(shared):
 def test_first_prior_cycle_is_the_length_day_span_ending_the_day_before(shared):
     # Current cycle starts 2024-01-31, fortnightly → prior cycle is [2024-01-17,
     # 2024-01-30]: a full 14 inclusive days that ends the day before the current start.
-    start, end = shared.spend.nth_prior_cycle_window("2024-01-31", 14, 1)
+    start, end = shared.spend.nth_prior_cycle_window("2024-01-31", 14, 1, "2024-01-03")
     assert (start, end) == ("2024-01-17", "2024-01-30")
     assert (date.fromisoformat(end) - date.fromisoformat(start)).days == 13  # 14 inclusive days
 
 
 def test_nth_prior_steps_back_n_full_cycles_with_no_gap(shared):
-    p1_start, _p1_end = shared.spend.nth_prior_cycle_window("2024-01-31", 14, 1)
-    p2_start, p2_end = shared.spend.nth_prior_cycle_window("2024-01-31", 14, 2)
+    p1_start, _p1_end = shared.spend.nth_prior_cycle_window("2024-01-31", 14, 1, "2024-01-03")
+    p2_start, p2_end = shared.spend.nth_prior_cycle_window("2024-01-31", 14, 2, "2024-01-03")
     assert (p2_start, p2_end) == ("2024-01-03", "2024-01-16")
     # The 2nd prior window ends exactly the day before the 1st prior window starts.
     assert (date.fromisoformat(p1_start) - date.fromisoformat(p2_end)).days == 1
 
 
 def test_completed_cycle_windows_are_the_full_cycles_between_anchor_and_now(shared):
-    # Anchor 90 days before the current cycle_start, monthly (30) → exactly 3 completed
-    # cycles, oldest-first, each a 30-day inclusive span abutting the next with no gap.
-    windows = shared.spend.completed_cycle_windows("2026-05-08", "2026-08-06", 30, max_cycles=12)
+    # Anchor 3 months before the current cycle_start, monthly on the 6th → exactly 3 completed
+    # cycles, oldest-first, each a calendar month abutting the next with no gap.
+    windows = shared.spend.completed_cycle_windows("2026-05-06", "2026-08-06", 30, 12, PAYDAY_6TH)
     assert windows == [
-        ("2026-05-08", "2026-06-06"),
-        ("2026-06-07", "2026-07-06"),
-        ("2026-07-07", "2026-08-05"),
+        ("2026-05-06", "2026-06-05"),
+        ("2026-06-06", "2026-07-05"),
+        ("2026-07-06", "2026-08-05"),
     ]
     # Each window's end is the day before the next window's start (no overlap, no gap).
     for (s1, e1), (s2, _e2) in zip(windows, windows[1:]):
@@ -389,18 +397,18 @@ def test_completed_cycle_windows_are_the_full_cycles_between_anchor_and_now(shar
 
 def test_completed_cycle_windows_empty_when_no_full_cycle_elapsed(shared):
     # current_start == anchor (still in the first cycle) → nothing to fold.
-    assert shared.spend.completed_cycle_windows("2026-08-06", "2026-08-06", 30, max_cycles=12) == []
+    assert shared.spend.completed_cycle_windows("2026-08-06", "2026-08-06", 30, 12, PAYDAY_6TH) == []
     # A current_start BEFORE the anchor (defensive) also yields nothing, never an inverted window.
-    assert shared.spend.completed_cycle_windows("2026-08-06", "2026-07-01", 30, max_cycles=12) == []
+    assert shared.spend.completed_cycle_windows("2026-08-06", "2026-07-06", 30, 12, PAYDAY_6TH) == []
 
 
 def test_completed_cycle_windows_caps_to_the_most_recent_max_cycles(shared):
     # 6 full cycles have elapsed but the cap is 2 → only the 2 most-recent are returned
     # (the older leftovers are dropped; the caller advances its anchor past them).
-    windows = shared.spend.completed_cycle_windows("2026-02-07", "2026-08-06", 30, max_cycles=2)
+    windows = shared.spend.completed_cycle_windows("2026-02-06", "2026-08-06", 30, 2, PAYDAY_6TH)
     assert windows == [
-        ("2026-06-07", "2026-07-06"),
-        ("2026-07-07", "2026-08-05"),
+        ("2026-06-06", "2026-07-05"),
+        ("2026-07-06", "2026-08-05"),
     ]
 
 
@@ -432,3 +440,68 @@ def test_transactions_in_window_filters_inclusive_by_date(shared):
 )
 def test_counts_to_budget_in_shared_spend(shared, account_id, category, expected):
     assert shared.spend.counts_to_budget(account_id, category) is expected
+
+
+# --- monthly pay cycle steps by calendar month (ABU-44) --------------------------
+
+
+@pytest.mark.parametrize("today, expected_start", [
+    (date(2026, 2, 15), "2026-02-15"),
+    (date(2026, 3, 20), "2026-03-15"),
+    (date(2026, 6, 15), "2026-06-15"),
+    (date(2026, 10, 15), "2026-10-15"),
+    (date(2026, 10, 14), "2026-09-15"),
+])
+def test_a_monthly_cycle_from_the_15th_starts_on_the_15th_every_month(shared, today, expected_start):
+    assert shared.spend.current_cycle_window("2026-01-15", 30, today) == (expected_start, today.isoformat())
+
+
+@pytest.mark.parametrize("today, expected_start", [
+    (date(2026, 2, 28), "2026-02-28"),
+    (date(2026, 3, 31), "2026-03-31"),
+    (date(2026, 4, 30), "2026-04-30"),
+    (date(2026, 5, 31), "2026-05-31"),
+])
+def test_a_monthly_cycle_from_the_31st_uses_the_months_last_day(shared, today, expected_start):
+    assert shared.spend.current_cycle_window("2026-01-31", 30, today) == (expected_start, today.isoformat())
+
+
+@pytest.mark.parametrize("cycle_start, last_pay_date, n, expected", [
+    ("2026-03-31", "2026-01-31", 1, ("2026-02-28", "2026-03-30")),
+    ("2026-04-30", "2026-01-31", 1, ("2026-03-31", "2026-04-29")),
+    ("2026-03-31", "2026-01-31", 2, ("2026-01-31", "2026-02-27")),
+    ("2028-03-31", "2028-01-31", 1, ("2028-02-29", "2028-03-30")),   # leap year
+    ("2027-01-15", "2026-01-15", 1, ("2026-12-15", "2027-01-14")),   # year end
+])
+def test_a_monthly_prior_cycle_is_a_calendar_month(shared, cycle_start, last_pay_date, n, expected):
+    assert shared.spend.nth_prior_cycle_window(cycle_start, 30, n, last_pay_date) == expected
+
+
+def test_monthly_completed_cycles_from_the_31st_follow_each_months_last_day(shared):
+    assert shared.spend.completed_cycle_windows("2026-01-31", "2026-05-31", 30, 12, "2026-01-31") == [
+        ("2026-01-31", "2026-02-27"),
+        ("2026-02-28", "2026-03-30"),
+        ("2026-03-31", "2026-04-29"),
+        ("2026-04-30", "2026-05-30"),
+    ]
+
+
+@pytest.mark.parametrize("day, length, last_pay_date, current_start, expected", [
+    ("2026-07-12", 30, "2026-01-15", "2026-10-15", "2026-07-15"),   # 3 days early -> forward
+    ("2026-07-18", 30, "2026-01-15", "2026-10-15", "2026-07-15"),   # 3 days late -> back
+    ("2026-06-30", 30, "2026-01-15", "2026-10-15", "2026-06-15"),   # 15 days either way -> earlier
+    ("2026-07-15", 30, "2026-01-15", "2026-10-15", "2026-07-15"),   # on the grid -> unchanged
+    ("2026-11-12", 30, "2026-01-15", "2026-10-15", "2026-10-15"),   # held to the current start
+    ("2026-08-06", 14, "2026-07-23", "2026-08-06", "2026-08-06"),   # fortnightly on-grid -> unchanged
+])
+def test_snap_to_pay_cycle_moves_to_the_nearest_payday(shared, day, length, last_pay_date, current_start, expected):
+    assert shared.spend.snap_to_pay_cycle(day, length, last_pay_date, current_start) == expected
+
+
+@pytest.mark.parametrize("stored_paydate, last_pay_date, expected", [
+    ("2026-01-15", "2026-03-15", True),    # same day of the month
+    ("2026-01-31", "2026-04-30", False),   # the 31st and the 30th are different schedules
+])
+def test_a_monthly_plan_is_on_the_same_schedule_when_the_day_of_month_matches(shared, stored_paydate,
+                                                                            last_pay_date, expected):
+    assert shared.spend.same_pay_cycle(30, stored_paydate, 30, last_pay_date) is expected
