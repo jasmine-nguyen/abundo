@@ -138,7 +138,6 @@ export function ScrollChromeHeader<S extends Section>({
       {sections ? (
         <SectionList
           {...scrollProps}
-          style={{ flex: 1 }}
           sections={sections}
           renderItem={renderItem}
           renderSectionHeader={renderSectionHeader}
