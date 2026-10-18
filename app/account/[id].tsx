@@ -121,8 +121,9 @@ export default function AccountDetail() {
             accessibilityLabel="Load older transactions for this account"
           />
         ) : null}
-        // The window counts each day heading and footer as a cell: 60 draws a whole first page.
-        initialNumToRender={60}
+        // The window counts each day's heading and section footer as cells too (3 per day at worst):
+        // 90 draws a whole first page of 30 rows over 30 days.
+        initialNumToRender={90}
         stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
