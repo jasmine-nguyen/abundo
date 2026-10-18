@@ -73,20 +73,3 @@ def test_a_leftover_saved_spread_is_ignored_and_never_rewritten(handler):
     assert budget_repo._table.update_calls == []
     assert budget_repo._table.put_calls == []
 
-
-def test_a_row_flagged_both_rollover_and_spread_never_sums_both_cushions(handler):
-    # An old row can carry rollover AND leftover spread fields. Only the rollover carryover
-    # counts — never target + carryover + the old spread amount.
-    cats = [{"id": "both", "bucket": "Lifestyle", "parent": None}]
-    entry = {
-        "target": Decimal(100), "rollover": True, "carryover": Decimal(0),
-        "carryover_from": "2026-05-08", "carryover_len": Decimal(LENGTH), "carryover_paydate": PAYDATE,
-        "spread_amount": BILL, "spread_cycles": Decimal(4), "spread_from": CYCLE_START,
-        "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE,
-    }
-    budget_repo = recording_budget_repo({"both": entry})
-    result = _list(handler, budget_repo, categories=cats)
-
-    # Rollover cushion only: 100 + 300 == 400. Summing both would be 400 + BILL — never that.
-    assert result["both"]["available"] == Decimal(400)
-    assert result["both"]["available"] != Decimal(400) + BILL

@@ -145,26 +145,17 @@ class BudgetRepository(RepositoryBase):
         cycle since — inflating the buffer with money that was never budgeted (WHIT-474).
 
         The buffer itself is discarded: it is meaningless on an Income earn-target, and
-        re-enabling rollover later starts fresh. No-op/lock semantics per _strip_fields.
-        """
-        self._strip_fields(cat_id, _ROLLOVER_FIELDS, "clear rollover")
-
-    def _strip_fields(self, cat_id: str, fields: tuple, operation: str) -> None:
-        """Remove `fields` from ONE category's budget entry, keeping everything else.
-
-        Idempotent no-op (no seed, no version bump) when the category has no budget entry or
-        the entry carries none of `fields` — the common case, so a plain edit of an
-        Income/Savings category is cheap. Writes the whole stripped entry back under the same
-        optimistic-lock guard as set_budget, retrying once on a race. `operation` names the
-        caller in the error it raises.
+        re-enabling rollover later starts fresh. A no-op (no seed, no version bump) when the
+        category has no budget entry or carries no rollover fields; otherwise writes the stripped
+        entry back under the same optimistic-lock guard as set_budget, retrying once on a race.
         """
         def build(item):
             if item is None or cat_id not in item["items"]:
                 return None  # no budget for this id -> nothing to clear
             entry = item["items"][cat_id]
-            stripped = {k: v for k, v in entry.items() if k not in fields}
+            stripped = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
             if stripped == entry:
-                return None  # none of the fields present -> no-op, don't bump the version
+                return None  # no rollover fields present -> no-op, don't bump the version
             return set_map_entry(cat_id, stripped), None
 
-        self._versioned_update(build, action=operation, seed=False)
+        self._versioned_update(build, action="clear rollover", seed=False)
