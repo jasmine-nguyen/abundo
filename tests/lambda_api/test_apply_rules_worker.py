@@ -54,8 +54,7 @@ def test_worker_that_runs_out_of_time_marks_the_job_failed_with_partial_counts(
         apply_rules_worker, monkeypatch):
     # ABU-98: a sweep that hits the Lambda timeout is killed before its `except` runs, leaving the
     # job "running" forever. With no time left before the deadline margin, the worker must stop
-    # early and end the job failed, saving how far it got. At most the one write the WriteLimit
-    # always lets through lands.
+    # early and end the job failed, saving how far it got.
     # FAIL-ON-REVERT: restore WriteLimit.none() and all 3 are filed and the job succeeds.
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES") for i in range(3)]
@@ -69,8 +68,8 @@ def test_worker_that_runs_out_of_time_marks_the_job_failed_with_partial_counts(
     assert job["status"] == "failed"
     assert job["error"] == "ran out of time"
     assert job["matched"] == 3
-    assert job["filed"] <= 1 and job["remaining"] == 3 - job["filed"]
-    assert len(table.update_calls) == job["filed"]
+    assert job["filed"] == 0 and job["remaining"] == 3
+    assert table.update_calls == []
     assert job["vanished"] == 0 and job["failed"] == 0 and job["alreadyFiled"] == 0
 
 

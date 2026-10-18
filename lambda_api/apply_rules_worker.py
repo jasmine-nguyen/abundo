@@ -45,8 +45,12 @@ def _write_limit(context) -> WriteLimit:
     return WriteLimit(None, budget, time.monotonic())
 
 
-def _out_of_time(limit: WriteLimit) -> bool:
-    return limit.time_budget is not None and limit.clock() - limit.started >= limit.time_budget
+def _fail_out_of_time(job_repo: JobRepository, job_id: str, counts: dict, created_rule) -> dict:
+    logger.warning("apply-rules worker ran out of time for job %s, %d left",
+                   job_id, counts["remaining"])
+    job_repo.finish_job(job_id, STATUS_FAILED, counts, created_rule=created_rule,
+                        error="ran out of time")
+    return {"jobId": job_id, "status": STATUS_FAILED}
 
 
 def lambda_handler(event: dict, context=None) -> dict:
@@ -90,14 +94,10 @@ def lambda_handler(event: dict, context=None) -> dict:
         matched_total = len(plan["matched"])
         job_repo.update_progress(job_id, {**_zero_counts(), "matched": matched_total,
                                           "remaining": matched_total})
-        if matched_total and _out_of_time(limit):
+        if matched_total and limit.reached(1):
             # The reads used up the time: don't let WriteLimit's one guaranteed write start late.
-            logger.warning("apply-rules worker ran out of time before filing for job %s", job_id)
-            job_repo.finish_job(job_id, STATUS_FAILED,
-                                {**_zero_counts(), "matched": matched_total,
-                                 "remaining": matched_total},
-                                created_rule=created_rule, error="ran out of time")
-            return {"jobId": job_id, "status": STATUS_FAILED}
+            return _fail_out_of_time(job_repo, job_id, {**_zero_counts(), "matched": matched_total,
+                                                        "remaining": matched_total}, created_rule)
 
         progressed = {"filed_at_last_write": 0}
 
@@ -134,11 +134,7 @@ def lambda_handler(event: dict, context=None) -> dict:
         }
         if matched_remaining > 0:
             # A worker limit has no max_writes, so unfiled matches mean the deadline stopped it.
-            logger.warning("apply-rules worker ran out of time for job %s, %d left",
-                           job_id, matched_remaining)
-            job_repo.finish_job(job_id, STATUS_FAILED, counts, created_rule=created_rule,
-                                error="ran out of time")
-            return {"jobId": job_id, "status": STATUS_FAILED}
+            return _fail_out_of_time(job_repo, job_id, counts, created_rule)
         job_repo.finish_job(job_id, STATUS_SUCCEEDED, counts, created_rule=created_rule)
         return {"jobId": job_id, "status": STATUS_SUCCEEDED}
     except Exception as e:
