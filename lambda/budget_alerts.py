@@ -166,7 +166,7 @@ def fire_budget_alerts(ctx, normalised, *, category_repo, notify_repo) -> None:
     for cat_id in target_ids:
         row = rows[cat_id]
         basis = row["available"]
-        # basis <= 0 (a payback slice bigger than the whole target) would read every threshold
+        # basis <= 0 (a carried-over overspend bigger than the whole target) would read every threshold
         # as reached at $0 spend. Such a cycle reads over-budget on screen but sends no push — a
         # push the user couldn't act on — a deliberate, defensible silence.
         if basis <= 0:

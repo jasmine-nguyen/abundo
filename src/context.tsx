@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, MINUS, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
-import { writeFailureMessage, ApiError } from './apiError';
+import { writeFailureMessage } from './apiError';
 import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, toISODate } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
 import * as Crypto from 'expo-crypto';

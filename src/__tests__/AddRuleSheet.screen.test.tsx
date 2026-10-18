@@ -75,6 +75,23 @@ it('prefills the toggle from the edited rule (budgetExcluded:true stays on and i
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
 });
 
+// WHIT-558: the prefilled exclusion must ride through an edit of ONLY the pattern (the shared draft
+// object must not drop it when a sibling field changes).
+it('editing only the pattern preserves the prefilled budgetExcluded:true', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
+  fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'NETFLIX AU');
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX AU', 'subs', true);
+});
+
+// The toggle is genuinely two-way, not write-once.
+it('turning an inherited exclusion OFF submits budgetExcluded:false', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
+  fireEvent.press(screen.getByTestId('rule-budget-excluded'));
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
+});
+
 // WHIT-284 — a restored/prefilled categoryId whose category no longer exists must be dropped:
 // no selection, save disabled, and it can never be submitted.
 const openNew = (over: Record<string, unknown> = {}, rules: unknown[] = [], categories: unknown[] = CATS) =>

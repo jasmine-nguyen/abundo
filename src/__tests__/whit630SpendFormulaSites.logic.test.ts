@@ -54,7 +54,9 @@ describe('the two sites agree with the budget\'s available', () => {
   it.each(cases)('[A12] (P1) totals and the "of" line match for %o', (over) => {
     const b = budget({ id: 'food', ...over });
     const available = b.available;
-    expect(budgetViews(state(over)).totBudget).toBe(available);
+    const view = budgetViews(state(over));
+    expect(view.totBudget).toBe(available);
+    expect(view.rows[0].over).toBe(b.posted + b.pending > available);
     expect(budgetDetail(state(over), 'food')?.ofBudget).toContain(`$${available}`);
   });
 });

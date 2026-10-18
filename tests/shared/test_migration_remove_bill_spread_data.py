@@ -103,6 +103,18 @@ def test_a_lost_conditional_write_is_skipped_and_the_run_carries_on(script, clie
     assert "spread" not in table.store[("RULE", "RULE#r1")]
 
 
+def test_a_rule_deleted_during_the_run_is_skipped_not_recreated(script):
+    table = _seeded_table()
+    table.before_next_write(lambda key, t: None)
+    table.before_next_write(lambda key, t: t.store.pop(("RULE", "RULE#r1")))
+
+    result = _run(script, table, dry_run=False)
+
+    assert result == {"budgets_found": 1, "budgets_cleaned": 1,
+                      "rules_found": 2, "rules_cleaned": 1, "skipped": 1}
+    assert ("RULE", "RULE#r1") not in table.store
+
+
 def _two_spread_table():
     table = _seeded_table()
     table.store[_BUDGETS_KEY]["items"]["gym"] = copy.deepcopy(_SPREAD_ENTRY)
