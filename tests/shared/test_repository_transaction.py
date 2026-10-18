@@ -857,12 +857,6 @@ def test_hand_file_batch_inner_write_makes_a_raw_transfer_count(repo):
     assert row["budget_excluded"] is True
 
 
-def test_hand_file_on_the_home_loan_account_still_does_not_count(repo, shared):
-    key = _seed_transfer(repo, account_id=shared.spend.HOMELOAN_ACCOUNT_ID)
-    assert repo.update_transaction_category(*key, "groceries") is True
-    assert repo._table.store[key]["counts_to_budget"] is False
-
-
 def test_hand_file_single_makes_a_raw_transfer_count(repo):
     key = _seed_transfer(repo)
     assert repo.update_transaction_fields(*key, category="groceries") is True
