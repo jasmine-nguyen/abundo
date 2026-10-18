@@ -9,6 +9,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { persistCategoryBatch } from '../context';
 import { installFakeServer } from './support/fakeServer';
 import { resetAuth, setAuthToken } from './support/authMock';
+import { colesTxn } from './factory';
 
 const server = installFakeServer();
 
@@ -29,7 +30,7 @@ describe('persistCategoryBatch', () => {
   ])('splits %i ids into CATEGORY_BATCH_LIMIT chunks %j and marks all saved', async (count, chunks) => {
     const ids = Array.from({ length: count }, (_, i) => `t${i}`);
 
-    const out = await persistCategoryBatch(ids, 'coffee');
+    const out = await persistCategoryBatch(ids, 'coffee', []);
 
     expect(batches().map((updates) => updates.length)).toEqual(chunks);
     expect(out.failedIds).toEqual([]);
@@ -42,7 +43,7 @@ describe('persistCategoryBatch', () => {
       body: { results: [{ id: 'b', status: 'updated' }, { id: 'a', status: 'updated' }] },
     });
 
-    const out = await persistCategoryBatch(['a', 'b', 'c'], 'coffee');
+    const out = await persistCategoryBatch(['a', 'b', 'c'], 'coffee', []);
 
     expect([...out.savedIds].sort()).toEqual(['a', 'b']);
     expect(out.failedIds).toEqual(['c']); // never returned updated -> failed
@@ -53,7 +54,7 @@ describe('persistCategoryBatch', () => {
     server.once('PATCH', '/transactions', { body: allUpdated(ids.slice(0, 100)) }); // first 100 ok
     server.once('PATCH', '/transactions', 'dropped');                                // last 50 rejects
 
-    const out = await persistCategoryBatch(ids, 'coffee');
+    const out = await persistCategoryBatch(ids, 'coffee', []);
 
     expect(out.failedIds).toEqual(ids.slice(100)); // exactly the rejected chunk's ids, in order
     expect(out.savedIds.size).toBe(100);
@@ -64,26 +65,29 @@ describe('persistCategoryBatch', () => {
       body: { results: [{ id: 'a', status: 'updated' }, { id: 'b', status: 'not_found' }] },
     });
 
-    const out = await persistCategoryBatch(['a', 'b'], 'coffee');
+    const out = await persistCategoryBatch(['a', 'b'], 'coffee', []);
 
     expect([...out.savedIds]).toEqual(['a']);
     expect(out.failedIds).toEqual(['b']);
   });
 
-  it('sends one PATCH /transactions whose body carries every id with the chosen category', async () => {
-    await persistCategoryBatch(['a', 'b'], 'coffee');
+  it('sends one PATCH /transactions carrying each id, the chosen category and the cached charge\'s account', async () => {
+    // ABU-57: the account lets the server skip its lookup; an id not in the cache goes without one.
+    const cached = [colesTxn({ transaction_id: 'a', account_id: 'acct-anz' })];
+
+    await persistCategoryBatch(['a', 'b'], 'coffee', cached);
 
     expect(server.requests()).toEqual([{
       method: 'PATCH',
       path: '/transactions',
-      body: { updates: [{ id: 'a', category: 'coffee' }, { id: 'b', category: 'coffee' }] },
+      body: { updates: [{ id: 'a', category: 'coffee', account_id: 'acct-anz' }, { id: 'b', category: 'coffee' }] },
     }]);
   });
 
   it('with no sign-in token nothing is sent and every id comes back failed (no throw)', async () => {
     setAuthToken(undefined);
 
-    const out = await persistCategoryBatch(['a', 'b'], 'coffee');
+    const out = await persistCategoryBatch(['a', 'b'], 'coffee', []);
 
     expect(server.requests()).toEqual([]);
     expect(out.failedIds).toEqual(['a', 'b']);
