@@ -207,6 +207,7 @@ export default function TransactionDetail() {
                 accessibilityRole="button"
                 accessibilityLabel="Delete transaction"
                 accessibilityState={{ disabled: deleting }}
+                hitSlop={8}
                 style={[styles.deleteLink, deleting && { opacity: 0.6 }]}
               >
                 <Text style={styles.deleteText}>{deleting ? 'Deleting…' : 'Delete transaction'}</Text>

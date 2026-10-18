@@ -28,12 +28,12 @@ export function sharedHost(node: ReactTestInstance, other: ReactTestInstance) {
 // The title bar (Header) has no bottom edge at the top, draws one once `scroller` scrolls down,
 // and drops it again back at the top.
 export function expectScrollEdge(scroller: ReactTestInstance) {
-  const edge = () => styleOf(screen.getByTestId('header-wrap')).borderBottomWidth ?? 0;
-  expect(edge()).toBe(0);
+  const edge = () => styleOf(screen.getByTestId('header-wrap')).borderBottomColor;
+  expect(edge()).toBe('transparent');
   fireEvent.scroll(scroller, { nativeEvent: { contentOffset: { x: 0, y: 40 } } });
-  expect(edge()).toBeGreaterThan(0);
+  expect(edge()).not.toBe('transparent');
   fireEvent.scroll(scroller, { nativeEvent: { contentOffset: { x: 0, y: 0 } } });
-  expect(edge()).toBe(0);
+  expect(edge()).toBe('transparent');
 }
 
 // A large-text row stacks: name and amount aren't side by side, and nothing above the amount
