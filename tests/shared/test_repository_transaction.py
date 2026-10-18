@@ -645,8 +645,8 @@ def test_on_demand_rule_file_stamps_the_rule_id(repo):
 
 # --- WHIT-536 GAP: clear-by-hand and the tap-wins guard vs the stamp ---
 
-def _seed_row(repo, **item):
-    key = ("ACCOUNT#acct", "TXN#t1")
+def _seed_row(repo, account_id="acct", **item):
+    key = (f"ACCOUNT#{account_id}", "TXN#t1")
     repo._table.store = {key: {"pk": key[0], "sk": key[1], **item}}
     return key
 
@@ -843,11 +843,9 @@ def test_each_conditional_save_returns_false_when_the_row_is_gone(repo, call):
 # make it count, because contributes_to_budget reads exactly this stored attribute.
 
 def _seed_transfer(repo, account_id="acct", **extra):
-    key = (f"ACCOUNT#{account_id}", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "transaction_id": "t1",
-                               "category": "TRANSFER_OUT", "counts_to_budget": False,
-                               "budget_excluded": True, **extra}}
-    return key
+    item = {"transaction_id": "t1", "category": "TRANSFER_OUT", "counts_to_budget": False,
+            "budget_excluded": True, **extra}
+    return _seed_row(repo, account_id=account_id, **item)
 
 
 def test_hand_file_batch_inner_write_makes_a_raw_transfer_count(repo):
@@ -917,4 +915,20 @@ def test_rule_refile_makes_a_raw_transfer_count(repo):
 def test_rule_refile_stamp_mismatch_leaves_counts_to_budget_alone(repo):
     key = _seed_transfer(repo)
     assert repo.refile_rule_fill(*key, "groceries", "old-id", "new-id") is False
+    assert repo._table.store[key]["counts_to_budget"] is False
+
+
+@pytest.mark.parametrize("write", [
+    lambda repo, key: repo.update_transaction_category(*key, "groceries"),
+    lambda repo, key: repo.update_transaction_fields(*key, category="groceries"),
+    lambda repo, key: repo.update_transaction_category_if_unchanged(*key, "groceries", "TRANSFER_OUT"),
+    lambda repo, key: repo.refile_rule_fill(*key, "groceries", "old-id", "new-id"),
+], ids=["batch-inner", "single", "sweep", "rule-refile"])
+@pytest.mark.parametrize("seeded", [True, False], ids=["seeded-true", "seeded-false"])
+def test_every_category_write_keeps_the_home_loan_out_of_budgets(repo, shared, write, seeded):
+    # [A2] The flag is recomputed from the account, not just switched on by any filing.
+    key = _seed_transfer(repo, account_id=shared.spend.HOMELOAN_ACCOUNT_ID,
+                         counts_to_budget=seeded, filed_by_rule="old-id")
+    write(repo, key)
+    assert repo._table.store[key]["category"] == "groceries"
     assert repo._table.store[key]["counts_to_budget"] is False

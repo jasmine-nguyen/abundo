@@ -584,3 +584,18 @@ def test_other_methods_on_the_apply_path_are_not_routed(handler, monkeypatch, me
     resp = handler.lambda_handler(apply_rules_event({"dryRun": True}, method=method), None)
 
     assert resp["statusCode"] == 404
+
+
+@pytest.mark.parametrize("account_id, counts", [(SPENDING, True), (HOMELOAN, False)])
+def test_the_write_recomputes_whether_a_raw_transfer_counts_to_budget(handler, account_id, counts):
+    # [A6] ABU-31 end to end on the sweep: a raw TRANSFER_OUT charge (stored counts_to_budget=False)
+    # filed by a rule counts from then on, except on the home loan, which never counts.
+    table, repo, rule_repo = real_repos({account_id: [_row(
+        account_id, "2026-07-02", "hit", description="COLES 1", category="TRANSFER_OUT",
+        counts_to_budget=False, budget_excluded=True)]}, rules=[_rule("coles")])
+    _, body = _call(handler, repo, rule_repo, {"dryRun": False})
+
+    assert body["filed"] == [{"id": "hit", "category": "groceries"}]
+    row = stored(table, "hit", account_id)
+    assert row["counts_to_budget"] is counts
+    assert row["budget_excluded"] is True
