@@ -17,6 +17,7 @@ import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { BalanceFreshnessPill } from '../../src/components/BalanceFreshnessPill';
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
+import { SECTION_LIST_FIRST_DRAW } from '../../src/motion/ScrollChromeHeader';
 import type { Transaction } from '../../src/types';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
@@ -121,9 +122,7 @@ export default function AccountDetail() {
             accessibilityLabel="Load older transactions for this account"
           />
         ) : null}
-        // The window counts each day's heading and section footer as cells too (3 per day at worst):
-        // 90 draws a whole first page of 30 rows over 30 days.
-        initialNumToRender={90}
+        initialNumToRender={SECTION_LIST_FIRST_DRAW}
         stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}

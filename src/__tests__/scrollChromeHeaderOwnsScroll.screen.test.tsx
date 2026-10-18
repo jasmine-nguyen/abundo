@@ -4,10 +4,10 @@
 // can't pass as "58".
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { View, Text, Animated, StyleSheet } from 'react-native';
+import { View, Text, Animated, StyleSheet, SectionList, ScrollView, RefreshControl } from 'react-native';
 import { render, fireEvent } from '@testing-library/react-native';
 import { C } from '../theme';
-import { styleOf } from './support/layout';
+import { styleOf, textOf } from './support/layout';
 import { contentStyle, headerMotion, scrollTo } from './support/scrollChromeHeader';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -62,6 +62,45 @@ it('with a subtitle, slides away by the measured header height and drops it when
 
   r.rerender(header(null));
   expect(contentStyle(r).paddingTop).toBe(105);
+});
+
+// ABU-100: given `sections`, the header hosts an on-screen-only list (SectionList) with the screen's
+// controls (children) above the rows and `footer` below, and keeps the same scroll chrome: the
+// header hides on scroll, the content clears the header, the pull spinner sits below it, and the
+// keyboard prop reaches the scroller.
+it('list mode: draws the rows in a SectionList between children and footer, with the same scroll chrome', () => {
+  const sections = [{ key: 'Today', data: [{ id: 'r1', label: 'row one' }, { id: 'r2', label: 'row two' }] }];
+  const r = render(
+    <NavBarsProvider reduceMotion>
+      <ScrollChromeHeader
+        title="Transactions"
+        sections={sections}
+        keyExtractor={(item: { id: string }) => item.id}
+        renderItem={({ item }: { item: { label: string } }) => <Text>{item.label}</Text>}
+        renderSectionHeader={({ section }: { section: { key: string } }) => <Text>{section.key}</Text>}
+        footer={<Text>footer</Text>}
+        keyboardShouldPersistTaps="handled"
+        onRefresh={() => {}}
+      >
+        <Text>controls</Text>
+      </ScrollChromeHeader>
+    </NavBarsProvider>,
+  );
+
+  expect(r.UNSAFE_getAllByType(SectionList)).toHaveLength(1);
+  const text = textOf(r.root);
+  for (const part of ['controls', 'Today', 'row one', 'row two', 'footer']) expect(text).toContain(part);
+  expect(text.indexOf('controls')).toBeLessThan(text.indexOf('row one'));
+  expect(text.indexOf('row two')).toBeLessThan(text.indexOf('footer'));
+
+  expect(contentStyle(r).paddingTop).toBe(105);
+  expect(r.UNSAFE_getByType(RefreshControl).props.progressViewOffset).toBe(105);
+  expect(r.UNSAFE_getAllByType(ScrollView)[0].props.keyboardShouldPersistTaps).toBe('handled');
+
+  scrollTo(r, 200);
+  expect(headerMotion(r)).toMatchObject({ translateY: -105, opacity: 0 });
+  scrollTo(r, 100);
+  expect(headerMotion(r)).toMatchObject({ translateY: 0, opacity: 1 });
 });
 
 // WHIT-729: when scrolling hides the header, the area behind the status bar (clock, Dynamic Island,
