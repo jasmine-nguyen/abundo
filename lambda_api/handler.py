@@ -1857,10 +1857,10 @@ def _start_job(
 
 
 def _read_job(
-    event: dict, job_repo: JobRepository, kind: str | None, noun: str,
+    event: dict, job_repo: JobRepository, kind: str, noun: str,
 ) -> tuple[dict | None, dict | None]:
     """The job named by the path id, as (job, None), or (None, error response): 404 for a missing,
-    unknown or expired id (or, when `kind` is given, a job of another kind), 500 on a read error."""
+    unknown, expired id or a job of another kind, 500 on a read error."""
     job_id = (event.get("pathParameters") or {}).get("id")
     if not job_id:
         return None, _json_response(404, {"error": f"no such {noun}"})
@@ -1868,7 +1868,7 @@ def _read_job(
         job = job_repo.get_job(job_id)
     except DatabaseError:
         return None, _json_response(500, {"error": f"could not read the {noun}"})
-    if job is None or (kind is not None and job.get("kind") != kind):
+    if job is None or job.get("kind") != kind:
         return None, _json_response(404, {"error": f"no such {noun}"})
     return job, None
 
@@ -1938,8 +1938,8 @@ def start_apply_rules_job(
 
 def get_apply_rules_job(event: dict, job_repo: JobRepository) -> dict:
     """GET /transactions/uncategorized/apply-rules/jobs/{id} — the current state of a job, so the
-    app can poll it to completion. 404 for an unknown or expired id."""
-    job, error = _read_job(event, job_repo, None, "job")
+    app can poll it to completion. 404 for an unknown or expired id, or a job of another kind."""
+    job, error = _read_job(event, job_repo, "apply_rules", "job")
     if error is not None:
         return error
     return _json_response(200, _job_to_client(job))
@@ -2017,13 +2017,11 @@ def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) ->
 
 
 def _windowed_rows(transactions: list[dict], predicate: Callable[[dict], bool]) -> list[dict]:
-    """Filter windowed transactions by `predicate`, strip the storage keys, and sort
+    """Filter windowed transactions by `predicate`, shape the rows like the feed, and sort
     newest-first — shared by the cycle-scoped drill-ins and the cycle export.
     """
     rows = [transaction for transaction in transactions if predicate(transaction)]
-    for transaction in rows:
-        transaction.pop("pk", None)
-        transaction.pop("sk", None)
+    _shape_feed_rows(rows)
     rows.sort(key=lambda transaction: transaction["date"], reverse=True)
     return rows
 

@@ -417,27 +417,6 @@ resource "aws_iam_role_policy" "balance_poller_logs" {
   })
 }
 
-# WHIT-493: renamed the balance-poller's execution role and inline policies from
-# homeloan_request_* to balance_poller_*. The deployed role/policy names change, so these
-# are replacements, not in-place moves; the blocks migrate the state address. Garbage-collect
-# once applied.
-moved {
-  from = aws_iam_role.homeloan_request_exec
-  to   = aws_iam_role.balance_poller_exec
-}
-moved {
-  from = aws_iam_role_policy.homeloan_request_dynamodb
-  to   = aws_iam_role_policy.balance_poller_dynamodb
-}
-moved {
-  from = aws_iam_role_policy.homeloan_request_ssm
-  to   = aws_iam_role_policy.balance_poller_ssm
-}
-moved {
-  from = aws_iam_role_policy.homeloan_request_logs
-  to   = aws_iam_role_policy.balance_poller_logs
-}
-
 # Push-receipts sweep lambda: Query the pending-receipts partition (list_pending),
 # DeleteItem resolved rows (delete), and UpdateItem to prune a dead device token
 # (DeviceRepository.remove uses a DELETE-expression UpdateItem). All hit base-table

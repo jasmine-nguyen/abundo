@@ -21,6 +21,7 @@ from constants import (
     ROLLOVER_HISTORY_MAX_CYCLES, ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
 )
+from rule_engine import is_unfiled_category
 
 def melbourne_today() -> date:
     """Today's date in the user's timezone (Australia/Melbourne), so the budget
@@ -425,15 +426,15 @@ def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) ->
     taxonomy: a raw BankSync category (e.g. "MEDICAL"), a deleted category's
     dangling id, or a null category. The complement of what summarise_transactions
     rolls up — same contribution rule (counts_to_budget, spend is a NEGATIVE
-    amount) and the same >= 0 clamp. The income sentinel ("income") is excluded,
-    matching the client's isUncategorized so the two views agree.
+    amount) and the same >= 0 clamp. What counts as unfiled is the shared
+    rule_engine.is_unfiled_category.
 
     Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate
     (every contributor folds into one bucket), not a per-category dict.
     """
     totals = summarise(
         transactions,
-        keep=lambda category: category != "income" and category not in taxonomy_ids,
+        keep=lambda category: is_unfiled_category(category, taxonomy_ids),
         key=lambda category: "__all__",
     )
     return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
