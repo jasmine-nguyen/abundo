@@ -5,8 +5,8 @@ resource "aws_dynamodb_table" "dynamodb_table" {
   range_key    = "sk"
 
   # Auto-expire rows via their epoch-seconds `expires_at`: FAILED# dead-letter
-  # rows (WHIT-54), EVENT# webhook dedup markers (ABU-46), jobs, push receipts
-  # and notify markers. Only items that carry the attribute are ever expired —
+  # rows (WHIT-54), EVENT# webhook dedup markers (ABU-46), deleted-transaction
+  # tombstones, jobs, push receipts and notify markers. Only items that carry the attribute are ever expired —
   # all other rows are untouched.
   ttl {
     attribute_name = "expires_at"
