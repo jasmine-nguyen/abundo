@@ -178,6 +178,21 @@ it('empty Uncategorized tab (settled) shows the "All caught up" empty state', as
   expect(await screen.findByText('All caught up')).toBeTruthy();
 });
 
+// [A1] ABU-100: through the on-screen-only list, each day heading still sits above its own rows,
+// newest day first, with the controls above and Load More below.
+it('the rows sit under their own day heading, between the controls and Load More', async () => {
+  seedFeedPage(server, FEED, [
+    { ...ROW, transaction_id: 'new', date: '2026-07-02', authorized_date: '2026-07-02', amount: -7 },
+    { ...ROW, transaction_id: 'old', amount: -42 },
+  ], 'c1');
+  await draw();
+  const text = textOf(screen.root);
+  const order = ['Uncategorised', 'Thu 2 Jul', '−⁠$7.00', 'Wed 1 Jul', '−⁠$42.00', 'Load More'];
+  const at = order.map((part) => text.indexOf(part));
+  expect(at.every((index) => index >= 0)).toBe(true);
+  expect(at).toEqual([...at].sort((a, b) => a - b));
+});
+
 // ===== Load More (folded from transactionsLoadMore.screen.test.tsx) =====
 // The Transactions tab "Load More" control: the feed's `nextCursor` decides whether there is more
 // history, and a tap sends the next feed read with that cursor.
@@ -364,6 +379,19 @@ it('typing filters the list to matching rows', async () => {
   type('wool');
   expect(screen.getByText('−\u2060$42.00')).toBeTruthy();   // Woolworths matches
   expect(screen.queryByText('−\u2060$8.50')).toBeNull();    // coffee filtered out
+});
+
+// [A2] ABU-100: the search box sits in the list's header. Typing changes the rows below it, but
+// the box itself must stay the same mounted input, or the keyboard drops on every letter.
+it('typing keeps the same search box mounted while the rows change', async () => {
+  await draw();
+  const box = screen.getByPlaceholderText('Search transactions');
+  for (const q of ['w', 'wo', 'woo', 'wool', 'xyz', '']) {
+    type(q);
+    expect(screen.getByPlaceholderText('Search transactions')).toBe(box);
+  }
+  expect(screen.getByText('−⁠$8.50')).toBeTruthy();
+  await settle();
 });
 
 it('the ✕ clears the search and restores the full list', async () => {
