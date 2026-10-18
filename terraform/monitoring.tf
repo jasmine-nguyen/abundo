@@ -134,58 +134,19 @@ resource "aws_cloudwatch_metric_alarm" "push_delivery_failures" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
-# --- Goal-nudge sweep-failure alarm (WHIT-258) ------------------------------
+# --- Goal-nudge health alarm (WHIT-258/260, merged in ABU-102) -------------
+# One heartbeat covers every way the daily behind-pace sweep can go wrong. handler.py logs
+# "goal-nudge sweep: N nudge(s) sent" ONLY on success, so no heartbeat means one of:
+# - a swallowed failure (the handler catches it and returns before the success line),
+# - an import crash, timeout or OOM (the run ends before the success line),
+# - a disabled or missing schedule (the lambda is never invoked).
+# No metric math or composite alarm: like WHIT-655, one alarm on one metric stays inside the
+# free tier. The cost is slower detection (2 days, not minutes) for a once-a-day reminder.
 
-# One datapoint each time the behind-pace nudge sweep logs a swallowed failure (the handler
-# catches every exception, logs "goal-nudge sweep failed ...", and returns {"nudged": 0}).
-# Because it swallows, AWS's built-in Lambda Errors metric never fires — this log-line metric
-# is the only signal that a broken sweep isn't merely "nothing was behind". default_value 0
-# so a healthy run publishes 0 rather than no-data.
-resource "aws_cloudwatch_log_metric_filter" "goal_nudge_sweep_failures" {
-  name           = "${var.project_name}-goal-nudge-sweep-failures"
-  log_group_name = aws_cloudwatch_log_group.goal_nudge.name
-  # Quoted → exact-substring match. The "goal-nudge" hyphen is a special char in the unquoted
-  # filter grammar (leading "-" negates); quoting sidesteps any tokenization ambiguity so this
-  # monitor for a silent failure can't itself silently never match. AWS-recommended for terms
-  # with non-alphanumerics.
-  pattern = "\"goal-nudge sweep failed\""
-
-  metric_transformation {
-    name          = "GoalNudgeSweepFailures"
-    namespace     = "${var.project_name}/GoalNudge"
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-# Breaches when the sweep swallowed one or more failures in a day (a repo/IAM/paycycle error).
-# The invocation still returns 200, so this log-line metric is the signal it didn't run cleanly.
-resource "aws_cloudwatch_metric_alarm" "goal_nudge_sweep_failures" {
-  alarm_name          = "${var.project_name}-goal-nudge-sweep-failures"
-  namespace           = "${var.project_name}/GoalNudge"
-  metric_name         = "GoalNudgeSweepFailures"
-  statistic           = "Sum"
-  period              = 86400
-  evaluation_periods  = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "The daily behind-pace goal-nudge sweep swallowed one or more failures in the last day (a broken sweep, invisible via the built-in Errors metric)."
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-}
-
-# --- Goal-nudge liveness alarms (WHIT-260) ----------------------------------
-# The WHIT-258 alarm above only fires when the sweep RUNS and logs a swallowed failure. It is
-# blind to the sweep NEVER running (schedule disabled/misconfigured) or CRASHING ON IMPORT
-# (before the try/except in handler.py) — both produce no "failed" line, so that metric stays 0
-# and its notBreaching alarm sits green during a total outage. These two close that gap.
-
-# One datapoint each time the sweep completes a healthy run (handler.py logs
-# "goal-nudge sweep: N nudge(s) sent" ONLY on success — the swallowed-failure path returns
-# before it). This is the heartbeat. Quoted → exact-substring match (parentheses are literal;
-# mirrors the WHIT-258 quoting so this silent-failure monitor can't itself silently never
-# match). Keep the pattern and handler.py:42 in lockstep. default_value 0 so a live run still
-# publishes a datapoint.
+# One datapoint each time the sweep completes a healthy run. Quoted → exact-substring match
+# (parentheses are literal), so this silent-failure monitor can't itself silently never match.
+# Keep the pattern and handler.py's success log line in lockstep. default_value 0 so a live run
+# still publishes a datapoint.
 resource "aws_cloudwatch_log_metric_filter" "goal_nudge_runs" {
   name           = "${var.project_name}-goal-nudge-runs"
   log_group_name = aws_cloudwatch_log_group.goal_nudge.name
@@ -199,13 +160,11 @@ resource "aws_cloudwatch_log_metric_filter" "goal_nudge_runs" {
   }
 }
 
-# Breaches if the sweep has not logged a healthy run across two consecutive days — catches a
-# disabled schedule, an import crash, or a sweep that always fails. treat_missing_data
-# "breaching" is load-bearing: total silence (no invocation → empty log group → no datapoints)
-# MUST page; notBreaching here would reintroduce the exact blind spot this alarm exists to fix.
-# Mirrors the age-out sibling (age_out_not_running).
-resource "aws_cloudwatch_metric_alarm" "goal_nudge_not_running" {
-  alarm_name          = "${var.project_name}-goal-nudge-not-running"
+# Breaches if the sweep has not logged a healthy run across two consecutive days.
+# treat_missing_data "breaching" is load-bearing: total silence (no invocation → empty log group
+# → no datapoints) MUST page. Mirrors the age-out sibling (age_out_not_running).
+resource "aws_cloudwatch_metric_alarm" "goal_nudge_health" {
+  alarm_name          = "${var.project_name}-goal-nudge-health"
   namespace           = "${var.project_name}/GoalNudge"
   metric_name         = "GoalNudgeRuns"
   statistic           = "Sum"
@@ -215,28 +174,9 @@ resource "aws_cloudwatch_metric_alarm" "goal_nudge_not_running" {
   threshold           = 1
   comparison_operator = "LessThanThreshold"
   treat_missing_data  = "breaching"
-  alarm_description   = "The daily behind-pace goal-nudge sweep has not logged a healthy run for 2 days (schedule disabled, crashing on import, or always failing)."
+  alarm_description   = "Goal-behind-pace reminders haven't run cleanly for 2 days. Check /aws/lambda/abundo-goal-nudge. 'goal-nudge sweep failed' lines = the sweep hit an error (the line names it: DynamoDB/IAM/pay cycle). 'Task timed out' / 'Runtime.' errors = the lambda crashed, timed out or ran out of memory. No log lines at all = the abundo-goal-nudge schedule is off or missing. After fixing, re-run abundo-goal-nudge. Missed reminders resend on the next run."
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
-}
-
-# Fast crash detection: the built-in Lambda Errors metric fires only on an infra failure the
-# handler CAN'T swallow — an import crash (before the try), a timeout, or OOM. A short period so
-# a crash pages within minutes rather than waiting on the 2-day heartbeat above. notBreaching:
-# no invocation is not an error (the never-ran case belongs to the heartbeat alarm).
-resource "aws_cloudwatch_metric_alarm" "goal_nudge_errors" {
-  alarm_name          = "${var.project_name}-goal-nudge-errors"
-  namespace           = "AWS/Lambda"
-  metric_name         = "Errors"
-  dimensions          = { FunctionName = aws_lambda_function.goal_nudge.function_name }
-  statistic           = "Sum"
-  period              = 300
-  evaluation_periods  = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "The goal-nudge lambda errored at the infra level (import crash / timeout / OOM) — a failure it cannot swallow, so it never reaches the sweep-failure log line."
-  alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
 # --- Transaction-trigger failure alarm (WHIT-644) ---------------------------
