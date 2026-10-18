@@ -8,12 +8,14 @@ import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill, MilestonesCardStatus, cardStyle } from '../src/components/ui';
 import { Header } from '../src/components/Header';
+import { useScrollEdge } from '../src/hooks/useScrollEdge';
 import { EquityCard, EquityBody, EquitySetupTeaser } from '../src/components/EquityCard';
 import { formatMonthYear } from '../src/dateutil';
 import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
 
 export default function Milestone() {
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const router = useRouter();
 
   // WHIT-197: the live balance + loan facts now come from the cached query layer.
@@ -31,8 +33,8 @@ export default function Milestone() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Home loan plan" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
+      <Header title="Home loan plan" divider={edge.scrolled} />
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
         {/* hero: current balance + schedule verdict */}
         <View style={styles.hero}>
           <HeroGradientFill />

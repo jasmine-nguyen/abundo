@@ -7,6 +7,7 @@ import { C, FONT } from '../../src/theme';
 import { useAppContext } from '../../src/context';
 import { useMilestonesQuery, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { NativeDateField } from '../../src/components/NativeDateField';
 import { MoneyField } from '../../src/components/MoneyField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
@@ -30,6 +31,7 @@ interface DraftRow {
 
 export default function MilestoneEdit() {
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const router = useRouter();
   const s = useAppContext(); // saveMilestones writer + showToast
 
@@ -107,8 +109,9 @@ export default function MilestoneEdit() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Edit plan" />
+      <Header title="Edit plan" divider={edge.scrolled} />
       <ScrollView
+        {...edge.scrollProps}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

@@ -6,6 +6,7 @@ import { C, FONT, fmtCompact } from '../src/theme';
 import { useAppContext } from '../src/context';
 import { useLoanFactsQuery, useRepaymentQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
+import { useScrollEdge } from '../src/hooks/useScrollEdge';
 import { DetailStates } from '../src/components/DetailStates';
 import { NativeDateField } from '../src/components/NativeDateField';
 import { MoneyField } from '../src/components/MoneyField';
@@ -16,6 +17,7 @@ import type { LoanFacts, LoanFactsInput } from '../src/api';
 
 export default function Loan() {
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   // WHIT-203: the form reads the cached loan-facts query. WHIT-819: it only mounts once the
   // saved facts have loaded, so it can never open blank and overwrite them on save.
   const authed = useIsAuthed();
@@ -27,7 +29,7 @@ export default function Loan() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Loan details" />
+      <Header title="Loan details" divider={edge.scrolled} />
       <DetailStates
         isLoading={loanFactsQuery.isLoading || repaymentPending}
         isError={loanFactsQuery.isError}
@@ -38,14 +40,18 @@ export default function Loan() {
         onRetry={() => loanFactsQuery.refetch()}
       >
         {loanFactsQuery.data && (
-          <LoanForm facts={loanFactsQuery.data} lastRepayment={repaymentQuery.data?.amount ?? null} />
+          <LoanForm facts={loanFactsQuery.data} lastRepayment={repaymentQuery.data?.amount ?? null} scrollProps={edge.scrollProps} />
         )}
       </DetailStates>
     </View>
   );
 }
 
-function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment: number | null }) {
+function LoanForm({ facts: f, lastRepayment, scrollProps }: {
+  facts: LoanFacts;
+  lastRepayment: number | null;
+  scrollProps: ReturnType<typeof useScrollEdge>['scrollProps'];
+}) {
   const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -118,6 +124,7 @@ function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment
 
   return (
     <ScrollView
+      {...scrollProps}
       contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"

@@ -9,6 +9,7 @@ import { accountDetail, accountNameFromId, useAppContext } from '../../src/conte
 import { useAccountTransactionsScreenData, useRefreshLiveBalances } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { Header } from '../../src/components/Header';
 import { DayHeading } from '../../src/components/DayHeading';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -27,6 +28,7 @@ import type { Transaction } from '../../src/types';
 // balance card and the empty messages live in the list header, inside the pull-to-refresh scroller.
 export default function AccountDetail() {
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { transactions, category, balances, isLoading, isError, refetch, hasMore, loadMore, isLoadingMore } = useAccountTransactionsScreenData(id);
@@ -105,8 +107,9 @@ export default function AccountDetail() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title={title} />
+      <Header title={title} divider={edge.scrolled} />
       <SectionList
+        {...edge.scrollProps}
         style={{ flex: 1 }}
         sections={sections}
         keyExtractor={(t) => t.transaction_id}

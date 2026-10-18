@@ -5,6 +5,7 @@ import { C, FONT, fmtExact } from '../../src/theme';
 import { categoryTransactions } from '../../src/context';
 import { useCategoryTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -29,6 +30,7 @@ function dateRangeParam(from?: string, to?: string): DateRange | undefined {
 // server then folds in subcategories, so the total matches the chat's answer.
 export default function CategoryDetail() {
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const { id, cycle, from, to } = useLocalSearchParams<{ id: string; cycle?: string; from?: string; to?: string }>();
   const range = dateRangeParam(from, to);
   // 0 = this cycle, 1 = last (the only values Insights pushes). Floor + clamp to the integer set
@@ -45,8 +47,9 @@ export default function CategoryDetail() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title={detail?.name ?? 'Category'} />
+      <Header title={detail?.name ?? 'Category'} divider={edge.scrolled} />
       <ScrollView
+        {...edge.scrollProps}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
       >

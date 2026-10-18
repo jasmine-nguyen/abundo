@@ -9,6 +9,7 @@ import type { Category } from '../../src/types';
 import { useBudgetsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { cleanAmount } from '../../src/numutil';
 
 // Spread a one-off bill over the coming pay cycles (WHIT-505). Reached from the budget detail
@@ -19,6 +20,7 @@ export default function BudgetSpread() {
   const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const edge = useScrollEdge();
   const { categoryId, prefill } = useLocalSearchParams<{ categoryId: string; prefill?: string }>();
   const { budgets, category } = useBudgetsScreenData();
   const cat = category(categoryId);
@@ -93,8 +95,9 @@ export default function BudgetSpread() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title={plan ? 'Edit bill spread' : 'Spread a bill'} />
+      <Header title={plan ? 'Edit bill spread' : 'Spread a bill'} divider={edge.scrolled} />
       <ScrollView
+        {...edge.scrollProps}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -165,10 +168,11 @@ function SpreadNotice({ cat, insets, note, noteTestID }: {
   note: string;
   noteTestID?: string;
 }) {
+  const edge = useScrollEdge();
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Spread a bill" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <Header title="Spread a bill" divider={edge.scrolled} />
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         <View style={styles.categoryRow}>
           <View style={[styles.chip, { backgroundColor: tint(cat.color, 0.15) }]}><Icon name={cat.icon} size={30} color={cat.color} /></View>
           <View><Text style={styles.categoryName}>{cat.name}</Text></View>
