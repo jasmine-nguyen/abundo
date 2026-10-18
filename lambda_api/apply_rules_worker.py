@@ -2,9 +2,10 @@
 
 The synchronous POST /transactions/uncategorized/apply-rules caps itself at 300 writes / 15s to
 stay inside the 30s API Gateway window, so a large history takes repeated "apply the rest" taps.
-This worker runs the SAME sweep uncapped on writes, stopping only before the Lambda deadline: the app's POST .../apply-rules/jobs creates a job
-row and async-invokes this function; it files every matched charge, writes its progress to the
-job row as it goes, and marks the row succeeded/failed at the end. The app polls GET .../jobs/{id}.
+This worker runs the SAME sweep uncapped on writes, stopping only before the Lambda deadline: the
+app's POST .../apply-rules/jobs creates a job row and async-invokes this function; it files every
+matched charge, writes its progress to the job row as it goes, and marks the row succeeded/failed
+at the end. The app polls GET .../jobs/{id}.
 
 It lives in the lambda_api bundle (not the webhook bundle) because the APPLY_RULES_* handling and the
 job row are lambda_api code. The sweep itself is the shared RuleBook (WHIT-623), the same one the
@@ -94,10 +95,6 @@ def lambda_handler(event: dict, context=None) -> dict:
         matched_total = len(plan["matched"])
         job_repo.update_progress(job_id, {**_zero_counts(), "matched": matched_total,
                                           "remaining": matched_total})
-        if matched_total and limit.reached(1):
-            # The reads used up the time: don't let WriteLimit's one guaranteed write start late.
-            return _fail_out_of_time(job_repo, job_id, {**_zero_counts(), "matched": matched_total,
-                                                        "remaining": matched_total}, created_rule)
 
         progressed = {"filed_at_last_write": 0}
 
