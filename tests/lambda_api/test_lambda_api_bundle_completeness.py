@@ -35,10 +35,7 @@ def _local_module_imports() -> set[str]:
     """
     imported = set()
     for module in _tracked_modules():
-        path = _LAMBDA_API / f"{module}.py"
-        if not path.exists():
-            continue  # tracked but deleted in the working tree (not yet committed): imports nothing
-        tree = ast.parse(path.read_text())
+        tree = ast.parse((_LAMBDA_API / f"{module}.py").read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported.update(alias.name.split(".")[0] for alias in node.names)
