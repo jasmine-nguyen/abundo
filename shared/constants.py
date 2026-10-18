@@ -55,6 +55,12 @@ FEED_WINDOW_DAYS = 7
 # 10 days can no longer receive a settlement push — it is genuinely frozen.
 PENDING_AGE_OUT_DAYS = 10
 
+# ABU-41: how far back each bank message reads an account's pendings to match a settlement.
+# Age-out reaps every pending past PENDING_AGE_OUT_DAYS daily, so a live pending is always
+# inside this window unless the sweep stops for a month.
+PENDING_LOOKBACK_DAYS = 30
+assert PENDING_LOOKBACK_DAYS > PENDING_AGE_OUT_DAYS, "the pending lookback must outlast the age-out window"
+
 # WHIT-511: how far apart a filed pending and its settled twin may be dated and still have the
 # user's filing carried across. Deliberately TIGHTER than FEED_WINDOW_DAYS (7): the carry moves
 # a user's category, so it must be strict — a symmetric ±3 days is generous for the usual

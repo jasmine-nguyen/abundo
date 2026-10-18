@@ -33,6 +33,34 @@ def test_get_pending_accumulates_pendings_across_pages(repo):
     assert repo._table.query_calls == 2
 
 
+# --- ABU-41: get_pending_pools reads only the last 30 days of pendings ---
+
+
+def test_get_pending_pools_keeps_recent_pendings_across_pages(repo, pinned_pending_lookback):
+    # today 2026-07-01 → lookback starts 2026-06-01. Pages of 2 force the cursor to be followed.
+    for txn_id, status, swiped in [
+        ("old_pend", "pending", "2026-05-22"),     # 40 days old: outside the lookback
+        ("edge_pend", "pending", "2026-06-01"),    # exactly 30 days old: inside (the bound is inclusive)
+        ("recent_pend", "pending", "2026-06-02"),  # 29 days old: inside
+        ("posted", "posted", "2026-06-26"),
+        ("new_pend", "pending", "2026-06-28"),
+        ("other_pend", "pending", "2026-06-29"),   # an account with no posted row in the message
+    ]:
+        account_id = "other" if txn_id == "other_pend" else "acc"
+        _put(repo, account_id, txn_id, status)
+        repo._table.store[(f"ACCOUNT#{account_id}", f"TXN#{txn_id}")].update(account_id=account_id, date=swiped)
+    repo._table.page_size = 2
+    message = [
+        {"transaction_id": "s1", "account_id": "acc", "status": "posted"},
+        {"transaction_id": "p9", "account_id": "other", "status": "pending"},
+    ]
+
+    pools = repo.get_pending_pools(message)
+
+    assert set(pools) == {"acc"}
+    assert sorted(row["transaction_id"] for row in pools["acc"]) == ["edge_pend", "new_pend", "recent_pend"]
+
+
 # --- WHIT-554: the shared _paginated_query helper, on the FAILED (no-filter) call site ---
 
 

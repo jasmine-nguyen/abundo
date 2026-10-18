@@ -134,6 +134,10 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
         category_repo=CategoryRepository(),
     )
 
+    # The pendings settlements match against, read once for the alert preview and the write
+    # (ABU-41). Outside the alert try: a failed read must fail the message, like the write.
+    pending_pools = repo.get_pending_pools(normalised_transactions)
+
     # Budget-threshold alerts (WHIT-22): snapshot BEFORE the write, so the post-write
     # spend can be replayed in memory. Best-effort — a failure here must never affect
     # the write; it just skips alerting for this event.
@@ -141,6 +145,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     try:
         alert_ctx = budget_alerts.capture_pre_write(
             normalised_transactions,
+            pending_pools=pending_pools,
             device_repo=DeviceRepository(),
             budget_repo=BudgetRepository(),
             paycycle_repo=PayCycleRepository(),
@@ -154,7 +159,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # swallowed the error into an ignored return dict, so the handler reported 200 "ok"
     # with nothing written; it was also dead — handle_database_error converts every
     # ClientError to a DatabaseError before it could reach here (WHIT-83, WHIT-127).
-    repo.insert_or_reconcile(normalised_transactions, is_unfiled=is_unfiled)
+    repo.insert_or_reconcile(normalised_transactions, is_unfiled=is_unfiled, pending_pools=pending_pools)
 
     # When the bank last delivered for each account, for the app's "Bank synced" line (best-effort).
     if synced_account_ids:

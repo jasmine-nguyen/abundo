@@ -20,6 +20,7 @@ import os
 import pathlib
 import sys
 import types
+from datetime import date
 
 import pytest
 
@@ -123,6 +124,13 @@ def lam():
             for d in (_LAMBDA_DIR, _SHARED_DIR):
                 while d in sys.path:
                     sys.path.remove(d)
+
+
+@pytest.fixture
+def pinned_pending_lookback(lam, monkeypatch):
+    """Pins the webhook's clock to 2026-07-01, so the 30-day pending lookback starts 2026-06-01
+    and every fixed-date pending these suites seed stays inside it (ABU-41)."""
+    monkeypatch.setattr(lam.repository, "melbourne_today", lambda: date(2026, 7, 1))
 
 
 @pytest.fixture

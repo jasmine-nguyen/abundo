@@ -1,15 +1,18 @@
 import time
+from datetime import timedelta
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
-from constants import EVENT_MARKER_TTL_SECONDS, PENDING_STATUS
+from constants import EVENT_MARKER_TTL_SECONDS, PENDING_LOOKBACK_DAYS, PENDING_STATUS
 from repository_base import conditional_write, db_errors, update_expression
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
     _build_sk,
+    read_date_range_pages,
 )
+from spend import melbourne_today
 
 
 class TransactionRepository(_SharedTransactionRepository):
@@ -32,15 +35,26 @@ class TransactionRepository(_SharedTransactionRepository):
     def get_account_transactions(self, account_id: str, status: str) -> list[dict]:
         """Retrieves all of an account's transactions with this status (pending or posted).
 
-        Follows pagination (WHIT-82) via _paginated_query: a pending row beyond the first
-        1MB page must stay visible to reconciliation, else a silent duplicate + lost category.
-        The age-out rescue (WHIT-511) reads the posted rows for the settled twin of a filed
-        pending it is about to reap.
+        Reads the whole account, so only the daily age-out uses it: its job is to find the
+        OLD pendings. Follows pagination (WHIT-82) via _paginated_query.
         """
         return self._paginated_query(
             key_condition=Key("pk").eq(_build_pk(account_id)),
             filter_expression=Attr("status").eq(status),
         )
+
+    def get_pending_pools(self, transactions: list[Transaction]) -> dict[str, list[dict]]:
+        """The recent pendings of every account with a non-pending row in `transactions` — the
+        pool reconcile matches settlements against. Read once per bank message and shared by
+        the alert preview and the write, so both see the same pool (ABU-41). Bounded to the
+        last PENDING_LOOKBACK_DAYS through the date-index; age-out reaps anything older."""
+        start = (melbourne_today() - timedelta(days=PENDING_LOOKBACK_DAYS)).isoformat()
+        accounts = dict.fromkeys(t["account_id"] for t in transactions if t.get("status") != PENDING_STATUS)
+        return {
+            account_id: [row for row in read_date_range_pages(self, account_id, start, None)
+                         if row.get("status") == PENDING_STATUS]
+            for account_id in accounts
+        }
 
     def get_failed_transactions(self) -> list[dict]:
         """Retrieve all dead-lettered rows — the ``pk="FAILED"`` partition written by
@@ -59,6 +73,7 @@ class TransactionRepository(_SharedTransactionRepository):
     def insert_or_reconcile(
         self, transactions: list[Transaction], *,
         is_unfiled: Optional[Callable[[Optional[str]], bool]] = None,
+        pending_pools: Optional[dict[str, list[dict]]] = None,
     ) -> None:
         """Insert transactions, reconciling pending->posted so a user's category
         survives settlement.
@@ -88,6 +103,9 @@ class TransactionRepository(_SharedTransactionRepository):
         WHIT-545: `is_unfiled` (the caller's taxonomy check) gates the first-settlement
         carry so a stored raw category can't clobber a rule-fill, and recomputes
         counts_to_budget for the carried category. Absent -> the carry is unchanged.
+
+        `pending_pools`: the caller's get_pending_pools read, so the alert preview and the
+        write share one read (ABU-41). Absent -> read here.
         """
         if not transactions:
             return
@@ -102,11 +120,8 @@ class TransactionRepository(_SharedTransactionRepository):
             if stored is not None:
                 stored_rows[posted_txn["transaction_id"]] = stored
 
-        # One pending scan per account that has a first-time settlement to match.
-        accounts = dict.fromkeys(t["account_id"] for t in posted_txns
-                                 if t["transaction_id"] not in stored_rows)
-        pending_pools = {account_id: self.get_account_transactions(account_id, PENDING_STATUS)
-                         for account_id in accounts}
+        if pending_pools is None:
+            pending_pools = self.get_pending_pools(transactions)
 
         plan = reconcile.plan_reconcile(transactions, stored_rows, pending_pools)
 

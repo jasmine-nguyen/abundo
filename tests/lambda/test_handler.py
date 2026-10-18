@@ -25,7 +25,8 @@ import base64
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -135,6 +136,78 @@ def test_bank_sync_marker_failure_still_writes_rows_and_acks(lam, monkeypatch):
     assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
     assert ("ACCOUNT#up-spending", "TXN#t1") in repo._table.store
     assert repo.has_event("evt_rows") is True
+
+
+# --- ABU-41: one bounded pending-pool read per bank message ------------------
+
+
+def test_settlement_reads_the_pending_pool_once_bounded_to_recent_dates(lam, monkeypatch):
+    # A posted charge settles its 9-day-old pending twin while budget alerts are live (a device
+    # token and a target), so both the alert preview and the write need the pending pool.
+    # It must be read once, through the date-index, from 30 days back, and never by scanning
+    # the whole account. Fail-on-revert: the old double read makes 1 → 2 and hits ACCOUNT#.
+    import spend
+    from _budget_alert_fakes import notify_repo
+    from _budget_endpoint_fakes import _FakeBudgetRepo, _FakeCategoryRepo, _FakePayCycleRepo
+    from _milestone_fakes import FakeDeviceRepo
+
+    repo = _ingest_repo(lam, monkeypatch)
+    handler = lam.handler
+    today = spend.melbourne_today()
+    monkeypatch.setattr(handler, "CategoryRepository",
+                        lambda: _FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]))
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo(("ExpoPushToken[a]",)))
+    monkeypatch.setattr(handler, "BudgetRepository",
+                        lambda: _FakeBudgetRepo({"groceries": {"target": Decimal("1000")}}))
+    monkeypatch.setattr(handler, "PayCycleRepository",
+                        lambda: _FakePayCycleRepo(length=14, last_pay_date=(today - timedelta(days=12)).isoformat()))
+    monkeypatch.setattr(handler, "NotifyRepository", notify_repo)
+    monkeypatch.setattr(lam.budget_alerts, "send_push",
+                        lambda *a, **k: {"sent": 1, "ok": 1, "pruned": []})
+
+    swiped = (today - timedelta(days=9)).isoformat()
+    pending = lam.banksync.normalise({**_delivery_row("p1", "3zVQJ8Btz_IRmqp78VrQnQ"),
+                                      "date": swiped, "authorizedDate": swiped, "pending": True})
+    pending["category"] = "groceries"
+    repo.insert_transactions([pending])
+    repo._table.queries.clear()
+
+    posted = {**_delivery_row("s1", "3zVQJ8Btz_IRmqp78VrQnQ"),
+              "date": (today - timedelta(days=7)).isoformat(), "authorizedDate": swiped}
+    _wire(lam, monkeypatch, repo, {"id": "evt_settle", "data": [posted]})
+
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+
+    store = repo._table.store
+    assert ("ACCOUNT#up-spending", "TXN#p1") not in store
+    assert store[("ACCOUNT#up-spending", "TXN#s1")]["category"] == "groceries"
+
+    lookback_start = (today - timedelta(days=30)).isoformat()
+    conditions = [query["KeyConditionExpression"].conditions for query in repo._table.queries]
+    assert not [c for c in conditions if ("pk", "eq", "ACCOUNT#up-spending") in c]
+    pending_reads = [query for query in repo._table.queries
+                     if ("date", "gte", lookback_start) in query["KeyConditionExpression"].conditions]
+    assert len(pending_reads) == 1
+    assert pending_reads[0]["IndexName"] == "date-index"
+    assert ("account_id", "eq", "up-spending") in pending_reads[0]["KeyConditionExpression"].conditions
+
+
+def test_pending_pool_read_failure_fails_the_message_without_writing(lam, monkeypatch):
+    # The pool read sits outside the best-effort alert block: if it fails, the message must
+    # 500 (BankSync retries), nothing is written and the event stays unmarked.
+    # Fail-on-revert: swallow the read error (or move it into the alert try) and this acks 200.
+    repo = _ingest_repo(lam, monkeypatch)
+
+    def failing_read(*_args):
+        raise lam.age_out.DatabaseError("Database read failed: throttled")
+
+    monkeypatch.setattr(repo, "get_transactions_by_date_range", failing_read)
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_pool", "data": [
+        _delivery_row("s1", "3zVQJ8Btz_IRmqp78VrQnQ")]})
+
+    assert handler.lambda_handler({}, None)["statusCode"] == 500
+    assert ("ACCOUNT#up-spending", "TXN#s1") not in repo._table.store
+    assert repo.has_event("evt_pool") is False
 
 
 # --- observability: per-delivery log line ------------------------------------
@@ -258,7 +331,7 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
 
     handler = lam.handler
 
-    def raising_insert(txns, *, is_unfiled=None):
+    def raising_insert(txns, *, is_unfiled=None, pending_pools=None):
         raise botocore.exceptions.ClientError()
 
     repo = _real_repo(lam)
