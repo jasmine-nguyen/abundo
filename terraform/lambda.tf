@@ -420,44 +420,6 @@ resource "aws_lambda_function" "goal_nudge" {
   }
 }
 
-# WHIT-224: label renames only (deployed function_name values are unchanged from
-# WHIT-219), so these are pure state moves — no destroy/recreate. Same pattern as
-# the WHIT-153 route moves in apigateway.tf; garbage-collect once applied.
-moved {
-  from = aws_lambda_function.lambda
-  to   = aws_lambda_function.transaction_ingest
-}
-moved {
-  from = aws_lambda_function.reprocess
-  to   = aws_lambda_function.transaction_reprocess
-}
-moved {
-  from = aws_lambda_function.age_out
-  to   = aws_lambda_function.transaction_age_out
-}
-moved {
-  from = aws_lambda_function.lambda_api
-  to   = aws_lambda_function.app_api
-}
-moved {
-  from = aws_lambda_function.sync_trigger
-  to   = aws_lambda_function.transaction_trigger
-}
-# WHIT-493: the "homeloan_request" lambda actually polls every account's balance, so
-# rename its address and deployed names to balance_poller (matching lambda_balance_poller/
-# and the rest of the repo). The deployed function_name / log-group name change, so the
-# function and log group are REPLACED, not moved in place; these blocks migrate the state
-# address so terraform doesn't see the old address as a separate resource to destroy.
-# Garbage-collect once applied.
-moved {
-  from = aws_lambda_function.homeloan_request
-  to   = aws_lambda_function.balance_poller
-}
-moved {
-  from = aws_cloudwatch_log_group.homeloan_request
-  to   = aws_cloudwatch_log_group.balance_poller
-}
-
 resource "aws_cloudwatch_log_group" "transaction_ingest" {
   name              = "/aws/lambda/${var.project_name}-transaction-ingest"
   retention_in_days = 30

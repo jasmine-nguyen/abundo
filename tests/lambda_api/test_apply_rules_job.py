@@ -119,7 +119,7 @@ def test_post_returns_500_when_the_job_row_cannot_be_written(handler, worker_env
 
 def test_get_returns_the_job_in_client_shape(handler):
     stored = {
-        "id": "job1", "status": "running", "matched": 500, "attempted": 120,
+        "id": "job1", "kind": "apply_rules", "status": "running", "matched": 500, "attempted": 120,
         "filed": 118, "vanished": 0, "failed": 2, "alreadyFiled": 0, "remaining": 380,
         "createdRule": None, "error": None,
         "created_at": "t0", "updated_at": "t1", "completed_at": None,
@@ -139,6 +139,12 @@ def test_get_returns_the_job_in_client_shape(handler):
 
 def test_get_unknown_job_is_404(handler):
     resp = handler.get_apply_rules_job(apply_rules_job_get_event("nope"), real_job_repo())
+    assert resp["statusCode"] == 404
+
+
+def test_get_a_chat_job_is_404(handler):
+    job_repo = real_job_repo({"j1": {"id": "j1", "kind": "ai_chat", "status": "running"}})
+    resp = handler.get_apply_rules_job(apply_rules_job_get_event("j1"), job_repo)
     assert resp["statusCode"] == 404
 
 

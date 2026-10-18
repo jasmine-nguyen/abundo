@@ -107,88 +107,6 @@ resource "aws_apigatewayv2_route" "app" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
-# WHIT-153: collapsed 23 identical routes into aws_apigatewayv2_route.app (for_each).
-# Without these moved{} blocks terraform would DESTROY+RECREATE every route, briefly
-# dropping every API route on live infra. moved{} makes it a pure state rename — the
-# plan shows only moves (0 add / 0 change / 0 destroy). These can be garbage-collected
-# in a later card once the rename is applied and confirmed.
-moved {
-  from = aws_apigatewayv2_route.get_transactions_route
-  to   = aws_apigatewayv2_route.app["GET /transactions"]
-}
-moved {
-  from = aws_apigatewayv2_route.patch_transaction_category_route
-  to   = aws_apigatewayv2_route.app["PATCH /transactions/{id}"]
-}
-moved {
-  from = aws_apigatewayv2_route.patch_transactions_batch_route
-  to   = aws_apigatewayv2_route.app["PATCH /transactions"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_categories_route
-  to   = aws_apigatewayv2_route.app["GET /categories"]
-}
-moved {
-  from = aws_apigatewayv2_route.post_category_route
-  to   = aws_apigatewayv2_route.app["POST /categories"]
-}
-moved {
-  from = aws_apigatewayv2_route.patch_category_route
-  to   = aws_apigatewayv2_route.app["PATCH /categories/{id}"]
-}
-moved {
-  from = aws_apigatewayv2_route.delete_category_route
-  to   = aws_apigatewayv2_route.app["DELETE /categories/{id}"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_budgets_route
-  to   = aws_apigatewayv2_route.app["GET /budgets"]
-}
-moved {
-  from = aws_apigatewayv2_route.put_budget_route
-  to   = aws_apigatewayv2_route.app["PUT /budgets/{category}"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_breakdown_route
-  to   = aws_apigatewayv2_route.app["GET /breakdown"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_homeloan_route
-  to   = aws_apigatewayv2_route.app["GET /homeloan"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_repayment_route
-  to   = aws_apigatewayv2_route.app["GET /repayment"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_loanfacts_route
-  to   = aws_apigatewayv2_route.app["GET /loanfacts"]
-}
-moved {
-  from = aws_apigatewayv2_route.put_loanfacts_route
-  to   = aws_apigatewayv2_route.app["PUT /loanfacts"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_paycycle_route
-  to   = aws_apigatewayv2_route.app["GET /paycycle"]
-}
-moved {
-  from = aws_apigatewayv2_route.put_paycycle_route
-  to   = aws_apigatewayv2_route.app["PUT /paycycle"]
-}
-moved {
-  from = aws_apigatewayv2_route.post_device_route
-  to   = aws_apigatewayv2_route.app["POST /devices"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_insights_ai_route
-  to   = aws_apigatewayv2_route.app["GET /insights/ai"]
-}
-moved {
-  from = aws_apigatewayv2_route.post_insights_ai_route
-  to   = aws_apigatewayv2_route.app["POST /insights/ai"]
-}
-
 resource "aws_lambda_permission" "app_api_apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvokeGetTransactions"
   action        = "lambda:InvokeFunction"
@@ -262,16 +180,4 @@ resource "aws_lambda_permission" "up_webhook_apigw_invoke" {
   function_name = aws_lambda_function.up_webhook.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
-}
-
-# WHIT-224: aws_lambda_permission label renames to match their target function.
-# statement_id (the deployed identifier) + all attributes are unchanged, so these
-# are pure state moves — no destroy/recreate, no invoke-permission gap. GC once applied.
-moved {
-  from = aws_lambda_permission.get_transactions_invoke_permission
-  to   = aws_lambda_permission.app_api_apigw_invoke
-}
-moved {
-  from = aws_lambda_permission.api_invoke_lambda
-  to   = aws_lambda_permission.transaction_ingest_apigw_invoke
 }

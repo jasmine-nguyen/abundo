@@ -100,24 +100,6 @@ resource "aws_scheduler_schedule" "balance_poll" {
   }
 }
 
-# WHIT-496: rename the balance-poller's scheduler plumbing from homeloan_* to
-# balance_* (matching the WHIT-493 lambda rename). The deployed role/policy/schedule
-# names are ForceNew, so each resource is REPLACED, not moved in place; these blocks
-# migrate the state address so it stays continuous rather than orphan+create.
-# Garbage-collect once applied.
-moved {
-  from = aws_iam_role.homeloan_scheduler
-  to   = aws_iam_role.balance_scheduler
-}
-moved {
-  from = aws_iam_role_policy.homeloan_scheduler_invoke
-  to   = aws_iam_role_policy.balance_scheduler_invoke
-}
-moved {
-  from = aws_scheduler_schedule.homeloan_poll
-  to   = aws_scheduler_schedule.balance_poll
-}
-
 # Push-receipts sweep schedule (WHIT-139). A dedicated schedule that invokes the
 # push-receipts lambda every 30 min to resolve accepted pushes against Expo's receipts
 # endpoint. Its own role + per-lambda invoke policy (EventBridge Scheduler authorizes

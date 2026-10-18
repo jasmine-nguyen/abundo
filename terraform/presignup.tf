@@ -30,13 +30,6 @@ resource "aws_lambda_function" "auth_presignup" {
   }
 }
 
-# WHIT-224: label rename only (deployed function_name is unchanged from WHIT-219),
-# so this is a pure state move — no destroy/recreate. Garbage-collect once applied.
-moved {
-  from = aws_lambda_function.presignup
-  to   = aws_lambda_function.auth_presignup
-}
-
 resource "aws_cloudwatch_log_group" "auth_presignup" {
   name              = "/aws/lambda/${var.project_name}-auth-presignup"
   retention_in_days = 30
@@ -82,10 +75,4 @@ resource "aws_lambda_permission" "auth_presignup_cognito_invoke" {
   function_name = aws_lambda_function.auth_presignup.function_name
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = aws_cognito_user_pool.pool.arn
-}
-
-# WHIT-224: label rename only (statement_id + attributes unchanged) — pure state move.
-moved {
-  from = aws_lambda_permission.presignup_cognito_invoke
-  to   = aws_lambda_permission.auth_presignup_cognito_invoke
 }
