@@ -571,7 +571,7 @@ def test_conditional_write_declares_no_unused_expression_value_when_the_row_was_
     repo.update_transaction_category_if_unchanged(*key, "groceries", None)
 
     assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND attribute_not_exists(#f0)"
-    assert set(updates[0]["ExpressionAttributeValues"]) == {":v0"}
+    assert set(updates[0]["ExpressionAttributeValues"]) == {":v0", ":v1"}
 
 
 def test_a_row_whose_category_attribute_disappeared_reads_as_changed_not_as_gone(repo):
@@ -667,7 +667,7 @@ def test_whit536_stamped_write_declares_no_unused_expression_value(repo, monkeyp
 
     expr = captured["UpdateExpression"] + " " + captured["ConditionExpression"]
     declared = set(captured["ExpressionAttributeValues"])
-    assert declared == {":v0", ":expected", ":v1"}
+    assert declared == {":v0", ":expected", ":v1", ":v2"}
     for value_alias in declared:
         assert value_alias in expr
 
@@ -834,3 +834,87 @@ _GONE_PK, _GONE_SK = "ACCOUNT#acc", "TXN#gone"
 ])
 def test_each_conditional_save_returns_false_when_the_row_is_gone(repo, call):
     assert call(repo) is False
+
+
+# --------------------------------------------------------------------------- #
+# counts_to_budget recomputed on every category write (ABU-31)                 #
+# --------------------------------------------------------------------------- #
+# A raw-transfer row arrives with counts_to_budget=False. Filing it into a normal category must
+# make it count, because contributes_to_budget reads exactly this stored attribute.
+
+def _seed_transfer(repo, account_id="acct", **extra):
+    key = (f"ACCOUNT#{account_id}", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "transaction_id": "t1",
+                               "category": "TRANSFER_OUT", "counts_to_budget": False,
+                               "budget_excluded": True, **extra}}
+    return key
+
+
+def test_hand_file_batch_inner_write_makes_a_raw_transfer_count(repo):
+    key = _seed_transfer(repo, filed_by_rule="rule-1")
+    assert repo.update_transaction_category(*key, "groceries") is True
+    row = repo._table.store[key]
+    assert row["counts_to_budget"] is True
+    assert "filed_by_rule" not in row
+    assert row["budget_excluded"] is True
+
+
+def test_hand_file_on_the_home_loan_account_still_does_not_count(repo, shared):
+    key = _seed_transfer(repo, account_id=shared.spend.HOMELOAN_ACCOUNT_ID)
+    assert repo.update_transaction_category(*key, "groceries") is True
+    assert repo._table.store[key]["counts_to_budget"] is False
+
+
+def test_hand_file_single_makes_a_raw_transfer_count(repo):
+    key = _seed_transfer(repo)
+    assert repo.update_transaction_fields(*key, category="groceries") is True
+    row = repo._table.store[key]
+    assert row["counts_to_budget"] is True
+    assert row["budget_excluded"] is True
+
+
+def test_notes_only_edit_leaves_counts_to_budget_alone(repo):
+    key = _seed_transfer(repo)
+    assert repo.update_transaction_fields(*key, notes="rent") is True
+    assert repo._table.store[key]["counts_to_budget"] is False
+
+
+@pytest.mark.parametrize("account_id", ["acct", "wrong"], ids=["direct-account", "lookup-fallback"])
+def test_batch_hand_file_makes_a_raw_transfer_count(repo, account_id):
+    key = _seed_transfer(repo)
+    results = repo.update_transaction_categories(
+        [{"id": "t1", "category": "groceries", "account_id": account_id}])
+    assert results == [{"id": "t1", "status": "updated"}]
+    assert repo._table.store[key]["counts_to_budget"] is True
+
+
+def test_apply_rules_sweep_makes_a_raw_transfer_count(repo):
+    key = _seed_transfer(repo)
+    status, _ = repo.update_transaction_category_if_unchanged(
+        *key, "groceries", "TRANSFER_OUT", filed_by_rule="rule-9")
+    assert status == "written"
+    row = repo._table.store[key]
+    assert row["counts_to_budget"] is True
+    assert row["filed_by_rule"] == "rule-9"
+    assert row["budget_excluded"] is True
+
+
+def test_apply_rules_sweep_refused_leaves_counts_to_budget_alone(repo):
+    key = _seed_transfer(repo)
+    status, current = repo.update_transaction_category_if_unchanged(*key, "groceries", "SOMETHING_ELSE")
+    assert (status, current) == ("changed", "TRANSFER_OUT")
+    assert repo._table.store[key]["counts_to_budget"] is False
+
+
+def test_rule_refile_makes_a_raw_transfer_count(repo):
+    key = _seed_transfer(repo, filed_by_rule="old-id")
+    assert repo.refile_rule_fill(*key, "groceries", "old-id", "new-id") is True
+    row = repo._table.store[key]
+    assert row["counts_to_budget"] is True
+    assert row["budget_excluded"] is True
+
+
+def test_rule_refile_stamp_mismatch_leaves_counts_to_budget_alone(repo):
+    key = _seed_transfer(repo)
+    assert repo.refile_rule_fill(*key, "groceries", "old-id", "new-id") is False
+    assert repo._table.store[key]["counts_to_budget"] is False
