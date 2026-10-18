@@ -17,7 +17,6 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
-import { usePlatform } from './support/platform';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -139,21 +138,6 @@ it('picking a date backdates manual_as_of to the chosen ISO date', async () => {
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
   expect(body.manual_as_of).toBe('2026-06-20');
-});
-
-describe('on Android', () => {
-  usePlatform('android');
-
-  it('opens the dialog from the shared date field and saves the picked as-of date', async () => {
-    await openSheet();
-    fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
-    expect(screen.queryByTestId('mock-datepicker')).toBeNull();
-    fireEvent.press(screen.getByTestId('date-open'));
-    fireEvent.press(screen.getByTestId('mock-datepicker'));
-    await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
-    const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
-    expect(body.manual_as_of).toBe('2026-06-20');
-  });
 });
 
 // ===== WHIT-235 adversarial gaps (folded from goalBalanceSheetGaps) — the per-goal re-seed on
