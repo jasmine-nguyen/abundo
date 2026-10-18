@@ -110,6 +110,7 @@ it.each([
 ])('pasted tags: $case', async ({ seed, typed, tags, left }) => {
   seedRow({ tags: seed });
   await draw();
+  if (seed.length === 0) fireEvent.press(screen.getByTestId('tag-add'));
   fireEvent.changeText(screen.getByTestId('tag-input'), typed);
   expect(mockEdit).toHaveBeenCalledTimes(1);
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags });
@@ -174,7 +175,7 @@ it('tapping the toggle when on requests re-inclusion', async () => {
 // and the bank's read-only note.
 it.each([
   { case: 'money in, manual switch', over: { amount: 25 }, shown: 'Leave this money out', hidden: 'Exclude from budgets' },
-  { case: 'money in, bank-excluded', over: { amount: 25, counts_to_budget: false }, shown: 'This looks like a transfer in, so it doesn\'t count toward budgets or insights.', hidden: 'This looks like a transfer or card payment, so it doesn\'t count toward budgets or insights.' },
+  { case: 'money in, bank-excluded', over: { amount: 25, counts_to_budget: false }, shown: 'Transfer in. Not counted in budgets or insights.', hidden: 'Transfer or card payment. Not counted in budgets or insights.' },
 ])('exclude wording: $case', async ({ over, shown, hidden }) => {
   seedRow(over);
   await draw();
@@ -186,11 +187,11 @@ it.each([
 // OF the manual toggle (the toggle can't un-exclude a bank transfer, so it would be inert).
 const bankExcluded = () => seedRow({ counts_to_budget: false });
 
-it('shows the read-only "Excluded (transfer)" note, not the manual toggle, when the bank auto-excluded the charge', async () => {
+it('shows the plain "not counted" line, not the manual toggle, when the bank auto-excluded the charge', async () => {
   bankExcluded();
   await draw();
-  expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
-  expect(screen.getByText(/doesn't count toward budgets or insights/)).toBeTruthy();
+  expect(screen.getByText('Transfer or card payment. Not counted in budgets or insights.')).toBeTruthy();
+  expect(screen.queryByText('Excluded (transfer)')).toBeNull();
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
 });
 

@@ -6,14 +6,15 @@ import { HeaderIconButton } from './ui';
 import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
 
 export function Header({
-  title, right,
+  title, right, divider,
 }: {
   title: string;
   right?: React.ReactNode;
+  divider?: boolean;
 }) {
   const router = useRouter();
   return (
-    <View style={styles.wrap}>
+    <View testID="header-wrap" style={[styles.wrap, divider && styles.divider]}>
       <View style={styles.row}>
         <View style={styles.side}>
           <HeaderIconButton icon="back" accessibilityLabel="Back" onPress={() => router.back()} />
@@ -27,6 +28,7 @@ export function Header({
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 12, zIndex: 20 },
+  divider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 40 },
   side: { minWidth: 40, height: 40, justifyContent: 'center' },
   title: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: C.textBright, letterSpacing: -0.2, flex: 1, textAlign: 'center' },
