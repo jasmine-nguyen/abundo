@@ -36,6 +36,25 @@ def alarm_names(text):
     return re.findall(r'^resource "aws_cloudwatch_metric_alarm" "([^"]+)"', text, re.M)
 
 
+def filter_metrics(text):
+    """(namespace, metric name) published by every log metric filter."""
+    names = re.findall(r'^resource "aws_cloudwatch_log_metric_filter" "([^"]+)"', text, re.M)
+    published = {}
+    for name in names:
+        transformation = tf_block(text, "aws_cloudwatch_log_metric_filter", name).split("metric_transformation", 1)[1]
+        published[name] = (tf_attr(transformation, "namespace"), tf_attr(transformation, "name"))
+    return published
+
+
+def alarm_metrics(text):
+    """(namespace, metric name) watched by every metric alarm."""
+    return {
+        name: (tf_attr(block, "namespace"), tf_attr(block, "metric_name"))
+        for name in alarm_names(text)
+        for block in [tf_block(text, "aws_cloudwatch_metric_alarm", name)]
+    }
+
+
 def route_keys(source):
     """WHIT-805: the active "VERB /path" keys in the app_route_keys list; a key behind # or // is switched off."""
     block = source.split("app_route_keys = toset([", 1)[1].split("])", 1)[0]
