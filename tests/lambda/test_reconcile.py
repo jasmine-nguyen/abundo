@@ -16,6 +16,8 @@ from _feed_fakes import FakeCategoryRepo
 from _milestone_fakes import FakeDeviceRepo
 from _rule_ingest_fakes import KKV_RULE, FakeRuleStore
 
+pytestmark = pytest.mark.usefixtures("pinned_pending_lookback")
+
 # A real BankSync account id (resolves via ACCOUNT_ID_MAP to an internal id).
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 

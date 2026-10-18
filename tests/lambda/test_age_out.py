@@ -10,7 +10,7 @@ Backed by the FakeTable `repo` fixture; `today` is injected for a deterministic 
 from datetime import date
 
 import pytest
-from _feed_fakes import FakeCategoryRepo
+from _feed_fakes import FakeCategoryRepo, date_reads
 
 # BankSync account ids that resolve via ACCOUNT_ID_MAP to two distinct internal ids.
 _ACCOUNT_A = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
@@ -491,6 +491,26 @@ def test_rescue_at_exactly_three_days_but_not_four(lam, repo):
     assert s4["rescued"] == 0 and _rows(repo)["twin4"].get("category") is None
 
 
+def test_rescue_reads_posted_rows_only_from_skew_before_the_oldest_stale_pending(lam, repo):
+    # ABU-41: the rescue's posted read goes through the date-index from the oldest stale pending
+    # (2026-06-09) minus the 3-day carry skew, never the whole account. Only the pending scan
+    # reads the account partition. Fail-on-revert: the old whole-account posted read makes 2.
+    older = _norm(lam, "older_pending", "2026-06-09", pending=True, category="groceries")
+    newer = _norm(lam, "newer_pending", "2026-06-10", pending=True, category="petrol")
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([older, newer, twin])
+    repo._table.queries.clear()
+
+    summary = _sweep_tax(lam, repo, ["groceries", "petrol"])
+
+    assert summary["rescued"] == 1 and _rows(repo)["settled_twin"]["category"] == "groceries"
+    anz = "anz-rewards-black-visa"
+    assert [read[:3] for read in date_reads(repo._table)] == [(anz, "2026-06-06", None)]
+    whole_account_reads = [query for query in repo._table.queries
+                           if ("pk", "eq", f"ACCOUNT#{anz}") in query["KeyConditionExpression"].conditions]
+    assert len(whole_account_reads) == 1
+
+
 def test_posted_read_failure_reaps_as_today_without_aborting(lam, repo, monkeypatch, caplog):
     # A posted-scan fault on one account must NOT abort the unattended sweep — the rescue is
     # skipped (reap as today) and the sweep completes. Fail-on-revert: drop the try/except
@@ -499,14 +519,10 @@ def test_posted_read_failure_reaps_as_today_without_aborting(lam, repo, monkeypa
     twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
     repo.insert_transactions([filed, twin])
 
-    real_read = repo.get_account_transactions
+    def boom(*_args):
+        raise lam.age_out.DatabaseError("Database read failed: throttled")
 
-    def boom(account_id, status):
-        if status == "posted":
-            raise lam.age_out.DatabaseError("Database read failed: throttled")
-        return real_read(account_id, status)
-
-    monkeypatch.setattr(repo, "get_account_transactions", boom)
+    monkeypatch.setattr(repo, "get_transactions_by_date_range", boom)
 
     import logging
     with caplog.at_level(logging.WARNING, logger="age_out"):

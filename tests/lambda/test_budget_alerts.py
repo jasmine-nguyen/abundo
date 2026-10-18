@@ -23,6 +23,8 @@ from _dynamo_fakes import _client_error
 from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountPagesTransactionRepo, _AccountTransactionRepo
 
+pytestmark = pytest.mark.usefixtures("pinned_pending_lookback")
+
 # Cycle: last_pay_date 2026-07-01, length 14, pinned "today" 2026-07-14 →
 # window [2026-07-01, 2026-07-14]. All test transactions are dated inside it.
 _TODAY = date(2026, 7, 14)
@@ -74,10 +76,11 @@ def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=_TOKENS,
     notify = notify or notify_repo()
     ctx = ba.capture_pre_write(
         normalised,
+        pending_pools=webhook_repo.get_pending_pools(normalised) if webhook_repo else {},
         device_repo=FakeDeviceRepo(tokens),
         budget_repo=FakeBudgetRepo(budgets),
         paycycle_repo=FakePaycycleRepo(last_pay_date=paycycle[0], length=paycycle[1]),
-        webhook_repo=_AccountTransactionRepo(before, pending_repo=webhook_repo),
+        webhook_repo=_AccountTransactionRepo(before),
     )
     ba.fire_budget_alerts(
         ctx, normalised, category_repo=_FakeCategoryRepo(cats or [{"id": "groceries", "name": "Groceries"}]),
@@ -263,7 +266,10 @@ class _WriteRecordingRepo:
     def save_failed_transactions(self, rows):
         pass
 
-    def insert_or_reconcile(self, txns, *, is_unfiled=None):
+    def get_pending_pools(self, txns):
+        return {}
+
+    def insert_or_reconcile(self, txns, *, is_unfiled=None, pending_pools=None):
         self.wrote = True
 
 
@@ -379,7 +385,7 @@ def test_alert_fires_reading_window_and_pending_twins_from_the_webhook_store(ale
     notify = notify_repo()
 
     ctx = ba.capture_pre_write(
-        settled, device_repo=FakeDeviceRepo(_TOKENS),
+        settled, pending_pools=repo.get_pending_pools(settled), device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(), webhook_repo=repo,
     )
@@ -454,7 +460,7 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     new = _txn("new1", "groceries", -15, "posted")
     store = _AccountPagesTransactionRepo({_ACCT: [([rows[0]], "c1"), ([rows[1]], None)]})
     ctx = ba.capture_pre_write(
-        [new], device_repo=FakeDeviceRepo(_TOKENS),
+        [new], pending_pools={}, device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(), webhook_repo=store,
     )
@@ -865,9 +871,10 @@ def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, 
 
     before = [_txn("old", "groceries", -70, "posted")]
     ctx = ba.capture_pre_write(
-        [posted], device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
+        [posted], pending_pools=repo.get_pending_pools([posted]), device_repo=FakeDeviceRepo(_TOKENS),
+        budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
-            webhook_repo=_AccountTransactionRepo(before, pending_repo=repo))
+        webhook_repo=_AccountTransactionRepo(before))
     ba.fire_budget_alerts(
         ctx, [posted], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
         notify_repo=notify_repo())
@@ -928,7 +935,7 @@ def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_lin
     before = [_txn("g", "groceries", -90, "posted"), _txn("c", "coffee", -45, "posted")]
     notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "coffee#80")
-    ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo(budgets),
+    ctx = ba.capture_pre_write([], pending_pools={}, device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo(budgets),
                                paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
     ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
                           notify_repo=notify)

@@ -7,6 +7,8 @@ from decimal import Decimal
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_pending_lookback")
+
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 
 

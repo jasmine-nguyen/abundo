@@ -62,10 +62,13 @@ _COPY = {
 }
 
 
-def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, webhook_repo):
+def capture_pre_write(normalised, *, pending_pools, device_repo, budget_repo, paycycle_repo, webhook_repo):
     """Snapshot (BEFORE the write) everything `fire_budget_alerts` needs. Returns a
     context dict, or None to skip alerting. Short-circuits cheapest-first: no
-    registered device tokens → done; no budget targets → done."""
+    registered device tokens → done; no budget targets → done.
+
+    `pending_pools` is the SAME pre-write pool the real write gets, so the Δ simulation
+    matches pending twins exactly as the write does (post-write the settled twins are gone)."""
     tokens = device_repo.list_tokens()
     if not tokens:
         return None
@@ -82,12 +85,6 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, we
     all_rows = read_window(webhook_repo, window.fetch_start, end)
     before_rows = (all_rows if window.fetch_start == start
                    else transactions_in_window(all_rows, start, end))
-
-    # Pre-load the pending pools reconcile will consume, so the Δ simulation matches
-    # pending twins against the SAME pre-write pool the real write saw (post-write the
-    # settled twins are already deleted). Only accounts with a posted row can reconcile.
-    accounts = {t["account_id"] for t in normalised if t.get("status") != PENDING_STATUS}
-    pending_pools = {a: list(webhook_repo.get_account_transactions(a, PENDING_STATUS)) for a in accounts}
 
     return {
         "tokens": tokens, "targets": targets, "window": window,

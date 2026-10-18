@@ -13,6 +13,8 @@ from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountTransactionRepo
 
+pytestmark = pytest.mark.usefixtures("pinned_pending_lookback")
+
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 _BUDGET = {"groceries": {"target": Decimal("100")}}
 _CATS = [{"id": "groceries", "name": "Groceries"}]
@@ -60,10 +62,11 @@ def _fire(alerts, monkeypatch, repo, before, batch):
     monkeypatch.setattr(ba, "send_push",
                         lambda title, body, toks, data=None: sent.append(title) or {"sent": 1, "ok": 1, "pruned": []})
     notify = notify_repo()
-    ctx = ba.capture_pre_write(batch, device_repo=FakeDeviceRepo(["ExpoPushToken[a]"]), budget_repo=_Budgets(),
-                               paycycle_repo=_Paycycle(),
-                                   webhook_repo=_AccountTransactionRepo(before, pending_repo=repo))
-    repo.insert_or_reconcile(batch)
+    pending_pools = repo.get_pending_pools(batch)
+    ctx = ba.capture_pre_write(batch, pending_pools=pending_pools, device_repo=FakeDeviceRepo(["ExpoPushToken[a]"]),
+                               budget_repo=_Budgets(), paycycle_repo=_Paycycle(),
+                               webhook_repo=_AccountTransactionRepo(before))
+    repo.insert_or_reconcile(batch, pending_pools=pending_pools)
     ba.fire_budget_alerts(ctx, batch, category_repo=_Categories(), notify_repo=notify)
     return sent, notify, ctx
 

@@ -3,6 +3,7 @@ in-memory FakeTable. The dedup marker's skip/mark order is driven end to end in 
 its expiry is checked here."""
 
 import time
+from datetime import date
 
 
 
@@ -31,6 +32,33 @@ def test_get_pending_accumulates_pendings_across_pages(repo):
 
     assert sorted(t["transaction_id"] for t in pendings) == ["a_pend", "c_pend"]
     assert repo._table.query_calls == 2
+
+
+# --- ABU-41: get_pending_pools reads only the last 30 days of pendings ---
+
+
+def test_get_pending_pools_keeps_recent_pendings_across_pages(repo):
+    # today 2026-10-18 → lookback starts 2026-09-18. Pages of 2 force the cursor to be followed.
+    for txn_id, status, swiped in [
+        ("old_pend", "pending", "2026-09-08"),     # 40 days old: outside the lookback
+        ("recent_pend", "pending", "2026-09-19"),  # 29 days old: inside
+        ("posted", "posted", "2026-10-13"),
+        ("new_pend", "pending", "2026-10-15"),
+        ("other_pend", "pending", "2026-10-16"),   # an account with no posted row in the message
+    ]:
+        account_id = "other" if txn_id == "other_pend" else "acc"
+        _put(repo, account_id, txn_id, status)
+        repo._table.store[(f"ACCOUNT#{account_id}", f"TXN#{txn_id}")].update(account_id=account_id, date=swiped)
+    repo._table.page_size = 2
+    message = [
+        {"transaction_id": "s1", "account_id": "acc", "status": "posted"},
+        {"transaction_id": "p9", "account_id": "other", "status": "pending"},
+    ]
+
+    pools = repo.get_pending_pools(message, today=date(2026, 10, 18))
+
+    assert set(pools) == {"acc"}
+    assert sorted(row["transaction_id"] for row in pools["acc"]) == ["new_pend", "recent_pend"]
 
 
 # --- WHIT-554: the shared _paginated_query helper, on the FAILED (no-filter) call site ---
