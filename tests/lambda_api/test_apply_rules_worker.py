@@ -11,6 +11,7 @@ from _feed_fakes import (
     SPENDING, FakeCategoryRepo, fail_writes, _row, _rule, stored, vanish_on_write,
 )
 from _job_fakes import progress_writes, wire_apply_rules_worker
+from _lambda_context import FakeContext
 
 
 def test_worker_files_the_whole_backlog_past_the_300_cap(apply_rules_worker, monkeypatch):
@@ -20,7 +21,8 @@ def test_worker_files_the_whole_backlog_past_the_300_cap(apply_rules_worker, mon
     table, _, job_repo = wire_apply_rules_worker(
         worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
 
-    result = worker.lambda_handler({"jobId": "job1"})
+    # A real Lambda context with plenty of time left: the deadline guard must not cut a normal run.
+    result = worker.lambda_handler({"jobId": "job1"}, FakeContext())
 
     assert result == {"jobId": "job1", "status": "succeeded"}
     # FAIL-ON-REVERT: this is the card. Reintroduce APPLY_RULES_MAX_WRITES on the worker path and
@@ -46,6 +48,30 @@ def test_worker_records_progress_as_it_files(apply_rules_worker, monkeypatch):
     assert filed_values == sorted(filed_values)
     assert all(c.get("filed", 0) <= c.get("matched", 120) for c in progress_writes(job_repo))
     assert 50 in filed_values and 100 in filed_values
+
+
+def test_worker_that_runs_out_of_time_marks_the_job_failed_with_partial_counts(
+        apply_rules_worker, monkeypatch):
+    # ABU-98: a sweep that hits the Lambda timeout is killed before its `except` runs, leaving the
+    # job "running" forever. With no time left before the deadline margin, the worker must stop
+    # early and end the job failed, saving how far it got. At most the one write the WriteLimit
+    # always lets through lands.
+    # FAIL-ON-REVERT: restore WriteLimit.none() and all 3 are filed and the job succeeds.
+    worker = apply_rules_worker
+    rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES") for i in range(3)]
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
+
+    result = worker.lambda_handler({"jobId": "job1"}, FakeContext(remaining_ms=0))
+
+    assert result == {"jobId": "job1", "status": "failed"}
+    job = job_repo.get_job("job1")
+    assert job["status"] == "failed"
+    assert job["error"] == "ran out of time"
+    assert job["matched"] == 3
+    assert job["filed"] <= 1 and job["remaining"] == 3 - job["filed"]
+    assert len(table.update_calls) == job["filed"]
+    assert job["vanished"] == 0 and job["failed"] == 0 and job["alreadyFiled"] == 0
 
 
 def test_worker_marks_the_job_failed_when_a_read_raises(apply_rules_worker, monkeypatch):

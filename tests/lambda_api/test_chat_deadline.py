@@ -7,14 +7,7 @@ fails cleanly before paying for a call it couldn't finish.
 import pytest
 from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
 from _job_fakes import FakeChatJobRepo
-
-
-class FakeContext:
-    def __init__(self, remaining_ms=200_000):
-        self.remaining_ms = remaining_ms
-
-    def get_remaining_time_in_millis(self):
-        return self.remaining_ms
+from _lambda_context import FakeContext
 
 
 def _data():

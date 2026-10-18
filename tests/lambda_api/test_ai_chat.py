@@ -13,6 +13,7 @@ from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
 from _category_fakes import CARD_PAYMENT
 from _budget_endpoint_fakes import _FakeBudgetRepo, _FakeCategoryRepo, _FakePayCycleRepo
 from _job_fakes import FakeChatJobRepo
+from _lambda_context import FakeContext
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
 TODAY = "2026-09-20"
@@ -65,16 +66,6 @@ GOOD_ANSWER = {
         {"kind": "prompt", "label": "Compare to Groceries", "text": "Compare that to Groceries"},
     ],
 }
-
-
-class FakeContext:
-    """The Lambda context: only the remaining time is read."""
-
-    def __init__(self, remaining_ms=200_000):
-        self.remaining_ms = remaining_ms
-
-    def get_remaining_time_in_millis(self):
-        return self.remaining_ms
 
 
 def _run(ai_chat, monkeypatch, replies, messages=None, data=None, seconds_left=lambda: 200):

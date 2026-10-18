@@ -59,6 +59,9 @@ APPLY_RULES_MAX_WRITES = 300
 # for rows that were actually filed. Stopping well inside the gateway window keeps the response
 # the client sees an honest account of what was written.
 APPLY_RULES_TIME_BUDGET_SECONDS = 15
+# Seconds the async apply-rules worker keeps back from its Lambda timeout, so it can stop the
+# sweep and mark the job failed before AWS kills it.
+APPLY_RULES_WORKER_DEADLINE_MARGIN_SECONDS = 15
 # Default page size for the transactions feed when a request sends no ?limit=. Smaller
 # than MAX_PAGE_SIZE: the feed fans out one query PER account per page, so a modest page
 # keeps a "Load More" tap cheap while still filling a screen.
