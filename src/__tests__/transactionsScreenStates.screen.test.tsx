@@ -426,6 +426,27 @@ it('Select enters selection mode; toggling rows updates the count; Re-categorize
   expect(mockOpenMultiPicker).toHaveBeenCalledWith(['t1']);
 });
 
+// ABU-100: a long list draws only its first screenful of rows, not every loaded row, and Select
+// ticks still redraw each tapped row (and only those) as checked.
+it('a long list draws only the first rows, and Select ticks redraw the tapped rows', async () => {
+  const seeded = 200;
+  seedFeedPage(server, FEED, Array.from({ length: seeded }, (_, i) => row(`t${i}`, `Shop ${i}`)));
+  await draw();
+  fireEvent.press(screen.getByText('Select'));
+
+  const boxes = screen.getAllByLabelText(/^Select Shop \d+$/);
+  expect(boxes.length).toBeGreaterThan(2);
+  expect(boxes.length).toBeLessThan(seeded);
+
+  const [first, second, third] = boxes.map((box) => box.props.accessibilityLabel as string);
+  fireEvent.press(screen.getByLabelText(first));
+  fireEvent.press(screen.getByLabelText(second));
+  expect(screen.getByText('2 selected')).toBeTruthy();
+  expect(screen.getByLabelText(first).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByLabelText(second).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByLabelText(third).props.accessibilityState).toMatchObject({ checked: false });
+});
+
 it('Re-categorize does nothing with an empty selection (disabled)', async () => {
   await draw();
   fireEvent.press(screen.getByText('Select'));
