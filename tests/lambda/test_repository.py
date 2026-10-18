@@ -1,5 +1,9 @@
 """Unit tests for the webhook TransactionRepository's paginated reads. Backed by the
-in-memory FakeTable. The dedup marker is driven end to end in test_handler.py."""
+in-memory FakeTable. The dedup marker's skip/mark order is driven end to end in test_handler.py;
+its expiry is checked here."""
+
+import time
+
 
 
 # --- WHIT-82: get_account_transactions paginates -----------------
@@ -59,3 +63,17 @@ def test_get_failed_threads_exclusive_start_key_on_later_pages_without_a_filter(
     assert all("FilterExpression" not in c for c in captured)
 
 
+
+
+# --- ABU-46: the "already processed" EVENT marker expires ---
+
+
+def test_mark_event_stamps_expires_at_ttl(repo, monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 1_000_000)
+
+    repo.mark_event("evt_1")
+
+    expires_at = repo._table.store[("EVENT#evt_1", "EVENT")]["expires_at"]
+    assert expires_at == 1_000_000 + 30 * 24 * 60 * 60
+    assert isinstance(expires_at, int)
+    assert repo.has_event("evt_1") is True
