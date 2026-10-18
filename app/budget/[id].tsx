@@ -26,7 +26,7 @@ export default function BudgetDetail() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
-  const bd =budgetDetail(d, id);
+  const bd = budgetDetail(d, id);
   const [deleting, setDeleting] = useState(false);
   // How many related rows are revealed; "Load More" reveals the next page.
   const [visibleCount, setVisibleCount] = useState(BUDGET_TX_PAGE);
