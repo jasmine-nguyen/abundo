@@ -41,7 +41,7 @@ import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
 import { pinToday } from './support/clock';
-import { styleOf } from './support/layout';
+import { styleOf, expectScrollEdge } from './support/layout';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
@@ -184,12 +184,7 @@ it('the amount leads, Account opens its page, empty note/tags fold, and the titl
 
   expect(styleOf(screen.getByTestId('transaction-delete')).backgroundColor).toBeUndefined();
 
-  const scroller = screen.UNSAFE_getByType(ScrollView);
-  expect(styleOf(screen.getByTestId('header-wrap')).borderBottomWidth ?? 0).toBe(0);
-  fireEvent.scroll(scroller, { nativeEvent: { contentOffset: { x: 0, y: 40 } } });
-  expect(styleOf(screen.getByTestId('header-wrap')).borderBottomWidth).toBeGreaterThan(0);
-  fireEvent.scroll(scroller, { nativeEvent: { contentOffset: { x: 0, y: 0 } } });
-  expect(styleOf(screen.getByTestId('header-wrap')).borderBottomWidth ?? 0).toBe(0);
+  expectScrollEdge(screen.UNSAFE_getByType(ScrollView));
 });
 
 // ===== WHIT-276 (folded from transactionDetailStates.screen.test.tsx)

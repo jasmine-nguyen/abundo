@@ -17,9 +17,10 @@ it('every title-bar page with a scroller wires the scroll edge on each scroller'
   );
   const missing = headerPagesWithScroller
     .filter(([, code]) =>
+      // [A1] each scroll path has its own spread scroll props AND its own Header divider
       count(code, SCROLLER) > count(code, /scrollProps\}/g)
-      || !code.includes('useScrollEdge(')
-      || !code.includes('divider='))
+      || count(code, SCROLLER) > count(code, /divider=\{/g)
+      || !code.includes('useScrollEdge('))
     .map(([path]) => path);
   expect(missing).toEqual([]);
 });

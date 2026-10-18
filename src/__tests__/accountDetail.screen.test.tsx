@@ -15,7 +15,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { accountFeedKey } from '../queryKeys';
-import { styleOf } from './support/layout';
+import { styleOf, expectScrollEdge } from './support/layout';
 import { accountBalance } from './support/accountBalance';
 import type { AccountBalance } from '../api';
 
@@ -261,12 +261,6 @@ it('a full first page over 30 different days draws every row and Load More witho
 it('scrolling the list draws the title bar edge, and scrolling back to the top removes it', async () => {
   server.seed('/accounts/balances', [bal()]);
   await renderWithQueries(<AccountDetail />);
-  const list = screen.UNSAFE_getByType(SectionList);
-  const edge = () => styleOf(screen.getByTestId('header-wrap')).borderBottomWidth ?? 0;
-  expect(edge()).toBe(0);
-  fireEvent.scroll(list, { nativeEvent: { contentOffset: { x: 0, y: 60 } } });
-  expect(edge()).toBeGreaterThan(0);
-  fireEvent.scroll(list, { nativeEvent: { contentOffset: { x: 0, y: 0 } } });
-  expect(edge()).toBe(0);
+  expectScrollEdge(screen.UNSAFE_getByType(SectionList));
 });
 
