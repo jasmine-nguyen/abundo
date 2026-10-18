@@ -265,6 +265,12 @@ resource "aws_lambda_function" "apply_rules_worker" {
   }
 }
 
+# A timed-out sweep would otherwise be re-run in full twice by AWS's default async retries.
+resource "aws_lambda_function_event_invoke_config" "apply_rules_worker" {
+  function_name          = aws_lambda_function.apply_rules_worker.function_name
+  maximum_retry_attempts = 0
+}
+
 # Card 609: the Ask Abundo chat worker. Runs the model's tool loop for one message outside the 30s
 # gateway window and writes the answer to the job row the app polls. Reuses the app_api zip (it is
 # lambda_api code: ai_chat.py + chat_tools.py + handler helpers). 210s is the worker's whole budget:
