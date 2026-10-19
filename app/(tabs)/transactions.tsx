@@ -288,7 +288,7 @@ export default function Transactions() {
           onChange={changeTab}
           options={[
             { value: 'all', label: 'All', testID: 'tab-all', activeTint: TAB_TINT, activeTextColor: C.accentSoft },
-            { value: 'uncategorized', label: 'Uncategorised', testID: 'tab-uncategorized', activeTint: TAB_TINT, activeTextColor: C.accentSoft, flex: 1.45, badge: uncategorizedCount },
+            { value: 'uncategorized', label: 'Uncategorised', testID: 'tab-uncategorized', activeTint: TAB_TINT, activeTextColor: C.accentSoft, badge: uncategorizedCount },
           ]}
         />
 
