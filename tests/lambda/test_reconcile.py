@@ -1440,6 +1440,28 @@ def test_pending_resync_updates_bank_fields(lam, repo):
     assert row["category"] == "health"  # user field untouched
 
 
+@pytest.mark.parametrize("pending", [True, False])
+def test_resync_keeps_counts_to_budget_of_a_hand_filed_transfer(lam, repo, pending):
+    # ABU-103: a transfer the user filed as groceries counts toward budget. A bank
+    # re-send carries the raw TRANSFER_OUT value (False) and must not reset it.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-50.00"),
+                           pending=pending, category="TRANSFER_OUT")
+    acc = _acc(seeded)
+    assert seeded["counts_to_budget"] is False
+    stored = repo._table.store[(acc, "TXN#A")]
+    stored["category"] = "groceries"
+    stored["counts_to_budget"] = True
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-55.00"),
+                   pending=pending, category="TRANSFER_OUT")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(acc, "TXN#A")]
+    assert row["amount"] == Decimal("-55.00")
+    assert row["category"] == "groceries"
+    assert row["counts_to_budget"] is True
+
+
 def test_posted_resync_preserves_category_via_partial_update(lam, repo):
     # A re-import of an already-stored posted row must keep the user's category.
     # Regression guard: all four user-owned fields must survive a posted re-sync.

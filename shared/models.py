@@ -30,11 +30,10 @@ class Transaction(TypedDict):
     notes: Optional[str]
     tags: Optional[list[str]]
     # User override (WHIT-296). When True, the user has manually excluded this
-    # transaction from budgets ("mark as transfer"), overriding the bank-derived
-    # counts_to_budget. Sparse: only True is stored, so absent reads back as None
-    # (not excluded). Kept separate from counts_to_budget so a re-import recompute
-    # of the bank value can't wipe the user's choice; carried across re-sync like
-    # notes/tags.
+    # transaction from budgets ("mark as transfer"), overriding counts_to_budget.
+    # Sparse: only True is stored, so absent reads back as None (not excluded).
+    # Kept separate from counts_to_budget, which is derived from the row's category
+    # (ABU-31) and not overwritten on re-sync; carried across re-sync like notes/tags.
     budget_excluded: Optional[bool]
     # Id of the rule that auto-filed this charge's category (WHIT-536). Sparse: set only on
     # a rule-filed row, carried onto the posted charge when it settles, and REMOVEd the moment

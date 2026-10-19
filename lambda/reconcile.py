@@ -31,7 +31,7 @@ logger.setLevel(logging.INFO)
 _BANK_OWNED_FIELDS = (
     "date", "authorized_date", "description", "merchant_name", "amount",
     "account_id", "account_name", "status", "type",
-    "counts_to_budget", "pending_transaction_id",
+    "pending_transaction_id",
 )
 
 
