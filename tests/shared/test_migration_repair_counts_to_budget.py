@@ -5,6 +5,7 @@ script's real SET / condition expressions, so the checks read the stored rows ba
 """
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 
@@ -105,3 +106,28 @@ def test_a_re_file_landing_mid_run_wins(script):
     row = table.store[_key(_REFILED)]
     assert row["category"] == "TRANSFER_OUT"
     assert row["counts_to_budget"] is False
+
+
+def test_a_row_deleted_mid_run_is_not_recreated(script):
+    # [A6] The no-category write condition must refuse a row that's gone, never upsert a stub.
+    table = FakeTable()
+    table.seed(copy.deepcopy(_NO_CATEGORY))
+    table.before_next_write(lambda key, tbl: tbl.store.pop((key["pk"], key["sk"])))
+
+    result = script.run(table, [_SPENDING], dry_run=False)
+
+    assert result == {"checked": 1, "found": 1, "repaired": 0, "skipped": 1}
+    assert table.store == {}
+
+
+@pytest.mark.parametrize("argv, writes", [([], False), (["--apply"], True)])
+def test_main_saves_only_with_apply(script, monkeypatch, argv, writes):
+    # [A7] The live command previews unless --apply is passed.
+    table = _seeded_table()
+    before = copy.deepcopy(table.store)
+    monkeypatch.setattr(script.boto3, "resource", lambda *args, **kwargs: SimpleNamespace(Table=lambda name: table))
+    monkeypatch.setattr(script.sys, "argv", ["repair_counts_to_budget.py", *argv])
+
+    script.main()
+
+    assert table.store == (_expected_store(before) if writes else before)
