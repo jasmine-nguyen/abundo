@@ -28,6 +28,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import CategoryEdit from '../../app/category/edit';
 import { COFFEE, COFFEE_RECORD } from './support/categories';
 import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
+import { styleOf } from './support/layout';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -335,7 +336,12 @@ describe('ABU-85: Delete category asks first', () => {
 
   it('shows a Cancel / Delete pop-up, and Cancel sends no DELETE', async () => {
     await drawEdit();
-    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+    // ABU-101: a quiet text link (no filled box), the last thing on the page below Save.
+    const del = screen.getByRole('button', { name: 'Delete category' });
+    const save = screen.getByText('Save category');
+    expect(styleOf(del).backgroundColor).toBeUndefined();
+    expect(screen.root.findAll((n) => n === save || n === del)).toEqual([save, del]);
+    await act(async () => { fireEvent.press(del); });
 
     expectConfirmDeletePopUp(alerts, 'Delete this category?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });

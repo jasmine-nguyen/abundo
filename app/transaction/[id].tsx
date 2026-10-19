@@ -10,7 +10,7 @@ import { useTransactionDetailScreenData, useTransactionResolver, useRulesScreenD
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
-import { SectionLabel } from '../../src/components/ui';
+import { DeleteLink, SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { confirmDelete } from '../../src/confirmDelete';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
@@ -171,18 +171,7 @@ export default function TransactionDetail() {
               {/* Keyed by id so switching transactions reseeds the local note text. */}
               <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} deleting={deleting} />
 
-              <Pressable
-                testID="transaction-delete"
-                onPress={onDelete}
-                disabled={deleting}
-                accessibilityRole="button"
-                accessibilityLabel="Delete transaction"
-                accessibilityState={{ disabled: deleting }}
-                hitSlop={8}
-                style={[styles.deleteLink, deleting && { opacity: 0.6 }]}
-              >
-                <Text style={styles.deleteText}>{deleting ? 'Deleting…' : 'Delete transaction'}</Text>
-              </Pressable>
+              <DeleteLink testID="transaction-delete" label="Delete transaction" busy={deleting} busyLabel="Deleting…" onPress={onDelete} />
             </>
           ) : (
             // No cache (feed / recent / budget-detail / category-drill) carries this id
@@ -493,8 +482,6 @@ const styles = StyleSheet.create({
   tagRemove: { fontFamily: FONT.body, fontSize: 17, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
 
-  deleteLink: { marginTop: 28, alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 16 },
-  deleteText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.bad },
 
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30, gap: 8 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, marginTop: 4 },

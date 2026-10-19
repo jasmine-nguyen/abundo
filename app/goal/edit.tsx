@@ -11,6 +11,7 @@ import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { NativeDateField } from '../../src/components/NativeDateField';
 import { MoneyField } from '../../src/components/MoneyField';
+import { DeleteLink } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { confirmDelete } from '../../src/confirmDelete';
 import { toISODate } from '../../src/dateutil';
@@ -403,15 +404,10 @@ export default function GoalEdit() {
             : 'What you owe today — the progress bar measures down from this.'}
         />
 
-        {editing && (
-          <Pressable testID="goal-delete" onPress={onDelete} style={styles.deleteBtn}>
-            <Text style={styles.deleteText}>Delete goal</Text>
-          </Pressable>
-        )}
-
         <Pressable testID="goal-save" onPress={onSave} disabled={saving || editingUnloaded} style={[styles.save, (saving || editingUnloaded) && { opacity: 0.6 }]}>
           <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save goal'}</Text>
         </Pressable>
+        {editing && <DeleteLink testID="goal-delete" label="Delete goal" onPress={onDelete} />}
       </ScrollView>
     </View>
   );
@@ -474,8 +470,6 @@ const styles = StyleSheet.create({
   addBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 14, borderWidth: 1, borderColor: C.hairline, borderStyle: 'dashed', alignItems: 'center' },
   addText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accent },
 
-  deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
-  deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
   save: { marginTop: 12, paddingVertical: 16, borderRadius: 15, backgroundColor: C.accent, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.accentInk },
 });

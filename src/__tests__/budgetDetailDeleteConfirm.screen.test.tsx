@@ -20,6 +20,7 @@ import { spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE } from './support/categories';
+import { styleOf } from './support/layout';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -38,7 +39,7 @@ beforeEach(() => {
 });
 
 function openConfirm() {
-  fireEvent.press(screen.getByText('Delete budget'));
+  fireEvent.press(screen.getByRole('button', { name: 'Delete budget' }));
   expect(alerts.spy).toHaveBeenCalledTimes(1);
   return alerts.last();
 }
@@ -49,6 +50,8 @@ it('user must confirm before a budget is deleted; Delete removes it once and goe
   const { title, button } = openConfirm();
 
   expect(title).toBe('Delete this budget?');
+  // ABU-101: a quiet red text link, not a filled button.
+  expect(styleOf(screen.getByTestId('budget-delete')).backgroundColor).toBeUndefined();
   expect(mockDeleteBudget).not.toHaveBeenCalled();
   expect(button('Delete').style).toBe('destructive');
 

@@ -104,6 +104,26 @@ export function HeaderTextButton({ label, onPress, testID, busy = false, accessi
   );
 }
 
+// ABU-101: the quiet red "Delete …" text link at the bottom of the edit and detail pages.
+export function DeleteLink({ label, onPress, testID, busy = false, busyLabel }: {
+  label: string; onPress: () => void; testID?: string; busy?: boolean; busyLabel?: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      disabled={busy}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: busy }}
+      style={[styles.deleteLink, busy && { opacity: 0.6 }]}
+    >
+      <Text style={styles.deleteText}>{busy && busyLabel ? busyLabel : label}</Text>
+    </Pressable>
+  );
+}
+
 // A pace progress bar: posted (solid) + pending (translucent) + target tick.
 export function BudgetBar({
   postedPct, pendingPct, targetPct, postedColor, pendingTint, height = 10, showTarget = true, tickTail = 18,
@@ -210,6 +230,8 @@ export function SwitchRow({ title, help, value, onValueChange, disabled = false 
 }
 
 const styles = StyleSheet.create({
+  deleteLink: { marginTop: 28, alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 16 },
+  deleteText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.bad },
   switchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 16, marginTop: 18 },
   switchTitle: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.textBright },
   switchHelp: { fontFamily: FONT.body, fontSize: 12.5, lineHeight: 17, color: C.textDim, marginTop: 4 },
