@@ -482,7 +482,6 @@ const styles = StyleSheet.create({
   tagRemove: { fontFamily: FONT.body, fontSize: 17, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
 
-
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30, gap: 8 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, marginTop: 4 },
   emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', lineHeight: 20 },
