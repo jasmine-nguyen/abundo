@@ -26,21 +26,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "shared"))
 
 import boto3  # noqa: E402
 from boto3.dynamodb.conditions import Key  # noqa: E402
-from botocore.exceptions import ClientError  # noqa: E402
 
 from constants import ACCOUNT_ID_MAP  # noqa: E402
+from repository_base import conditional_write  # noqa: E402
 from spend import counts_to_budget  # noqa: E402
-
-
-def _update(table, **kwargs):
-    """True when the write landed, False when its condition was refused."""
-    try:
-        table.update_item(**kwargs)
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            return False
-        raise
-    return True
 
 
 def _charge_rows(table, account_id):
@@ -68,7 +57,7 @@ def _write(table, row, expected):
     else:
         kwargs["ExpressionAttributeValues"][":category"] = category
         kwargs["ConditionExpression"] = "#c = :category"
-    return _update(table, **kwargs)
+    return conditional_write("repair", lambda: table.update_item(**kwargs))
 
 
 def run(table, account_ids, dry_run=True):
