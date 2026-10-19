@@ -107,6 +107,23 @@ def test_earned_reversal_in_one_category_reduces_the_shared_aggregate(shared):
     assert totals == {"posted": Decimal("2800"), "pending": Decimal("0")}
 
 
+def test_uncategorized_counts_only_money_out(shared):
+    # Unfiled money in (an unmapped salary, a raw-category refund) must not net against
+    # unfiled spend (ABU-30): posted 30 + 20 = 50, pending 15.
+    totals = shared.spend.summarise_uncategorized(
+        [
+            _txn(500, category=None),
+            _txn(50, category="MEDICAL"),
+            _txn(-30, category="MEDICAL"),
+            _txn(-20, category=None),
+            _txn(40, category=None, status="pending"),
+            _txn(-15, category="MEDICAL", status="pending"),
+        ],
+        {"coffee"},
+    )
+    assert totals == {"posted": Decimal("50"), "pending": Decimal("15")}
+
+
 def test_a_sealed_cycle_counts_posted_and_pending_and_is_saved_with_the_carryover(shared):
     charges = [charge("sink", "2026-06-10", "-30"), charge("sink", "2026-06-11", "-90", status="pending")]
 

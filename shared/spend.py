@@ -345,21 +345,30 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str], clamp
     )
 
 
+def is_unfiled_spend(transaction: dict, taxonomy_ids) -> bool:
+    """Uncategorised SPEND: no home in the taxonomy (is_unfiled_category) AND money out.
+    Unfiled money in (an unmapped salary, a raw-category refund) is not spend, so it must
+    not net against uncategorised charges (ABU-30). A missing amount counts as 0 → kept."""
+    if not is_unfiled_category(transaction.get("category"), taxonomy_ids):
+        return False
+    return Decimal(str(transaction.get("amount") or 0)) <= 0
+
+
 def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) -> dict:
     """Sum posted vs pending spend that counts to budget but has no home in the
     taxonomy: a raw BankSync category (e.g. "MEDICAL"), a deleted category's
-    dangling id, or a null category. The complement of what summarise_transactions
-    rolls up — same contribution rule (counts_to_budget, spend is a NEGATIVE
-    amount) and the same >= 0 clamp. What counts as unfiled is the shared
-    rule_engine.is_unfiled_category.
+    dangling id, or a null category. Only money out counts (is_unfiled_spend):
+    unfiled money in is excluded, not netted against it. Same contribution rule
+    (counts_to_budget, spend is a NEGATIVE amount) and >= 0 clamp as
+    summarise_transactions.
 
     Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate
     (every contributor folds into one bucket), not a per-category dict.
     """
     totals = summarise(
-        transactions,
-        keep=lambda category: is_unfiled_category(category, taxonomy_ids),
-        key=lambda category: "__all__",
+        [transaction for transaction in transactions if is_unfiled_spend(transaction, taxonomy_ids)],
+        keep=lambda _category: True,
+        key=lambda _category: "__all__",
     )
     return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
 

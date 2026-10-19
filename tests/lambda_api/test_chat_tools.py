@@ -63,6 +63,7 @@ OTHER = [
     _txn("g1", "groceries", -50, "2026-09-02", merchant="Coles"),
     _txn("s1", "salary", 3000, "2026-09-03", merchant="ACME PAYROLL"),
     _txn("u1", None, -12, "2026-09-04", merchant="Mystery Shop"),
+    _txn("r1", "MEDICAL", 50, "2026-09-05", merchant="Clinic Refund"),  # unfiled money in, not spend
     _txn("t1", None, -500, "2026-09-04", counts=False),  # transfer, never counts
 ]
 
@@ -143,7 +144,8 @@ def test_spend_includes_unfiled_but_not_income_or_transfers(chat_tools):
     data = _data(chat_tools)
     result = chat_tools.query_transactions(data, {
         "filters": {"date_from": "2026-09-01", "date_to": "2026-09-09"}, "metric": "sum"})
-    # eating out 33.34 + groceries 50 + unfiled 12. Salary and the transfer don't count.
+    # eating out 33.34 + groceries 50 + unfiled 12. Salary, the transfer and the unfiled refund
+    # don't count (ABU-30: unfiled money in must not net against spend).
     assert result["rows"] == [{"value": 95.34}]
 
 

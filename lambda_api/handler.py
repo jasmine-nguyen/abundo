@@ -106,6 +106,7 @@ from spend import (
     cycle_clock,
     drop_transfer_rows,
     fold_subtree,
+    is_unfiled_spend,
     melbourne_today,
     nth_prior_cycle_window,
     subtree_ids,
@@ -2207,7 +2208,7 @@ def get_category_transactions(
         NO contributes_to_budget filter, so the list shows refunds/excluded rows too (the
         client recomputes the contributing total for the header).
       * UNCATEGORIZED_KEY: the summarise_uncategorized rule — contributes to budget, not
-        income, and not in the taxonomy.
+        income, not in the taxonomy, and money out (is_unfiled_spend).
 
     Date-range mode (card 609): ?from=&to= instead of ?cycle= — the Ask Abundo chat links here
     with the exact dates it answered for. Both dates are required and must sit inside the chat's
@@ -2245,7 +2246,7 @@ def get_category_transactions(
 
         def predicate(transaction: dict) -> bool:
             return (contributes_to_budget(transaction)
-                    and is_unfiled_category(transaction.get("category"), taxonomy_ids))
+                    and is_unfiled_spend(transaction, taxonomy_ids))
     elif range_mode:
         categories = category_repo.list_categories()
         target_ids = subtree_ids(category_id, build_category_children(categories),

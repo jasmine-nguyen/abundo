@@ -132,6 +132,8 @@ def test_uncategorized_reconciles_and_excludes_income_mapped_transfer(handler, m
         _txn("income", "income", 500, "2026-07-10"),            # income sentinel → excluded
         _txn("mapped", "coffee", -20, "2026-07-10"),            # in taxonomy → excluded
         _txn("transfer", None, -500, "2026-07-10", counts=False),  # not-in-budget → excluded
+        _txn("refund", "MEDICAL", 50, "2026-07-10"),             # unfiled money in → excluded
+        _txn("salary", None, 900, "2026-07-10"),                 # unmapped salary → excluded
     ]
     breakdown = handler.list_category_breakdown(
         _FakeCategoryRepo(CATS), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo())
