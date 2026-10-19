@@ -65,9 +65,9 @@ def _write(table, row, expected):
     if category is None:
         kwargs["ExpressionAttributeNames"]["#pk"] = "pk"
         kwargs["ConditionExpression"] = "attribute_exists(#pk) AND attribute_not_exists(#c)"
-        return _update(table, **kwargs)
-    kwargs["ExpressionAttributeValues"][":category"] = category
-    kwargs["ConditionExpression"] = "#c = :category"
+    else:
+        kwargs["ExpressionAttributeValues"][":category"] = category
+        kwargs["ConditionExpression"] = "#c = :category"
     return _update(table, **kwargs)
 
 
