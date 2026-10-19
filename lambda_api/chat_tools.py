@@ -31,6 +31,7 @@ from spend import (
     build_category_children,
     contributes_to_budget,
     fold_subtree,
+    is_unfiled_spend,
     nth_prior_cycle_window,
     spend_contribution,
     subtree_ids,
@@ -231,7 +232,7 @@ def _row_filter(data: ChatData, filters: dict):
         if not contributes_to_budget(transaction):
             return False
         category = transaction.get("category")
-        unfiled = is_unfiled_category(category, data.names)
+        unfiled = is_unfiled_spend(transaction, data.names)
         if direction == "spend" and not (category in spend_ids or unfiled):
             return False
         if direction == "income" and category not in income_ids:

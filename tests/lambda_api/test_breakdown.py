@@ -123,8 +123,9 @@ def test_breakdown_net_refund_spend_category_clamps_to_zero(handler):
     assert result["coffee"] == {"posted": Decimal("0"), "pending": Decimal("0")}
 
 
-def test_breakdown_net_refund_uncategorized_is_omitted(handler):
-    # A net-refund Uncategorized bucket clamps to 0 -> no __uncategorized__ key.
+def test_breakdown_uncategorized_refund_does_not_cancel_uncategorized_spend(handler):
+    # Uncategorized counts only money out: a raw-category refund drops out instead of
+    # netting against the charge (ABU-30).
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _QueuedTransactionRepo([
         _transaction("coffee", -10, "posted"),
@@ -134,7 +135,19 @@ def test_breakdown_net_refund_uncategorized_is_omitted(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert "__uncategorized__" not in result
+    assert result["__uncategorized__"] == {"posted": Decimal("30"), "pending": Decimal("0")}
+
+
+def test_breakdown_unmapped_salary_does_not_hide_uncategorized_spend(handler):
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _QueuedTransactionRepo([
+        _transaction(None, 500, "posted"),  # salary with no category
+        _transaction(None, -20, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__uncategorized__"] == {"posted": Decimal("20"), "pending": Decimal("0")}
 
 
 # --- window ------------------------------------------------------------------

@@ -794,12 +794,14 @@ def test_orphan_and_uncategorized_targets_do_not_enter_block(handler):
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
     ])
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "deleted_ghost": {"target": Decimal("999")}})
-    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("petrol", -60), _txn("MEDICAL", -25)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [
+        _txn("petrol", -60), _txn("MEDICAL", -25), _txn("MEDICAL", 40)]})
     model_input, _ = handler.assemble_insight_input(cats, budgets, txn_repo, FakePayCycleRepo())
 
     assert {row["name"] for row in model_input["budgeted_parents"]} == {"Car"}
     assert "deleted_ghost" not in {row["name"] for row in model_input["budgeted_parents"]}
-    # The orphan enum spend lives in the uncategorized bucket, not the parent block.
+    # The orphan enum spend lives in the uncategorized bucket, not the parent block. The
+    # +40 unfiled refund is money in, so it doesn't cancel it (ABU-30).
     assert model_input["uncategorized"] == {"posted": 25.0, "pending": 0.0}
 
 
