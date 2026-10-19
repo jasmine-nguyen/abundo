@@ -10,7 +10,7 @@ import type { Bucket, Category } from '../../src/types';
 import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
-import { SwitchRow } from '../../src/components/ui';
+import { DeleteLink, SwitchRow } from '../../src/components/ui';
 import { CategoryFields } from '../../src/components/CategoryFields';
 import { QuickCreateCategory } from '../../src/components/QuickCreateCategory';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
@@ -311,14 +311,10 @@ export default function CategoryEdit() {
           </>
         )}
 
-        {categoryId && (
-          <Pressable onPress={onDelete} style={styles.deleteBtn}>
-            <Text style={styles.deleteText}>Delete category</Text>
-          </Pressable>
-        )}
         <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}>
           <Text style={[styles.saveText, { color: canSave ? C.accentInk : '#6a6a90' }]}>Save category</Text>
         </Pressable>
+        {categoryId && <DeleteLink testID="category-delete" label="Delete category" onPress={onDelete} />}
       </ScrollView>
     </View>
   );
@@ -334,8 +330,6 @@ const styles = StyleSheet.create({
   subHint: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginBottom: 8, marginHorizontal: 2 },
   addChildBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 13, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), alignItems: 'center' },
   addChildText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSofter },
-  deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
-  deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
   saveBtn: { marginTop: 12, paddingVertical: 16, borderRadius: 15, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700' },
 });

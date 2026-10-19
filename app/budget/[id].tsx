@@ -9,7 +9,7 @@ import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { LoadMoreButton } from '../../src/components/LoadMoreButton';
-import { BudgetBar, SectionLabel } from '../../src/components/ui';
+import { BudgetBar, DeleteLink, SectionLabel } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { confirmDelete } from '../../src/confirmDelete';
@@ -140,9 +140,7 @@ export default function BudgetDetail() {
         )}
         {bd.relEmpty && !d.isLoading && <Text style={styles.empty}>No transactions in this category this cycle.</Text>}
 
-        <Pressable testID="budget-delete" onPress={onDelete} disabled={deleting} style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}>
-          <Text style={styles.deleteText}>{deleting ? 'Removing…' : 'Delete budget'}</Text>
-        </Pressable>
+        <DeleteLink testID="budget-delete" label="Delete budget" busy={deleting} busyLabel="Removing…" onPress={onDelete} />
       </ScrollView>
     </View>
   );
@@ -174,6 +172,4 @@ const styles = StyleSheet.create({
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
   loadMore: { marginTop: 14 },
-  deleteBtn: { marginTop: 14, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
-  deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
 });

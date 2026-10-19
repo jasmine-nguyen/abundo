@@ -28,6 +28,7 @@ jest.mock('@react-native-community/datetimepicker', () => require('./support/moc
 import { setPickedDate, resetPickedDate, FUTURE } from './support/mockDatePicker';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
+import { styleOf } from './support/layout';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
@@ -257,7 +258,12 @@ describe('ABU-85: Delete goal asks first', () => {
 
   it('shows a Cancel / Delete pop-up, and Cancel deletes nothing', async () => {
     await renderForm();
-    await press('goal-delete');
+    // ABU-101: a quiet text link (no filled box), the last thing on the page below Save.
+    const del = screen.getByRole('button', { name: 'Delete goal' });
+    const save = screen.getByTestId('goal-save');
+    expect(styleOf(del).backgroundColor).toBeUndefined();
+    expect(screen.root.findAll((n) => n === save || n === del)).toEqual([save, del]);
+    await act(async () => { fireEvent.press(del); });
 
     expectConfirmDeletePopUp(alerts, 'Delete this goal?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
