@@ -19,7 +19,8 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
-import { apiContract, installFakeServer } from './support/fakeServer';
+import { installFakeServer } from './support/fakeServer';
+import { apiContract } from './support/apiContract';
 import { invalidatedKeys } from './support/queryClient';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import { applyRulesJob } from './support/applyRulesReport';

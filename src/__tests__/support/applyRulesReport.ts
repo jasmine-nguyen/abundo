@@ -2,6 +2,7 @@
 // The base is an empty dry run; `alreadyFiled` and `createdRule` are optional on the wire, so
 // they stay out unless a preset or the caller sets them.
 import type { ApplyRulesJob, ApplyRulesResult, CreatedRule } from '../../api';
+import { apiContract } from './apiContract';
 
 export function applyRulesReport(over: Partial<ApplyRulesResult> = {}): ApplyRulesResult {
   return {
@@ -35,7 +36,7 @@ export const filedReport = (over: Partial<ApplyRulesResult> = {}) => applyRulesR
 
 /** A background job, running with nothing done yet. */
 export const applyRulesJob = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
+  jobId: 'job-1', status: apiContract.jobStatuses.running, matched: 0, attempted: 0, filed: 0, vanished: 0,
   failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
   createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });

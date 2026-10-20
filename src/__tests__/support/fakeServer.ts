@@ -16,14 +16,7 @@
 // the full path, query included. No timers of its own, so it works under jest fake timers.
 import { beforeEach, afterEach } from '@jest/globals';
 import { applyRulesReport } from './applyRulesReport';
-import type { ApplyRulesJobStatus } from '../../api';
-
-// ABU-43: the server reply words the app acts on, shared with tests/lambda_api/test_api_response_contract.py.
-export const apiContract = require('../../../tests/fixtures/api_response_contract.json') as {
-  batchCategory: { response: { results: { id: string; status: string }[] } };
-  jobStatuses: Record<ApplyRulesJobStatus, ApplyRulesJobStatus>;
-};
-export const UPDATED = apiContract.batchCategory.response.results[0].status;
+import { apiContract, UPDATED } from './apiContract';
 
 const API_BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 

@@ -7,7 +7,8 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { persistCategoryBatch } from '../context';
-import { apiContract as contract, UPDATED, installFakeServer } from './support/fakeServer';
+import { installFakeServer } from './support/fakeServer';
+import { apiContract as contract, UPDATED } from './support/apiContract';
 import { resetAuth, setAuthToken } from './support/authMock';
 import { colesTxn } from './factory';
 
@@ -40,7 +41,7 @@ describe('persistCategoryBatch', () => {
   it('reconciles saved ids BY id, not array position', async () => {
     // Server reports ids out of order and omits one; only reported-updated ids are saved.
     server.once('PATCH', '/transactions', {
-      body: { results: [{ id: 'b', status: 'updated' }, { id: 'a', status: 'updated' }] },
+      body: { results: [{ id: 'b', status: UPDATED }, { id: 'a', status: UPDATED }] },
     });
 
     const out = await persistCategoryBatch(['a', 'b', 'c'], 'coffee', []);
@@ -60,12 +61,14 @@ describe('persistCategoryBatch', () => {
     expect(out.savedIds.size).toBe(100);
   });
 
-  it('reads the server\'s shared sample reply: the updated id is saved, the not_found id failed', async () => {
+  it('sends the shared sample request and reads its reply: updated ids are saved, the not_found id failed', async () => {
     server.once('PATCH', '/transactions', { body: contract.batchCategory.response });
+    const cached = [colesTxn({ transaction_id: 't1', account_id: 'a' })];
 
-    const out = await persistCategoryBatch(['t1', 't2'], 'coffee', []);
+    const out = await persistCategoryBatch(['t1', 't2', 't3'], 'coffee', cached);
 
-    expect([...out.savedIds]).toEqual(['t1']);
+    expect(server.sent('PATCH', '/transactions')[0].body).toEqual(contract.batchCategory.request);
+    expect([...out.savedIds]).toEqual(['t1', 't3']);
     expect(out.failedIds).toEqual(['t2']);
   });
 
