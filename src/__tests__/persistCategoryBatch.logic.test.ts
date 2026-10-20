@@ -7,11 +7,9 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { persistCategoryBatch } from '../context';
-import { apiContract as contract, installFakeServer } from './support/fakeServer';
+import { apiContract as contract, UPDATED, installFakeServer } from './support/fakeServer';
 import { resetAuth, setAuthToken } from './support/authMock';
 import { colesTxn } from './factory';
-
-const UPDATED = contract.batchCategory.response.results[0].status;
 
 const server = installFakeServer();
 

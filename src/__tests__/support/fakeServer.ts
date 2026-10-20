@@ -23,7 +23,7 @@ export const apiContract = require('../../../tests/fixtures/api_response_contrac
   batchCategory: { response: { results: { id: string; status: string }[] } };
   jobStatuses: Record<ApplyRulesJobStatus, ApplyRulesJobStatus>;
 };
-const UPDATED = apiContract.batchCategory.response.results[0].status;
+export const UPDATED = apiContract.batchCategory.response.results[0].status;
 
 const API_BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
