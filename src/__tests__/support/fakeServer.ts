@@ -16,6 +16,14 @@
 // the full path, query included. No timers of its own, so it works under jest fake timers.
 import { beforeEach, afterEach } from '@jest/globals';
 import { applyRulesReport } from './applyRulesReport';
+import type { ApplyRulesJobStatus } from '../../api';
+
+// ABU-43: the server reply words the app acts on, shared with tests/lambda_api/test_api_response_contract.py.
+export const apiContract = require('../../../tests/fixtures/api_response_contract.json') as {
+  batchCategory: { response: { results: { id: string; status: string }[] } };
+  jobStatuses: Record<ApplyRulesJobStatus, ApplyRulesJobStatus>;
+};
+const UPDATED = apiContract.batchCategory.response.results[0].status;
 
 const API_BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -69,7 +77,7 @@ function remove(store: Store, path: string, id: string) {
 
 function startJob({ store, nextId }: Call, prefix: string, jobsPath: string, extra: Record<string, unknown>) {
   const jobId = nextId(prefix);
-  const job = { jobId, status: 'running', ...extra };
+  const job = { jobId, status: apiContract.jobStatuses.running, ...extra };
   store.set(`${jobsPath}/${jobId}`, job);
   return job;
 }
@@ -88,7 +96,7 @@ const CHAT_JOBS = '/ai/chat/jobs';
 const ROUTES: [Method, string, (call: Call) => unknown][] = [
   ['GET', '/transactions', readSeeded([])],
   ['PATCH', '/transactions', ({ body }) => ({
-    results: body.updates.map((update: { id: string }) => ({ id: update.id, status: 'updated' })),
+    results: body.updates.map((update: { id: string }) => ({ id: update.id, status: UPDATED })),
   })],
   ['GET', '/transactions/feed', readSeeded({ transactions: [], nextCursor: null })],
   ['GET', '/transactions/uncategorized/feed', readSeeded({ transactions: [], nextCursor: null })],

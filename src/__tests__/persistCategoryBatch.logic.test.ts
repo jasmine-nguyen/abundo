@@ -7,16 +7,18 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { persistCategoryBatch } from '../context';
-import { installFakeServer } from './support/fakeServer';
+import { apiContract as contract, installFakeServer } from './support/fakeServer';
 import { resetAuth, setAuthToken } from './support/authMock';
 import { colesTxn } from './factory';
+
+const UPDATED = contract.batchCategory.response.results[0].status;
 
 const server = installFakeServer();
 
 beforeEach(() => resetAuth());
 
 // Server "everything updated" reply for a given chunk of ids.
-const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });
+const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: UPDATED })) });
 // The `updates` of every batch save the app sent, in order.
 const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
@@ -60,15 +62,13 @@ describe('persistCategoryBatch', () => {
     expect(out.savedIds.size).toBe(100);
   });
 
-  it('treats a not_found status as failed (only "updated" counts as saved)', async () => {
-    server.once('PATCH', '/transactions', {
-      body: { results: [{ id: 'a', status: 'updated' }, { id: 'b', status: 'not_found' }] },
-    });
+  it('reads the server\'s shared sample reply: the updated id is saved, the not_found id failed', async () => {
+    server.once('PATCH', '/transactions', { body: contract.batchCategory.response });
 
-    const out = await persistCategoryBatch(['a', 'b'], 'coffee', []);
+    const out = await persistCategoryBatch(['t1', 't2'], 'coffee', []);
 
-    expect([...out.savedIds]).toEqual(['a']);
-    expect(out.failedIds).toEqual(['b']);
+    expect([...out.savedIds]).toEqual(['t1']);
+    expect(out.failedIds).toEqual(['t2']);
   });
 
   it('sends one PATCH /transactions carrying each id, the chosen category and the cached charge\'s account', async () => {

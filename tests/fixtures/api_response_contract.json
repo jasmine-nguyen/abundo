@@ -1,0 +1,9 @@
+{
+  "_comment": "ABU-43 shared reply samples. tests/lambda_api/test_api_response_contract.py proves the real server produces them; src/__tests__/persistCategoryBatch.logic.test.ts and applyRulesJob.provider.screen.test.tsx prove the app reads them. Change only with a coordinated app+server change.",
+  "batchCategory": {
+    "request": {"updates": [{"id": "t1", "category": "coffee"}, {"id": "t2", "category": "coffee"}]},
+    "seed": [{"account_id": "a", "transaction_id": "t1"}],
+    "response": {"results": [{"id": "t1", "status": "updated"}, {"id": "t2", "status": "not_found"}]}
+  },
+  "jobStatuses": {"running": "running", "succeeded": "succeeded", "failed": "failed"}
+}
