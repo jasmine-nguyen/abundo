@@ -92,19 +92,19 @@ describe('SRP InitiateAuth refresh — failure modes', () => {
     await auth.signInWithPassword('me@x.com', 'pw');
   }
 
-  it('a !ok response → no token, session cleared to anon, never throws', async () => {
+  it('a !ok response that is not a refusal → offline error, stays signed in', async () => {
     const auth = loadAuth();
     await seatExpiredSrp(auth);
     mockFetch.mockResolvedValue({ ok: false, json: async () => ({}) });
-    await expect(auth.getAuthToken()).resolves.toBeUndefined();
-    expect(auth.getStatus()).toBe('anon');
+    await expect(auth.getAuthToken()).rejects.toThrow(TypeError);
+    expect(auth.getStatus()).toBe('authed');
   });
 
-  it('fetch itself rejecting (offline) → undefined, never throws', async () => {
+  it('fetch itself rejecting (offline) → offline error', async () => {
     const auth = loadAuth();
     await seatExpiredSrp(auth);
     mockFetch.mockRejectedValue(new Error('Network request failed'));
-    await expect(auth.getAuthToken()).resolves.toBeUndefined();
+    await expect(auth.getAuthToken()).rejects.toThrow(TypeError);
   });
 
   it('a ROTATED refresh token in the response is persisted', async () => {

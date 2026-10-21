@@ -36,10 +36,9 @@ import { queryClient } from "./queryClient";
 // node `logic` jest project and adds no import cycle.
 import { withBodyTimeout } from "./httpTimeout";
 
-// The InitiateAuth refresh reads its body with no fetch-level timeout, so a 2xx whose body never
-// finishes streaming would hang token refresh forever (the getAuthToken promise never settles).
-// Bound the body read the same way the API readers are bounded (WHIT-448). 15s matches the app's
-// default read budget (src/api.ts REQUEST_TIMEOUT_MS).
+// Neither refresh route has a connection timeout, so a hung swap (dead Wi-Fi, captive portal) would
+// never settle — and every API call and unlock() waits on it. Bound the WHOLE swap (WHIT-448,
+// ABU-84). 15s matches the app's default read budget (src/api.ts REQUEST_TIMEOUT_MS).
 const REFRESH_BODY_TIMEOUT_MS = 15_000;
 
 /**
@@ -113,9 +112,17 @@ const AUTH_METHOD_KEY = "abundo.cognito.authMethod";
 // API already considers expired).
 const EXPIRY_SKEW_SECONDS = 60;
 
+type RefreshedToken = Pick<TokenResponse, "idToken" | "accessToken" | "issuedAt" | "expiresIn" | "refreshToken">;
+
+// ABU-84: only a real rejection signs the user out; a network failure or timeout keeps the session.
+type RefreshResult = { kind: "ok"; token: RefreshedToken } | { kind: "rejected" } | { kind: "network" };
+
 // Module singletons. `session` is the live token set (null = not signed in).
 let session: Session | null = null;
 let status: AuthStatus = "loading";
+// ABU-84: bumped by lock() and clearSession(). A swap started under an older value finished too
+// late — it must not seat a token or change the status (a late 'authed' would drop the Face ID cover).
+let sessionEpoch = 0;
 // Single-flight: concurrent getAuthToken() callers whose token is stale share ONE
 // refresh (AppProvider fires ~9 data fetches on mount — without this they would
 // each fire their own refreshAsync and race to overwrite the cache).
@@ -186,9 +193,7 @@ function discovery(domain: string): DiscoveryDocument {
   };
 }
 
-function cacheToken(
-  token: Pick<TokenResponse, "idToken" | "accessToken" | "issuedAt" | "expiresIn" | "refreshToken">,
-): void {
+function cacheToken(token: RefreshedToken): void {
   session = {
     idToken: token.idToken,
     accessToken: token.accessToken,
@@ -201,6 +206,7 @@ function cacheToken(
 }
 
 function clearSession(): void {
+  sessionEpoch++;
   session = null;
   sessionAuthMethod = null;
   // WHIT-205: drop the per-session query cache as the session ends. clearSession is the
@@ -609,8 +615,9 @@ export async function confirmPasswordReset(
  * accepts — its `aud` is the app client id; access tokens carry `client_id`, not
  * `aud`, and would be rejected). Returns the cached id token when fresh; otherwise
  * refreshes once from the stored refresh token (single-flight). `undefined` when
- * there is no session or the refresh fails — the caller (src/api.ts request())
+ * there is no session or the refresh is rejected — the caller (src/api.ts request())
  * then throws "Not signed in" (there is no static-secret fallback since WHIT-162).
+ * Rejects with an offline TypeError when the refresh fails on the network (ABU-84).
  */
 export async function getAuthToken(): Promise<string | undefined> {
   // Locked (WHIT-161): never read the biometric-guarded key here — that would pop
@@ -626,32 +633,56 @@ export async function getAuthToken(): Promise<string | undefined> {
   return refreshInFlight;
 }
 
-// Core token refresh: swap the given refresh token for a fresh id token, updating the
-// in-memory cache (and, if the token rotated, the guarded keychain). Returns the new
-// id token, or undefined on any failure. Deliberately does NOT touch the gate status
-// or clear the session — the CALLER owns the terminal status. That is what lets
-// unlock() keep a failed OFFLINE refresh at 'locked' instead of the
-// getAuthToken/restore path's clearSession() broadcasting a transient 'anon' (which
-// flashed a login redirect for one frame before the lock screen painted). WHIT-171.
+// Core token refresh: swap the given refresh token for a fresh token set. Pure: it touches
+// neither the in-memory session, the keychain nor the gate status — refreshCurrent seats the
+// token and saves a rotated one, and the CALLER owns the terminal status. That is what lets
+// unlock() keep a failed OFFLINE refresh at 'locked' instead of the getAuthToken/restore path's
+// clearSession() broadcasting a transient 'anon' (which flashed a login redirect for one frame
+// before the lock screen painted). WHIT-171. The whole swap is time-limited: a timeout or any
+// unexpected throw counts as a network failure (ABU-84).
 //
 // WHIT-178: refresh on the surface that MINTED the session. SRP/native-password
 // sessions go through InitiateAuth REFRESH_TOKEN_AUTH (their refresh token isn't
 // reliably redeemable at the OAuth /oauth2/token endpoint); Hosted-UI / federated
 // (OAuth) sessions refresh at /oauth2/token as before.
-async function refreshTokens(refreshToken: string): Promise<string | undefined> {
-  // In-memory method wins (robust to a transient method-key read error mid-session);
-  // fall back to the stored value on a cold launch. WHIT-178.
-  const method = sessionAuthMethod ?? (await getAuthMethod());
-  return method === "srp"
-    ? refreshViaInitiateAuth(refreshToken)
-    : refreshViaOAuth(refreshToken);
+function refreshTokens(refreshToken: string): Promise<RefreshResult> {
+  const swap = async (): Promise<RefreshResult> => {
+    // In-memory method wins (robust to a transient method-key read error mid-session);
+    // fall back to the stored value on a cold launch. WHIT-178.
+    const method = sessionAuthMethod ?? (await getAuthMethod());
+    return method === "srp" ? refreshViaInitiateAuth(refreshToken) : refreshViaOAuth(refreshToken);
+  };
+  return withBodyTimeout(swap(), REFRESH_BODY_TIMEOUT_MS).catch((): RefreshResult => ({ kind: "network" }));
+}
+
+// Run the swap, save a rotated refresh token and seat the result — unless lock()/sign-out
+// happened meanwhile (sessionEpoch moved): then it returns "stale" so the caller leaves the
+// status alone. A late rotated token is still saved after a lock (the next unlock needs it),
+// never after a sign-out. ABU-84.
+async function refreshCurrent(refreshToken: string): Promise<RefreshResult | "stale"> {
+  const epoch = sessionEpoch;
+  const result = await refreshTokens(refreshToken);
+  const rotated = result.kind === "ok" ? result.token.refreshToken : undefined;
+  // Cognito omits the refresh token on refresh (the existing one stays valid);
+  // only overwrite when a rotated one is actually returned.
+  if (rotated && (epoch === sessionEpoch || status === "locked")) {
+    try {
+      await setRefreshToken(rotated);
+    } catch {
+      if (epoch !== sessionEpoch) return "stale";
+      return { kind: "network" };
+    }
+  }
+  if (epoch !== sessionEpoch) return "stale";
+  if (result.kind === "ok") cacheToken(result.token);
+  return result;
 }
 
 // OAuth (Hosted UI / federated Google) refresh: the /oauth2/token refresh grant.
-async function refreshViaOAuth(refreshToken: string): Promise<string | undefined> {
+async function refreshViaOAuth(refreshToken: string): Promise<RefreshResult> {
   const domain = hostedUiDomain();
   const clientId = appClientId();
-  if (!domain || !clientId) return undefined;
+  if (!domain || !clientId) return { kind: "rejected" };
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const AuthSession = require("expo-auth-session");
@@ -659,13 +690,11 @@ async function refreshViaOAuth(refreshToken: string): Promise<string | undefined
       { clientId, refreshToken },
       { tokenEndpoint: `${domain}/oauth2/token` },
     );
-    cacheToken(token);
-    // Cognito omits the refresh token on refresh (the existing one stays valid);
-    // only overwrite when a rotated one is actually returned.
-    if (token.refreshToken) await setRefreshToken(token.refreshToken);
-    return token.idToken;
-  } catch {
-    return undefined;
+    return { kind: "ok", token };
+  } catch (err) {
+    // expo-auth-session's TokenError carries the OAuth `error` string as `code`.
+    if ((err as { code?: string })?.code === "invalid_grant") return { kind: "rejected" };
+    return { kind: "network" };
   }
 }
 
@@ -673,10 +702,10 @@ async function refreshViaOAuth(refreshToken: string): Promise<string | undefined
 // cognito-idp endpoint (region derived from the pool id). Public client → no
 // SECRET_HASH. Always returns an id token on success (unlike the OAuth grant for an
 // SRP-minted token). WHIT-178.
-async function refreshViaInitiateAuth(refreshToken: string): Promise<string | undefined> {
+async function refreshViaInitiateAuth(refreshToken: string): Promise<RefreshResult> {
   const clientId = appClientId();
   const poolId = userPoolId();
-  if (!clientId || !poolId) return undefined;
+  if (!clientId || !poolId) return { kind: "rejected" };
   const region = poolId.split("_")[0];
   try {
     const res = await fetch(`https://cognito-idp.${region}.amazonaws.com/`, {
@@ -691,34 +720,43 @@ async function refreshViaInitiateAuth(refreshToken: string): Promise<string | un
         AuthParameters: { REFRESH_TOKEN: refreshToken },
       }),
     });
-    if (!res.ok) return undefined;
-    const data = (await withBodyTimeout(res.json(), REFRESH_BODY_TIMEOUT_MS)) as {
+    if (!res.ok) {
+      if (res.status !== 400) return { kind: "network" };
+      const body = (await res.json().catch(() => ({}))) as { __type?: string };
+      if (body.__type?.endsWith("NotAuthorizedException")) return { kind: "rejected" };
+      return { kind: "network" };
+    }
+    const data = (await res.json()) as {
       AuthenticationResult?: { IdToken?: string; AccessToken?: string; RefreshToken?: string; ExpiresIn?: number };
     };
     const r = data.AuthenticationResult;
-    if (!r?.IdToken) return undefined;
-    cacheToken({
-      idToken: r.IdToken,
-      accessToken: r.AccessToken ?? "",
-      // InitiateAuth returns ExpiresIn as a DURATION (seconds); pair it with "now" as
-      // the issue time — cacheToken/isNearExpiry treat expiresIn as a duration.
-      issuedAt: Math.floor(Date.now() / 1000),
-      expiresIn: r.ExpiresIn ?? 3600,
-      // Refresh responses omit the refresh token; cacheToken falls back to the cached
-      // one, and REFRESH_TOKEN_AUTH keeps the existing token valid.
-      refreshToken: r.RefreshToken,
-    });
-    if (r.RefreshToken) await setRefreshToken(r.RefreshToken);
-    return r.IdToken;
+    // Never sign out when unsure: a 2xx without an id token counts as a transient failure.
+    if (!r?.IdToken) return { kind: "network" };
+    return {
+      kind: "ok",
+      token: {
+        idToken: r.IdToken,
+        accessToken: r.AccessToken ?? "",
+        // InitiateAuth returns ExpiresIn as a DURATION (seconds); pair it with "now" as
+        // the issue time — cacheToken/isNearExpiry treat expiresIn as a duration.
+        issuedAt: Math.floor(Date.now() / 1000),
+        expiresIn: r.ExpiresIn ?? 3600,
+        // Refresh responses omit the refresh token; cacheToken falls back to the cached
+        // one, and REFRESH_TOKEN_AUTH keeps the existing token valid.
+        refreshToken: r.RefreshToken,
+      },
+    };
   } catch {
-    return undefined;
+    return { kind: "network" };
   }
 }
 
 // Restore/refresh for the NON-biometric paths (getAuthToken, restoreSession): pull
 // the stored refresh token and swap it for a fresh id token. On success → 'authed';
-// on any failure → clearSession() ('anon', so the gate sends the user to login). The
-// biometric unlock path does NOT use this — it owns 'locked' on failure (WHIT-171).
+// on a rejection → clearSession() ('anon', so the gate sends the user to login); on a
+// network failure → throw an offline TypeError and keep the session (ABU-84). A swap that
+// finished after lock()/sign-out → undefined, status untouched. The biometric unlock path
+// does NOT use this — it owns 'locked' on failure (WHIT-171).
 async function refreshFromStoredToken(): Promise<string | undefined> {
   // Prefer the in-memory refresh token (seeded by the Hosted UI sign-in or by the one-time
   // biometric unlock): this keeps hourly refreshes from re-reading the guarded
@@ -761,22 +799,35 @@ async function refreshFromStoredToken(): Promise<string | undefined> {
     clearSession();
     return undefined;
   }
-  const idToken = await refreshTokens(refreshToken);
-  if (idToken) {
+  const result = await refreshCurrent(refreshToken);
+  if (result === "stale") return undefined;
+  if (result.kind === "ok") {
     setStatus("authed");
-    return idToken;
+    return result.token.idToken;
   }
-  clearSession();
-  return undefined;
+  if (result.kind === "rejected") {
+    clearSession();
+    return undefined;
+  }
+  // A TypeError is what fetch throws offline, so readFailureIsOffline shows "You look offline"
+  // and the query retry rule retries it.
+  throw new TypeError("Couldn't reach the sign-in server");
 }
 
 /**
  * On launch, try to re-establish a session from the stored refresh token (silent
  * refresh). Resolves to whether a valid session now exists, and moves the gate
- * status to `authed` / `anon`. Never throws.
+ * status to `authed` / `anon`. Offline at launch → `authed`: the in-memory session keeps
+ * the refresh token, so the next query retries the swap (ABU-84). Never throws.
  */
 export async function restoreSession(): Promise<boolean> {
-  const idToken = await getAuthToken();
+  let idToken: string | undefined;
+  try {
+    idToken = await getAuthToken();
+  } catch {
+    setStatus("authed");
+    return true;
+  }
   if (idToken) {
     setStatus("authed");
     return true;
@@ -902,12 +953,14 @@ async function performUnlock(): Promise<boolean> {
     // Refresh via the pure helper (NOT refreshFromStoredToken): on an offline failure
     // it must NOT broadcast 'anon'. unlock owns the terminal status here, so the gate
     // never renders a stray login redirect before the lock screen. WHIT-171.
-    const idToken = await refreshTokens(refreshToken);
-    if (idToken) {
+    const result = await refreshCurrent(refreshToken);
+    // A re-lock or "Sign in again" happened mid-swap: that path owns the status now.
+    if (result === "stale") return false;
+    if (result.kind === "ok") {
       setStatus("authed");
       return true;
     }
-    // Valid-looking token but the refresh failed (e.g. offline): keep the session
+    // Valid-looking token but the refresh failed (e.g. offline or timed out): keep the session
     // stored and stay locked so the user can retry — no transient 'anon' flash.
     setStatus("locked");
     return false;
@@ -921,6 +974,7 @@ async function performUnlock(): Promise<boolean> {
 
 /** Drop the in-memory session (incl. the refresh token) and re-seal to `locked`. */
 export function lock(): void {
+  sessionEpoch++;
   session = null;
   setStatus("locked");
 }
