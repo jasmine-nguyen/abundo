@@ -7,6 +7,7 @@ import re
 TERRAFORM_DIR = pathlib.Path(__file__).resolve().parents[2] / "terraform"
 MONITORING_TF = TERRAFORM_DIR / "monitoring.tf"
 BOOTSTRAP_MAIN_TF = TERRAFORM_DIR / "bootstrap" / "main.tf"
+APIGATEWAY_TF = TERRAFORM_DIR / "apigateway.tf"
 
 
 def tf_block(text, kind, name):
@@ -71,7 +72,7 @@ def route_keys(source):
 
 def app_route_keys():
     """WHIT-791: every active route key in apigateway.tf's app_route_keys list."""
-    return route_keys((TERRAFORM_DIR / "apigateway.tf").read_text())
+    return route_keys(APIGATEWAY_TF.read_text())
 
 
 def exact_route_keys(handler):

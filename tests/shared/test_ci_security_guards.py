@@ -6,10 +6,9 @@ import re
 
 import pytest
 
-from _terraform import BOOTSTRAP_MAIN_TF, TERRAFORM_DIR, policy_statements, tf_attr, tf_block
+from _terraform import APIGATEWAY_TF, BOOTSTRAP_MAIN_TF, TERRAFORM_DIR, policy_statements, tf_attr, tf_block
 
 WORKFLOWS_DIR = TERRAFORM_DIR.parent / ".github" / "workflows"
-APIGATEWAY_TF = TERRAFORM_DIR / "apigateway.tf"
 
 SSM_PARAMETERS = {
     "banksync_webhook_secret": "banksync-webhook-secret",
