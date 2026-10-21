@@ -77,3 +77,38 @@ it('caps the payday picker at today', async () => {
   await openPayCycle(14);
   expect((renderedPickerProps().maximumDate as Date).toDateString()).toBe(new Date().toDateString());
 });
+
+// ABU-47: before the first read resolves the sheet must not draw the default cycle as if it
+// were the user's, and a failed first read must offer Try again rather than the made-up cycle.
+describe('first load', () => {
+  const open = () => {
+    const state = { sheet: { mode: 'paycycle' }, toast: null, ...fns } as unknown as AppContext;
+    return openOverlays(state, (next) => { mockState = next; });
+  };
+
+  it('shows a spinner and no options while the pay cycle is still loading', async () => {
+    const held = server.hold('/paycycle');
+    await open();
+    expect(screen.getByTestId('paycycle-loading')).toBeTruthy();
+    expect(screen.queryByText('Weekly')).toBeNull();
+    expect(screen.queryByTestId('mock-datepicker')).toBeNull();
+    await act(async () => { held.release(); });
+  });
+
+  it('shows an error with Try again, and no options, when the first load fails', async () => {
+    server.fail('/paycycle', 500);
+    await open();
+    await screen.findByTestId('paycycle-error');
+    expect(screen.queryByText('Weekly')).toBeNull();
+    expect(screen.queryByTestId('mock-datepicker')).toBeNull();
+  });
+
+  it('Try again loads the real pay cycle after a failed first load', async () => {
+    server.once('GET', '/paycycle', { status: 500 });
+    server.seed('/paycycle', { length: 30, last_pay_date: '2026-06-06' });
+    await open();
+    await screen.findByTestId('paycycle-error');
+    await act(async () => { fireEvent.press(screen.getByTestId('paycycle-retry')); });
+    await waitFor(() => expect(isTicked('Monthly')).toBe(true));
+  });
+});

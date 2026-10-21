@@ -37,6 +37,7 @@ it('setPayCycleLength bails on a cold [payCycle] cache — no server write, no c
 
   expect(server.sent('PUT', '/paycycle')).toHaveLength(0);              // <-- fails on revert of the !prev guard
   expect(queryClient.getQueryData(['payCycle'])).toBeUndefined(); // no half-built cycle written
+  expect(result.current.toast).toBe('Could not save pay cycle. Please try again.'); // ABU-47: never silent
 });
 
 // --- applyCategory: cold ['transactions']/['categories'] must no-op (close the sheet) --------

@@ -465,6 +465,7 @@ export interface PayCycleData {
   cycleName: string;
   isLoading: boolean;
   isError: boolean;
+  refetch: () => void;
   payCycleReady: boolean; // the pay cycle has loaded (or is cached), so days left is real, not the default
 }
 // The pay cycle every reader shows: the default until the real one loads (payCycleReady says which).
@@ -476,7 +477,7 @@ export function usePayCycle(): PayCycleData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const view = readPayCycle(payCycleQuery.data);
-  return { ...view, cycleName: cycleName(view.payCycle.length), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
+  return { ...view, cycleName: cycleName(view.payCycle.length), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError, refetch: () => { payCycleQuery.refetch(); } };
 }
 
 // --- shared screen-composite status plumbing (WHIT-204) ----------------------

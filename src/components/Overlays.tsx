@@ -17,6 +17,7 @@ import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion
 import { toISODate, formatDayMonthYear, formatTimeOfDay } from '../dateutil';
 import { isBankSyncBehind } from './ListStates';
 import { NativeDateField } from './NativeDateField';
+import { DetailStates } from './DetailStates';
 import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
 import { useSheetDraft } from '../hooks/useSheetDraft';
@@ -714,7 +715,7 @@ function PayCycleSheet() {
   // WHIT-203: the current pay cycle is read from the query layer; the length/payday
   // writes double-write the ['payCycle'] cache (persistPayCycle), so a selection reflects
   // here immediately.
-  const { payCycle } = usePayCycle();
+  const { payCycle, payCycleReady, isLoading, isError, refetch } = usePayCycle();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
@@ -723,6 +724,10 @@ function PayCycleSheet() {
     <View>
       <Text style={styles.sheetTitle}>Pay cycle</Text>
       <Text style={styles.confirmSub}>Budgets reset and pace is measured across this period.</Text>
+      <DetailStates
+        isLoading={isLoading} isError={isError} hasCache={payCycleReady} idPrefix="paycycle"
+        errorText="Couldn't load your pay cycle." retryLabel="Try again" onRetry={refetch}
+      >
       <View style={{ marginTop: 14, gap: 10 }}>
         {opts.map((o) => {
           const sel = payCycle.length === o.len;
@@ -744,6 +749,7 @@ function PayCycleSheet() {
       <View style={{ marginTop: 10 }}>
         <NativeDateField value={payCycle.last_pay_date} onChange={(iso) => { if (iso) s.setPayday(iso); }} maximumDate={today} alwaysShowPillIOS />
       </View>
+      </DetailStates>
 
       <SheetButton primary label="Done" onPress={() => s.setSheet(null)} style={{ marginTop: 16 }} />
     </View>
