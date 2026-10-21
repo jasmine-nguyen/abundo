@@ -55,20 +55,6 @@ __pycache__/
 .coverage
 .coverage.*
 
-# Webhook lambda build dir (pip install --target) — ignore everything, allowlist only true source
-lambda/*
-!lambda/handler.py
-!lambda/up_webhook.py
-!lambda/banksync.py
-!lambda/merchant.py
-!lambda/reprocess.py
-!lambda/ingest_skip.py
-!lambda/age_out.py
-!lambda/reconcile.py
-!lambda/budget_alerts.py
-!lambda/rule_ingest.py
-!lambda/requirements.txt
-
 # terraform
 terraform/artifacts/*
 terraform/layer/

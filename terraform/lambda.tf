@@ -1,11 +1,21 @@
-# Install the webhook lambda's third-party deps into lambda/ before zipping.
-# These are gitignored build artifacts (not source); without this step a fresh
-# clone would zip the function without them (which is exactly how the deployed
-# webhook lost `standardwebhooks` and started 500ing). The build command lives in
-# scripts/build_terraform_artifacts.sh so CI and the local apply share one recipe
+# Hash of git's list of tracked <dir>/*.py, one per staged lambda. Feeds the
+# `tracked` triggers below, so `git rm --cached` on a file that stays on disk still
+# rebuilds (and drops it).
+data "external" "tracked_py" {
+  for_each = toset(["lambda", "lambda_api"])
+  program  = ["bash", "-c", "set -o pipefail; hash=$(git -C \"$1\" ls-files -- \":(glob)$2/*.py\" | git hash-object --stdin) || exit 1; printf '{\"hash\":\"%s\"}' \"$hash\"", "bash", "${path.module}/..", each.key]
+}
+
+# Stage the webhook package from ONLY its git-tracked lambda/*.py into build/lambda,
+# then install its third-party deps (standardwebhooks) there. It used to zip the raw
+# lambda/ dir, so pip installs, __pycache__ and stale modules shipped too — the same
+# bug that 500'd every lambda_api route (WHIT-626, see below). The build command lives
+# in scripts/build_terraform_artifacts.sh so CI and the local apply share one recipe
 # (CI can't rely on this provisioner re-running — see that script's header).
 resource "null_resource" "prepare_lambda_deps" {
   triggers = {
+    sources      = sha256(join("", [for f in fileset("${path.module}/../lambda", "*.py") : filesha256("${path.module}/../lambda/${f}")]))
+    tracked      = data.external.tracked_py["lambda"].result.hash
     requirements = filesha256("${path.module}/../lambda/requirements.txt")
     build_script = filesha256("${path.module}/../scripts/build_terraform_artifacts.sh")
   }
@@ -15,15 +25,15 @@ resource "null_resource" "prepare_lambda_deps" {
   }
 }
 
-# Webhook lambda source: only its webhook-specific modules (handler.py,
+# Webhook lambda package: the tracked webhook-specific modules (handler.py,
 # webhook_repository.py, reconcile.py with the settlement planner, budget_alerts.py,
-# banksync.py). constants.py,
-# models.py, and api_key.py come from the shared layer attached below —
-# same single-source pattern as the api/sync/authorizer lambdas (WHIT-88).
+# banksync.py, ...) plus standardwebhooks. constants.py, models.py, and api_key.py
+# come from the shared layer attached below — same single-source pattern as the
+# api/sync/authorizer lambdas (WHIT-88).
 data "archive_file" "lambda_zip" {
   depends_on  = [null_resource.prepare_lambda_deps]
   type        = "zip"
-  source_dir  = "${path.module}/../lambda"
+  source_dir  = "${path.module}/build/lambda"
   output_path = "${path.module}/artifacts/lambda.zip"
 }
 
@@ -37,14 +47,10 @@ data "archive_file" "lambda_zip" {
 # local apply share). The triggers below decide WHEN we rebuild: `sources` hashes the
 # on-disk lambda_api/*.py contents, and `tracked` hashes git's list of tracked ones, so
 # `git rm --cached` on a file that stays on disk still rebuilds (and drops it).
-data "external" "lambda_api_tracked" {
-  program = ["bash", "-c", "set -o pipefail; hash=$(git -C \"$1\" ls-files -- ':(glob)lambda_api/*.py' | git hash-object --stdin) || exit 1; printf '{\"hash\":\"%s\"}' \"$hash\"", "bash", "${path.module}/.."]
-}
-
 resource "null_resource" "prepare_lambda_api" {
   triggers = {
     sources      = sha256(join("", [for f in fileset("${path.module}/../lambda_api", "*.py") : filesha256("${path.module}/../lambda_api/${f}")]))
-    tracked      = data.external.lambda_api_tracked.result.hash
+    tracked      = data.external.tracked_py["lambda_api"].result.hash
     build_script = filesha256("${path.module}/../scripts/build_terraform_artifacts.sh")
   }
 
@@ -117,7 +123,7 @@ resource "aws_lambda_function" "transaction_ingest" {
 
 # Direct Up-bank webhook (WHIT-313): notify-only. Receives Up's own webhook for the
 # home-loan account and sends the instant repayment push. Reuses the webhook zip
-# (../lambda already contains up_webhook.py) and the transaction_exec role — which
+# (the staged build/lambda dir already contains up_webhook.py) and the transaction_exec role — which
 # already grants the DynamoDB access the notify markers/device tokens need, plus (with
 # the SSM additions in iam.tf) the two Up secrets. Public, API-Gateway-triggered
 # (apigateway.tf); no schedule, no event source, writes no transactions.
@@ -145,7 +151,7 @@ resource "aws_lambda_function" "up_webhook" {
 }
 
 # Manual recovery lambda (WHIT-55): re-drives dead-lettered FAILED# rows through
-# normalise + insert. Reuses the webhook zip (source_dir ../lambda already contains
+# normalise + insert. Reuses the webhook zip (the staged build/lambda dir already contains
 # reprocess.py) and the transaction_exec role — which already has Query / DeleteItem /
 # BatchWriteItem / GetItem, so NO DynamoDB IAM change is needed. Invoked manually
 # (AWS console Test button / `aws lambda invoke`); it has no event source, schedule,
@@ -177,7 +183,7 @@ resource "aws_lambda_function" "transaction_reprocess" {
 # Stale-pending age-out sweep (WHIT-79): a daily scheduled reaper that deletes pending
 # rows older than PENDING_AGE_OUT_DAYS that never got a matching posted (reversed
 # pre-auth / unbalanced count). Like reprocess it reuses the webhook zip
-# (../lambda already contains age_out.py) and the transaction_exec role (Query / DeleteItem
+# (the staged build/lambda dir already contains age_out.py) and the transaction_exec role (Query / DeleteItem
 # already granted). UNLIKE reprocess it IS scheduled (see scheduler.tf), and the schedule
 # passes {"dry_run": false} so it runs live; a manual/empty invoke stays dry-run-safe.
 resource "aws_lambda_function" "transaction_age_out" {
