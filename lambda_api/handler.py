@@ -810,7 +810,7 @@ def _parse_transfer(body: dict) -> tuple[dict, dict | None]:
     return {"transfer": body["transfer"]}, None
 
 
-def _clear_leftovers(cat_id: str, taxonomy_ids: set, rule_repo: RuleRepository,
+def _clear_leftovers(cat_id: str, repo: CategoryRepository, rule_repo: RuleRepository,
                      transaction_repo: TransactionRepository, started: float) -> int:
     """Delete the rules filing into `cat_id` and unfile the charges still filed to it (ABU-33), so
     a category deleted or recreated under the same slug never inherits old rules or rows. Returns
@@ -818,6 +818,7 @@ def _clear_leftovers(cat_id: str, taxonomy_ids: set, rule_repo: RuleRepository,
 
     A no-op for a live id or the `income` sentinel. Rules go first, so an incoming charge can't be
     filed into the id mid-clear. A DatabaseError from the rule or history read reaches the caller."""
+    taxonomy_ids = {category["id"] for category in repo.list_categories()}
     if not is_unfiled_category(cat_id, taxonomy_ids):
         return 0
 
@@ -825,6 +826,8 @@ def _clear_leftovers(cat_id: str, taxonomy_ids: set, rule_repo: RuleRepository,
         if rule.get("category_id") == cat_id:
             rule_repo.delete_rule(rule["id"])
 
+    # shortcut: reads the whole history on every create and delete, fine for one person's few
+    # thousand rows; add a by-category lookup once history passes ~10k rows.
     filed = [transaction for transaction in read_window(transaction_repo, None, None)
              if transaction.get("category") == cat_id]
     limit = WriteLimit(None, APPLY_RULES_TIME_BUDGET_SECONDS, started, clock=time.monotonic)
@@ -894,8 +897,7 @@ def create_category(
         return transfer_error
 
     try:
-        taxonomy_ids = {category["id"] for category in repo.list_categories()}
-        left = _clear_leftovers(cat_id, taxonomy_ids, rule_repo, transaction_repo, started)
+        left = _clear_leftovers(cat_id, repo, rule_repo, transaction_repo, started)
     except DatabaseError as e:
         logger.warning("leftover clean-up failed before creating category %s: %s", cat_id, e)
         return _json_response(500, {"error": "could not create category"})
@@ -1024,8 +1026,7 @@ def delete_category(
     # Same best-effort rule for the rules and labels: a tail left here is cleared by the
     # create gate before the slug can be reused.
     try:
-        taxonomy_ids = {category["id"] for category in repo.list_categories()}
-        left = _clear_leftovers(cat_id, taxonomy_ids, rule_repo, transaction_repo, started)
+        left = _clear_leftovers(cat_id, repo, rule_repo, transaction_repo, started)
     except DatabaseError as e:
         logger.warning("leftover clean-up failed for deleted category %s: %s", cat_id, e)
         return _json_response(200, {"id": cat_id})
