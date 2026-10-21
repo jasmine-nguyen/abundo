@@ -89,7 +89,7 @@ These are looked up before the owner is known, or they are an ops queue across a
 
 | # | Old `pk` \| `sk` | New `pk` \| `sk` | Owner link |
 |---|---|---|---|
-| 21 | `FAILED` \| `<sk>` | unchanged | `owner` attribute when known. A row dead-lettered because the bank account is unknown has no owner. Already expires via `expires_at`. |
+| 21 | `FAILED` \| `<sk>` | unchanged | `owner` attribute when known. A row dead-lettered because the bank account is unknown has no owner. No `expires_at`: rows stay until the reprocess run clears them, and the dead-letter alarm flags them (ABU-32). |
 | 22 | `EVENT#<envelope>` \| `EVENT` | unchanged | No owner, no personal data (only the envelope id). Written with `expires_at` = now + 30 days (ABU-46). |
 | 23 | `PUSHRECEIPT#PENDING` \| `<receipt_id>` | unchanged | `owner` attribute. |
 | new | — | `BANKACCT#<provider>#<provider_account_id>` \| `BANKACCT` | `{owner, account_id}`. `provider` is `banksync` or `up`. |

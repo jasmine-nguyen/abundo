@@ -15,18 +15,12 @@ import pytest
 from _dynamo_fakes import FakeTable
 from _http_fakes import UP_API_URL, http_error
 from _milestone_fakes import FakeDeviceRepo
-from _terraform import filter_pattern
+from _terraform import filter_pattern, matching
 from _up_webhook_fakes import HOMELOAN_ID, MOCK_SECRET, SIGNATURE_KEY, signed_event, up_transaction, webhook_payload
 
 
 def _or_terms(pattern):
     return [term.strip('"') for term in re.findall(r'\?("[^"]*"|\S+)', pattern)]
-
-
-def _matching(messages, term):
-    if " " in term:
-        return [message for message in messages if term in message]
-    return [message for message in messages if term in message.split()]
 
 
 @pytest.fixture
@@ -91,7 +85,7 @@ def test_each_webhook_failure_logs_a_term_the_merged_filter_matches(up, monkeypa
     response, messages = _run(up, caplog)
 
     assert response["statusCode"] == status
-    assert _matching(messages, expected_term), f"no logged line matches the filter term {expected_term!r}: {messages}"
+    assert matching(messages, expected_term), f"no logged line matches the filter term {expected_term!r}: {messages}"
 
 
 def test_healthy_and_scanner_traffic_do_not_match_the_merged_filter(up, monkeypatch, caplog):
@@ -100,7 +94,7 @@ def test_healthy_and_scanner_traffic_do_not_match_the_merged_filter(up, monkeypa
     terms = _or_terms(filter_pattern("up_webhook_failures"))
 
     def matched(messages):
-        return [message for term in terms for message in _matching(messages, term)]
+        return [message for term in terms for message in matching(messages, term)]
 
     monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction())
     response, messages = _run(up, caplog)

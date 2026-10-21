@@ -490,9 +490,9 @@ def test_batch_real_error_cancels_queued_updates(repo, database_error):
     assert len(repo._table.update_calls) < 30
 
 
-def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeypatch):
-    # WHIT-54: each dead-letter row carries a readable failed_at (ISO) and an
-    # expires_at DynamoDB TTL (epoch seconds) 30 days out, from the same instant.
+def test_save_failed_transactions_stamps_failed_at_without_expiry(repo, shared, monkeypatch):
+    # WHIT-54: each dead-letter row carries a readable failed_at (ISO). ABU-32: no expires_at,
+    # so a failed row stays until the recovery run clears it instead of silently expiring.
     frozen = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
 
     class _FrozenDatetime(datetime):
@@ -506,8 +506,7 @@ def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeyp
 
     (_, item), = [(k, v) for k, v in repo._table.store.items() if k[0] == "FAILED"]
     assert item["failed_at"] == frozen.isoformat()
-    assert item["expires_at"] == int(frozen.timestamp()) + 30 * 24 * 60 * 60
-    assert isinstance(item["expires_at"], int)   # TTL must be a Number, not a string
+    assert "expires_at" not in item
 
 
 # --- folded from test_repository_transaction_whit275_gaps.py (WHIT-463) ---

@@ -31,6 +31,14 @@ def filter_pattern(resource_name):
     return match.group(1).replace('\\"', '"')
 
 
+def matching(messages, term):
+    """The log messages a CloudWatch filter term matches: a quoted (spaced) term as a substring,
+    a bare term as a whole word."""
+    if " " in term:
+        return [message for message in messages if term in message]
+    return [message for message in messages if term in message.split()]
+
+
 def alarm_names(text):
     """WHIT-655: every aws_cloudwatch_metric_alarm resource name in the terraform text, in order."""
     return re.findall(r'^resource "aws_cloudwatch_metric_alarm" "([^"]+)"', text, re.M)

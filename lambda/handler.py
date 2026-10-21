@@ -120,6 +120,11 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
             unmapped_transactions.append(row)
 
     repo.save_failed_transactions(unmapped_transactions)
+    if unmapped_transactions:
+        logger.warning(
+            "TRANSACTIONS_DEAD_LETTERED webhook %s: %d rows saved to the FAILED pile",
+            payload["id"], len(unmapped_transactions),
+        )
 
     unique_transactions = drop_repeats(normalised_transactions)
     if len(unique_transactions) < len(normalised_transactions):

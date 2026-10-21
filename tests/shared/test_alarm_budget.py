@@ -5,7 +5,7 @@ filter's metric is watched by an alarm (else a failure is logged and nobody hear
 Metric math is billed per metric it reads, so merging with a formula would save nothing.
 """
 
-from _terraform import MONITORING_TF, TERRAFORM_DIR, alarm_metrics, alarm_names, filter_metrics
+from _terraform import MONITORING_TF, TERRAFORM_DIR, alarm_metrics, alarm_names, filter_metrics, tf_attr, tf_block
 
 FREE_TIER_ALARMS = 10
 
@@ -29,6 +29,16 @@ def test_every_custom_alarm_watches_a_metric_some_filter_publishes():
         if not metric[0].startswith('"AWS/') and metric not in published
     }
     assert dead == {}, f"alarms watching a metric no filter publishes: {dead}"
+
+
+def test_every_alarm_notifies_the_alerts_topic():
+    # [A4] An alarm with no action changes state in the console and nobody hears about it (ABU-32).
+    text = MONITORING_TF.read_text()
+    silent = [
+        name for name in alarm_names(text)
+        if tf_attr(tf_block(text, "aws_cloudwatch_metric_alarm", name), "alarm_actions") != "[aws_sns_topic.alerts.arn]"
+    ]
+    assert silent == [], f"alarms that don't notify the alerts topic: {silent}"
 
 
 def test_every_filter_metric_is_watched_by_an_alarm():

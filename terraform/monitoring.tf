@@ -3,8 +3,8 @@
 # The app's first alerting path: a shared SNS "alerts" topic that CloudWatch alarms
 # notify. Built here for the age-out sweep (an unattended, destructive daily job that
 # must not fail silently), but deliberately GENERIC — the balance-poll stale alarm (WHIT-645)
-# and WHIT-135 (dead-letter alarm) can attach their own alarms to this same topic instead
-# of each standing up a separate notification path.
+# and the dead-letter alarm (ABU-32, was WHIT-135) attach their own alarms to this same topic
+# instead of each standing up a separate notification path.
 
 resource "aws_sns_topic" "alerts" {
   name = "${var.project_name}-alerts"
@@ -132,6 +132,38 @@ resource "aws_cloudwatch_metric_alarm" "push_delivery_failures" {
   treat_missing_data  = "notBreaching"
   alarm_description   = "One or more Expo pushes were accepted but failed to deliver in the last hour (a budget/milestone alert may have silently not arrived)."
   alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+# --- Dead-letter alarm (ABU-32, was WHIT-135) --------------------------------
+
+# One datapoint per webhook delivery that saved rows to the FAILED pile. The bank is still
+# told 200, so it never re-sends them: this alarm is the only signal they need reprocessing.
+resource "aws_cloudwatch_log_metric_filter" "dead_lettered_transactions" {
+  name           = "${var.project_name}-dead-lettered-transactions"
+  log_group_name = aws_cloudwatch_log_group.transaction_ingest.name
+  pattern        = "TRANSACTIONS_DEAD_LETTERED"
+
+  metric_transformation {
+    name          = "DeadLetteredTransactions"
+    namespace     = "${var.project_name}/Ingest"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "dead_lettered_transactions" {
+  alarm_name          = "${var.project_name}-dead-lettered-transactions"
+  namespace           = "${var.project_name}/Ingest"
+  metric_name         = "DeadLetteredTransactions"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Bank rows couldn't be processed and were saved under pk=FAILED. Check /aws/lambda/${var.project_name}-transaction-ingest for TRANSACTIONS_DEAD_LETTERED lines. Usual cause: an account missing from ACCOUNT_ID_MAP in shared/constants.py. Fix it, release, then invoke ${var.project_name}-transaction-reprocess."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
 }
 
 # --- Goal-nudge health alarm (WHIT-258/260, merged in ABU-102) -------------

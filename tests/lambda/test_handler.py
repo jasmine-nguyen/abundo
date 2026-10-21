@@ -32,6 +32,7 @@ import pytest
 
 from _deadletter_fakes import _txn_store
 from _dynamo_fakes import FakeTable
+from _terraform import filter_pattern, matching
 from standardwebhooks.webhooks import Webhook as _RealWebhook
 
 _SECRET = base64.b64encode(b"abundo-test-signing-key").decode()
@@ -107,6 +108,55 @@ def test_delivery_records_bank_sync_time_for_its_accounts_only(lam, monkeypatch)
     synced = repo.get_bank_synced_at()
     assert set(synced) == {"up-spending", "westpac-altitude-qantas-black"}
     assert all(before <= synced_at <= after for synced_at in synced.values())
+
+
+def _row_missing_amount(transaction_id):
+    row = _delivery_row(transaction_id, "3zVQJ8Btz_IRmqp78VrQnQ")
+    del row["amount"]
+    return row
+
+
+@pytest.mark.parametrize("rows, dead_lettered", [
+    ([_delivery_row("t1", "not-a-real-account")], 1),
+    ([_delivery_row("t1", "3zVQJ8Btz_IRmqp78VrQnQ")], 0),  # up-spending
+    # [A2] an unknown account and a missing field in one delivery, beside a good row: ONE line
+    # (one alarm datapoint) that counts both failed rows.
+    ([_delivery_row("t1", "not-a-real-account"), _row_missing_amount("t2"),
+      _delivery_row("t3", "3zVQJ8Btz_IRmqp78VrQnQ")], 2),
+], ids=["unknown_account", "mapped_account", "mixed_delivery"])
+def test_dead_lettered_rows_log_a_line_the_dead_letter_alarm_matches(lam, monkeypatch, caplog, rows,
+                                                                      dead_lettered):
+    # ABU-32: the bank is still told 200 for a row we can't file, so only this log line (and the
+    # alarm counting it) says the FAILED pile has rows. Healthy traffic must stay quiet.
+    caplog.set_level(logging.INFO)
+    repo = _ingest_repo(lam, monkeypatch)
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_rows", "data": rows})
+
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+
+    messages = [record.getMessage() for record in caplog.records]
+    marked = matching(messages, filter_pattern("dead_lettered_transactions"))
+    assert len(marked) == min(dead_lettered, 1), messages
+    assert all(f": {dead_lettered} rows" in message for message in marked), marked
+    assert len([key for key in repo._table.store if key[0] == "FAILED"]) == dead_lettered
+
+
+def test_a_failed_dead_letter_save_logs_no_alarm_line_and_500s(lam, monkeypatch, caplog):
+    # [A3] ABU-32: the marker means the rows really are in the FAILED pile. A failed save 500s
+    # (BankSync retries) and must not claim rows were saved.
+    caplog.set_level(logging.INFO)
+    repo = _ingest_repo(lam, monkeypatch)
+
+    def _save_fails(rows):
+        raise RuntimeError("dynamo down")
+
+    monkeypatch.setattr(repo, "save_failed_transactions", _save_fails)
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_rows", "data": [_delivery_row("t1", "not-a-real-account")]})
+
+    assert handler.lambda_handler({}, None)["statusCode"] == 500
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert matching(messages, filter_pattern("dead_lettered_transactions")) == [], messages
 
 
 def test_a_delivery_of_only_dropped_rows_still_records_bank_sync(lam, monkeypatch):
