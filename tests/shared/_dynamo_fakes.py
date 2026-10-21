@@ -37,11 +37,11 @@ import sys
 # reject cannot pass in tests — without it, WHIT-405's chunk cap could go and every test stay green.
 _MAX_UPDATE_EXPRESSION_BYTES = 4096
 
-# The index keys a query page's LastEvaluatedKey carries, besides the table's own pk/sk.
 # boto3's batch_writer sends at most 25 puts per BatchWriteItem request; DynamoDB rejects a
 # request that writes one key twice, unless overwrite_by_pkeys de-dupes the buffer first.
 _BATCH_FLUSH_SIZE = 25
 
+# The index keys a query page's LastEvaluatedKey carries, besides the table's own pk/sk.
 _INDEX_KEYS = {
     "date-index": ("account_id", "date"),
     "transaction-id-index": ("transaction_id",),

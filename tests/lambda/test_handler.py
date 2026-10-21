@@ -217,7 +217,7 @@ _UP_SPENDING = "3zVQJ8Btz_IRmqp78VrQnQ"
 
 def test_a_row_sent_twice_in_one_message_is_stored_once_and_acked(lam, monkeypatch):
     # DynamoDB rejects a batch write holding one key twice, so an un-deduped repeat 500s the
-    # message and BankSync re-sends it forever. Fail-on-revert: drop the dedupe and this 500s.
+    # message and BankSync re-sends it forever.
     repo = _ingest_repo(lam, monkeypatch)
     pending = {**_delivery_row("p1", _UP_SPENDING), "pending": True}
     handler = _wire(lam, monkeypatch, repo, {"id": "evt_repeat", "data": [pending, pending]})
