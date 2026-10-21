@@ -477,7 +477,7 @@ export function usePayCycle(): PayCycleData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const view = readPayCycle(payCycleQuery.data);
-  return { ...view, cycleName: cycleName(view.payCycle.length), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError, refetch: () => { payCycleQuery.refetch(); } };
+  return { ...view, cycleName: cycleName(view.payCycle.length), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError, refetch: () => payCycleQuery.refetch() };
 }
 
 // --- shared screen-composite status plumbing (WHIT-204) ----------------------

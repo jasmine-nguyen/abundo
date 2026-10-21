@@ -628,6 +628,8 @@ function categoryInput(form: CategoryForm, name: string) {
 
 const Ctx = createContext<AppContext | null>(null);
 
+const PAY_CYCLE_SAVE_FAILED = 'Could not save pay cycle. Please try again.';
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -746,7 +748,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (mutate: (prev: PayCycle) => PayCycle) => {
       const prev = queryClient.getQueryData<PayCycle>(payCycleKey);
       if (!prev) {
-        showToast('Could not save pay cycle. Please try again.');
+        showToast(PAY_CYCLE_SAVE_FAILED);
         return;
       }
       const next = mutate(prev);
@@ -771,7 +773,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: budgetsKey });
           queryClient.invalidateQueries({ queryKey: breakdownKey });
         },
-        onFailed: () => showToast('Could not save pay cycle. Please try again.'),
+        onFailed: () => showToast(PAY_CYCLE_SAVE_FAILED),
         whenSignedOut: undefined,
       });
     },
