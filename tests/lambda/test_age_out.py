@@ -640,22 +640,28 @@ def test_a_later_sweep_never_lands_a_category_on_a_charge_an_earlier_sweep_exclu
 # --- ABU-50: a slow hold (hotel / car rental / deposit) settles inside the window ----------
 
 
-def test_slow_hold_survives_the_sweep_and_settles_with_its_filing(lam, repo, monkeypatch):
-    # A filed hotel hold swiped 20 days ago, its settled charge arriving afterwards. The sweep
+# [A1] a 20-day hold settled with the same swipe date. [A2] some ANZ settlements arrive with a blank
+# authorized_date; a slow hold must still carry its filing across then, not sit beside it unfiled.
+@pytest.mark.parametrize("hold_age_days, posted_authorized_date", [
+    (20, "same"),
+    (20, None),
+])
+def test_slow_hold_survives_the_sweep_and_settles_with_its_filing(lam, repo, monkeypatch, hold_age_days,
+                                                                  posted_authorized_date):
+    # A filed hotel hold swiped days ago, its settled charge arriving afterwards. The sweep
     # must keep the hold so the normal settlement carries the category across. Fail-on-revert:
     # with a 10-day window the hold is reaped and the settled charge lands unfiled.
     monkeypatch.setattr(lam.repository, "melbourne_today", lambda: _TODAY)
-    hold = _norm(lam, "hotel_hold", (_TODAY - timedelta(days=20)).isoformat(), pending=True, amount=-320.00,
-                 description="HOTEL GRAND", category="groceries")
+    hold = _norm(lam, "hotel_hold", (_TODAY - timedelta(days=hold_age_days)).isoformat(), pending=True,
+                 amount=-320.00, description="HOTEL GRAND", category="groceries")
     repo.insert_transactions([hold])
 
     _sweep_tax(lam, repo, ["groceries"])
-    assert "hotel_hold" in _rows(repo), "20-day-old hold was reaped before it could settle"
+    assert "hotel_hold" in _rows(repo), "slow hold was reaped before it could settle"
 
     posted = _norm(lam, "hotel_settled", (_TODAY - timedelta(days=1)).isoformat(), pending=False, amount=-320.00,
                    description="HOTEL GRAND", category=None)
-    posted["authorized_date"] = hold["authorized_date"]
+    posted["authorized_date"] = hold["authorized_date"] if posted_authorized_date == "same" else None
     repo.insert_or_reconcile([posted], pending_pools=repo.get_pending_pools([posted]))
 
-    settled = [r for r in _rows(repo).values() if r.get("status") != lam.repository.PENDING_STATUS]
-    assert [r.get("category") for r in settled] == ["groceries"]
+    assert [(r["status"], r.get("category")) for r in _rows(repo).values()] == [("posted", "groceries")]

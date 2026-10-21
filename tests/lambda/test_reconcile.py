@@ -250,10 +250,10 @@ def test_blank_auth_does_not_merge_a_different_merchant(lam, repo):
 
 
 def test_blank_auth_does_not_merge_outside_the_date_window(lam, repo):
-    # Same merchant + amount, but the pending is 20 days older than the settlement — well
-    # past the window — so it must not be swept in.
+    # Same merchant + amount, but the pending is 31 days older than the settlement — past the
+    # 30-day PENDING_AGE_OUT_DAYS window — so it must not be swept in.
     _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
-                  authorized_date="2026-07-01", date="2026-07-01", pending=True,
+                  authorized_date="2026-06-20", date="2026-06-20", pending=True,
                   description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
                   merchant_name="ISAN THAI STREET FOOD")
     posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
