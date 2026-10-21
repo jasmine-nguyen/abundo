@@ -36,15 +36,20 @@ class FakeClock:
 
 def fake_bank(trigger_reply, job_reply):
     """A BankSync stand-in. ``trigger_reply(feed_id)`` / ``job_reply(feed_id)`` return a payload's
-    `data` dict or raise. Every request is logged as (method, path, body)."""
+    `data` dict or raise. Every request is logged as (method, path, body). A job check must read
+    the job its feed's trigger started."""
     calls = []
+    job_ids = {}
 
     def urlopen(req, timeout=None):
         path = req.full_url.removeprefix("https://api.banksync.io")
         calls.append((req.get_method(), path, req.data))
         feed_id = path.split("/")[3]
         if path.endswith("/sync"):
-            return FakeResponse({"data": trigger_reply(feed_id)})
+            data = trigger_reply(feed_id)
+            job_ids[feed_id] = data["id"]
+            return FakeResponse({"data": data})
+        assert path == f"/v1/feeds/{feed_id}/jobs/{job_ids[feed_id]}"
         return FakeResponse({"data": job_reply(feed_id)})
 
     return urlopen, calls
@@ -75,6 +80,16 @@ def rate_limited(feed_id):
     raise http_error(429)
 
 
+def _pull(handler, monkeypatch, clock, urlopen, make_repo=balance_repo):
+    """One pull against `urlopen` on a fresh repo with `clock` as the handler's time."""
+    monkeypatch.setattr(handler, "AccountBalanceRepository", make_repo)
+    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
+    monkeypatch.setattr(handler, "time", SimpleNamespace(
+        time=lambda: clock.now, monotonic=lambda: clock.now, sleep=clock.sleep))
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return handler.lambda_handler(SYNC_EVENT, None)
+
+
 @pytest.mark.parametrize(
     ("trigger_reply", "job_reply", "expected_code", "expected_status"),
     [
@@ -93,15 +108,10 @@ def test_pull_syncs_every_feed_within_budget_then_cools_down(
     handler, monkeypatch, trigger_reply, job_reply, expected_code, expected_status,
 ):
     repo = balance_repo()
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
     clock = FakeClock()
-    monkeypatch.setattr(handler, "time", SimpleNamespace(
-        time=lambda: clock.now, monotonic=lambda: clock.now, sleep=clock.sleep))
     urlopen, calls = fake_bank(trigger_reply, job_reply)
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
 
-    resp = handler.lambda_handler(SYNC_EVENT, None)
+    resp = _pull(handler, monkeypatch, clock, urlopen, make_repo=lambda: repo)
 
     assert resp["statusCode"] == expected_code
     body = json.loads(resp["body"])
@@ -125,16 +135,6 @@ def test_pull_syncs_every_feed_within_budget_then_cools_down(
     clock.now += 120
     handler.lambda_handler(SYNC_EVENT, None)
     assert len([c for c in calls[bank_calls_before:] if c[0] == "POST"]) == len(FEEDS)
-
-
-def _pull(handler, monkeypatch, clock, urlopen, make_repo=balance_repo):
-    """One pull against `urlopen` on a fresh repo with `clock` as the handler's time."""
-    monkeypatch.setattr(handler, "AccountBalanceRepository", make_repo)
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
-    monkeypatch.setattr(handler, "time", SimpleNamespace(
-        time=lambda: clock.now, monotonic=lambda: clock.now, sleep=clock.sleep))
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    return handler.lambda_handler(SYNC_EVENT, None)
 
 
 def test_a_slow_job_check_never_runs_past_the_wait_deadline(handler, monkeypatch):
@@ -166,7 +166,7 @@ def test_the_webhook_grace_is_spent_only_when_the_bank_reports_new_transactions(
 
 def test_a_rejected_key_is_forgotten_so_the_next_pull_rereads_it(handler, monkeypatch):
     forgotten = []
-    monkeypatch.setattr(handler, "forget_api_key", forgotten.append)
+    monkeypatch.setattr(handler.feed_sync, "forget_api_key", forgotten.append)
     urlopen, _ = fake_bank(raise_for(401), job("completed"))
 
     resp = _pull(handler, monkeypatch, FakeClock(), urlopen)
@@ -221,9 +221,6 @@ def test_the_check_cap_is_spent_once_per_job_then_on_the_spending_feed(
     resp = _pull(handler, monkeypatch, clock, urlopen)
 
     assert json.loads(resp["body"]) == {"status": "syncing"}
-    # Each check reads the job its own trigger started.
-    assert {path for method, path, _ in calls if method == "GET"} <= {
-        f"/v1/feeds/{fid}/jobs/job-{fid}" for fid in FEEDS}
     assert sorted(feed for at, feed in checks if at == 8) == sorted(FEEDS)
     assert [feed for at, feed in checks if at == 16] == [second_round_feed]
     assert len(checks) == MAX_STATUS_CHECKS

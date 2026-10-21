@@ -5,7 +5,9 @@
 import logging
 import urllib.error
 
+from api_key import forget_api_key
 from balance_fetch import banksync_request
+from constants import BANKSYNC_API_KEY_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,8 @@ def trigger_sync(feed_id: str, api_key: str, *, user_agent: str, timeout: float)
 
     We deliberately send an empty body: that means incremental (cursor-based) sync. We never
     pass ``resetCursors`` (backfills only) or ``forceCancelActive`` (never cancel a running job).
-    Other HTTP errors propagate.
+    A 401 forgets the cached key so the next call re-reads it from SSM, then propagates;
+    other HTTP errors propagate.
     """
     try:
         # empty body -> incremental sync; a body (even empty) makes it a POST
@@ -27,6 +30,8 @@ def trigger_sync(feed_id: str, api_key: str, *, user_agent: str, timeout: float)
         if e.code == 409:
             logger.warning("feed %s: sync already in progress, skipping", feed_id)
             return None
+        if e.code == 401:
+            forget_api_key(BANKSYNC_API_KEY_PATH)
         raise
     job_id = body["data"]["id"]
     logger.info("feed %s: sync job %s created", feed_id, job_id)

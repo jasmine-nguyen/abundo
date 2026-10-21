@@ -239,7 +239,6 @@ def test_the_mirror_still_runs_when_every_feed_fails(monkeypatch):
     # A failed sync POST must not stop the mirror (it runs before the final raise), and
     # the run still raises for the WHIT-644 alarm.
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "forget_api_key", lambda path: None)
 
     def urlopen(req, timeout=None):
         raise http_error(500)

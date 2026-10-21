@@ -92,7 +92,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     await pull();
     await waitFor(() => expect(rc().props.refreshing).toBe(false));
     expect(server.sent('POST', '/transactions/sync')).toHaveLength(1);
-    expect(mockShowToast.mock.calls).toEqual([['Still syncing with your bank. Pull again in a minute.']]);
+    expect(mockShowToast.mock.calls).toEqual([['Still syncing with your bank. Pull again in a couple of minutes.']]);
   });
 
   // [G3] OFFLINE / failed live pull: the card must keep the EXACT prior number (-$100.00), never blank

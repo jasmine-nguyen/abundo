@@ -45,6 +45,7 @@ from api_constants import (
     PAYCYCLE_PATH,
     REPAYMENT_PATH,
     SPEND_BUCKETS,
+    TERMINAL_JOB_STATUSES,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
@@ -73,7 +74,6 @@ from constants import (
     RULE_OPERATORS,
     SAVINGS_BUCKET,
     SYNC_FEED_IDS,
-    TERMINAL_JOB_STATUSES,
 )
 from collections import deque
 from collections.abc import Callable
@@ -103,7 +103,7 @@ from repository_transaction import TransactionRepository, read_window
 from budget_standing import budget_spend, budget_standing, standing_window
 from rule_book import RuleBook, WriteLimit, rule_from_row
 from repayment_rules import is_repayment_credit, is_number
-from api_key import forget_api_key, get_api_key as _fetch_api_key
+from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
 import feed_sync
 from event_body import raw_body
@@ -151,7 +151,6 @@ import math
 import os
 import re
 import time
-import urllib.error
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -2821,8 +2820,6 @@ def _trigger_all_feeds(api_key: str) -> tuple[dict, int, int]:
             job_id = future.result()
         except Exception as e:
             logger.warning("feed %s: pull sync trigger failed: %s", feed_id, e)
-            if isinstance(e, urllib.error.HTTPError) and e.code == 401:
-                forget_api_key(BANKSYNC_API_KEY_PATH)
             failed += 1
             continue
         if job_id is None:

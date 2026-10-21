@@ -4,7 +4,7 @@ import type { BankSyncStatus } from '../api';
 const BALANCES_FAILED_TOAST = 'Could not refresh balances. Showing last saved.';
 const SYNC_FAILED_TOAST = "Couldn't get new transactions from your bank. Showing what we have.";
 const SYNC_TOASTS: Partial<Record<BankSyncStatus | 'error', string>> = {
-  syncing: 'Still syncing with your bank. Pull again in a minute.',
+  syncing: 'Still syncing with your bank. Pull again in a couple of minutes.',
   failed: SYNC_FAILED_TOAST,
   error: SYNC_FAILED_TOAST,
 };

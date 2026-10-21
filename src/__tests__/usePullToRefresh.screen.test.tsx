@@ -103,7 +103,7 @@ describe('usePullToRefresh', () => {
   it.each([
     ['done', 'Balances up to date'],
     ['cooldown', 'Balances up to date'],
-    ['syncing', 'Still syncing with your bank. Pull again in a minute.'],
+    ['syncing', 'Still syncing with your bank. Pull again in a couple of minutes.'],
     ['failed', "Couldn't get new transactions from your bank. Showing what we have."],
     ['rejected', "Couldn't get new transactions from your bank. Showing what we have."],
   ] as const)('a bank sync that ends %s reloads the list after it and shows one toast', async (outcome, toast) => {
@@ -132,9 +132,9 @@ describe('usePullToRefresh', () => {
   // on a finished sync. Nothing toasts while the sync is still in flight.
   it.each([
     [true, 'Balances up to date', 'done', 'Could not refresh balances. Showing last saved.'],
-    [true, 'Balances up to date', 'syncing', 'Still syncing with your bank. Pull again in a minute.'],
+    [true, 'Balances up to date', 'syncing', 'Still syncing with your bank. Pull again in a couple of minutes.'],
     [false, undefined, 'done', undefined],
-    [false, undefined, 'syncing', 'Still syncing with your bank. Pull again in a minute.'],
+    [false, undefined, 'syncing', 'Still syncing with your bank. Pull again in a couple of minutes.'],
   ] as const)('balances fail=%s, success message %s, sync %s → toast %s', async (balancesFail, successMessage, status, toast) => {
     if (balancesFail) refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
     const sync = deferred<{ status: 'done' | 'syncing' }>();

@@ -171,9 +171,6 @@ SYNC_FEED_IDS = {
 # HTTP timeout, in seconds, for a single sync-trigger request to BankSync.
 SYNC_TIMEOUT_SECONDS = 30
 
-# A BankSync sync job in one of these statuses is finished (created/in_progress/paused are not).
-TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
-
 # Accounts whose stored pendings the hourly sync trigger mirrors against BankSync's full
 # transaction list, deleting pendings the bank no longer lists (WHIT-662). ANZ is closed and
 # the home loan has no pendings, so both are out of scope.

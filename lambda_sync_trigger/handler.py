@@ -22,7 +22,6 @@ shared lambda layer.
 """
 
 import logging
-import urllib.error
 import urllib.request  # noqa: F401 — test seam: tests patch `urllib.request.urlopen` here
 
 from constants import (
@@ -30,7 +29,7 @@ from constants import (
     SYNC_FEED_IDS,
     SYNC_TIMEOUT_SECONDS,
 )
-from api_key import forget_api_key, get_api_key as _fetch_api_key
+from api_key import get_api_key as _fetch_api_key
 import feed_sync
 import pending_mirror
 
@@ -44,7 +43,7 @@ def get_api_key() -> str:
 
 
 def trigger_sync(feed_id: str, api_key: str) -> None:
-    """Start an incremental sync for one feed (shared/feed_sync.py; a 409 is skipped there)."""
+    """Start an incremental sync for one feed (shared/feed_sync.py; a 409 is skipped and a 401 forgets the key there)."""
     feed_sync.trigger_sync(
         feed_id, api_key, user_agent="abundo-transaction-trigger", timeout=SYNC_TIMEOUT_SECONDS)
 
@@ -63,8 +62,6 @@ def lambda_handler(event, context):
             trigger_sync(feed_id, api_key)
         except Exception as e:
             logger.error("feed %s (%s): sync trigger failed: %s", feed_id, label, e)
-            if isinstance(e, urllib.error.HTTPError) and e.code == 401:
-                forget_api_key(BANKSYNC_API_KEY_PATH)
             failed.append(feed_id)
 
     # Guarded so a mirror fault never fails the run: `failed` feeds the WHIT-644 alarm.

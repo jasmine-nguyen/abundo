@@ -268,6 +268,8 @@ BANK_SYNC_CHECK_ROUNDS_SECONDS = (8, 16)
 BANK_SYNC_MAX_STATUS_CHECKS = 4
 # Extra wait after a job reports new transactions, so their webhook can save them first.
 BANK_SYNC_WEBHOOK_GRACE_SECONDS = 2
+# A BankSync sync job in one of these statuses is finished (created/in_progress/paused are not).
+TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
 
 # --- Last repayment (WHIT-115) ---------------------------------------------
 # API Gateway route path for the latest home-loan repayment (GET only). Reads
