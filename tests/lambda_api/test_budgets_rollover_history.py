@@ -17,8 +17,8 @@ from _budget_fakes import recording_budget_repo, stored_budgets
 
 pytestmark = pytest.mark.usefixtures("fixed_window")
 
-# Monthly cycle: current cycle starts 2026-08-06, today 2026-08-10. Settle lag 10 days →
-# cutoff 2026-07-31. Anchor 2026-05-06 gives three completed cycles:
+# Monthly cycle: current cycle starts 2026-08-06, today 2026-08-10. Settle lag 30 days →
+# cutoff 2026-07-11. Anchor 2026-05-06 gives three completed cycles:
 #   2026-05-06 – 2026-06-05  spent 150 → −50  (sealed)
 #   2026-06-06 – 2026-07-05  spent   0 → +100 (sealed)
 #   2026-07-06 – 2026-08-05  spent  30 → +70  (still settling)

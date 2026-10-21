@@ -38,10 +38,11 @@ def _budgets():
         "coffee": {"target": Decimal("50")},
         "salary": {"target": Decimal("4000")},
         "nest_egg": {"target": Decimal("300")},
-        # Rollover anchored at the start of last cycle → /budgets reads wider than this cycle
-        # and seals last cycle (writes a settlement), which the export must never do.
+        # Rollover anchored two cycles back ([2026-05-02, 2026-05-31], past the settle lag) →
+        # /budgets reads wider than this cycle and seals that cycle (writes a settlement), which
+        # the export must never do.
         "sink": {"target": Decimal("100"), "rollover": True, "carryover": Decimal(0),
-                 "carryover_from": "2026-06-01", "carryover_len": Decimal(LENGTH),
+                 "carryover_from": "2026-05-02", "carryover_len": Decimal(LENGTH),
                  "carryover_paydate": PAYDATE},
         "insurance": {"target": Decimal("100")},
     }

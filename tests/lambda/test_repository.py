@@ -37,11 +37,11 @@ def test_get_pending_accumulates_pendings_across_pages(repo):
 
 
 def test_get_pending_pools_keeps_recent_pendings_across_pages(repo, pinned_pending_lookback):
-    # today 2026-07-01 → lookback starts 2026-06-01. Pages of 2 force the cursor to be followed.
+    # today 2026-07-01 → lookback starts 2026-05-17. Pages of 2 force the cursor to be followed.
     for txn_id, status, swiped in [
-        ("old_pend", "pending", "2026-05-22"),     # 40 days old: outside the lookback
-        ("edge_pend", "pending", "2026-06-01"),    # exactly 30 days old: inside (the bound is inclusive)
-        ("recent_pend", "pending", "2026-06-02"),  # 29 days old: inside
+        ("old_pend", "pending", "2026-05-02"),     # 60 days old: outside the lookback
+        ("edge_pend", "pending", "2026-05-17"),    # exactly 45 days old: inside (the bound is inclusive)
+        ("recent_pend", "pending", "2026-05-18"),  # 44 days old: inside
         ("posted", "posted", "2026-06-26"),
         ("new_pend", "pending", "2026-06-28"),
         ("other_pend", "pending", "2026-06-29"),   # an account with no posted row in the message

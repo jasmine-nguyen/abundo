@@ -1,5 +1,5 @@
 """One shared copy of "did the user edit this pending?", the settled-twin matching and the
-carry-across (WHIT-663). Used by the 10-day age-out rescue (lambda/age_out.py, WHIT-511) and
+carry-across (WHIT-663). Used by the age-out rescue (lambda/age_out.py, WHIT-511) and
 the webhook's settlement (lambda/reconcile.py); reachable from the hourly pending mirror too,
 so the jobs can never disagree about which pendings hold a user's edit.
 """

@@ -6,10 +6,11 @@ reversed/cancelled pre-authorisation, or an unbalanced count (two pendings autho
 only one settles). Nothing reaps those, so they linger forever as ghost rows: a charge
 in the feed that never actually happened.
 
-This sweep deletes any pending whose bank `date` is older than PENDING_AGE_OUT_DAYS
-(10) with no settlement possible. That threshold is deliberately past FEED_WINDOW_DAYS
-(7) — BankSync stops re-sending a transaction after 7 days, so a 10-day-old pending can
-no longer receive a settlement re-push and is safe to reap. Age is measured from the
+This sweep deletes any pending whose bank `date` is older than PENDING_AGE_OUT_DAYS.
+That window is sized for slow holds, not just past FEED_WINDOW_DAYS (7): hotel, car
+rental and deposit holds settle 10–30 days after the swipe, and the pending must still
+be stored when its posted row arrives so the settlement carries the user's filing across
+(ABU-50). A pending older than that is treated as never settling. Age is measured from the
 bank `date` (a required "YYYY-MM-DD" string; lexicographic compare is chronological),
 NOT `authorized_date` (nullable -> "") and NOT an ingest time (none is stored).
 
