@@ -3,7 +3,7 @@
 // and clears the pending challenge; a weak password keeps the challenge alive for a
 // retry; no pending challenge → "sign in again". SDK + SecureStore mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, fakeSession, loadAuth } from './support/authModule';
+import { REFRESH_KEY, clearCognitoEnv, fakeSession, loadAuth, setCognitoEnv } from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, cb: Record<string, (arg?: unknown) => void>) => void>();
@@ -38,12 +38,10 @@ beforeEach(() => {
   mockCompleteChallenge.mockReset();
   mockSetItem.mockReset().mockResolvedValue(undefined);
   mockDeleteItem.mockReset().mockResolvedValue(undefined);
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
-  process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = 'ap-southeast-2_abc';
+  setCognitoEnv({ userPool: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  clearCognitoEnv();
 });
 
 describe('completeNewPassword', () => {

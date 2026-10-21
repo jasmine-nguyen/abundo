@@ -8,7 +8,7 @@
 // Same mock harness as authUnlock.logic.test.ts so nothing native/networked loads.
 // Also holds the WHIT-267 / WHIT-270 / WHIT-274 Face ID bug repros (folded in by WHIT-459).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, loadAuth, nowSec } from './support/authModule';
+import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, clearCognitoEnv, loadAuth, nowSec, setCognitoEnv } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -29,8 +29,6 @@ jest.mock('expo-secure-store', () =>
 // (via a tolerant lazy require — see isIOS). This node-env suite must mock react-native
 // to exercise that branch; suites that don't mock it simply skip the re-store.
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
-
-const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
 
 function refreshReads() {
   return mockGetItem.mock.calls.filter((c) => c[0] === REFRESH_KEY);
@@ -56,12 +54,10 @@ beforeEach(() => {
   mockSetItem.mockReset().mockResolvedValue(undefined);
   mockDeleteItem.mockReset().mockResolvedValue(undefined);
   mockCanUseBiometric.mockReset().mockReturnValue(false);
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = DOMAIN;
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
+  setCognitoEnv({ hostedUi: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
+  clearCognitoEnv();
 });
 
 // --- guarded WRITE path on a biometric device -----------------------------------

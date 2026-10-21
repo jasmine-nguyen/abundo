@@ -2,7 +2,7 @@
 // identity (email always; name/picture from Google). Null when signed out or on a
 // decode error. Seats a session via signInWithPassword (mocked SDK), then reads it.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { fakeSession, loadAuth } from './support/authModule';
+import { clearCognitoEnv, fakeSession, loadAuth, setCognitoEnv } from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, callbacks: Record<string, (arg?: unknown) => void>) => void>();
@@ -22,12 +22,10 @@ beforeEach(() => {
   jest.resetModules();
   mockAuthenticateUser.mockReset();
   mockDecodePayload.mockReset();
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
-  process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = 'ap-southeast-2_abc';
+  setCognitoEnv({ userPool: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  clearCognitoEnv();
 });
 
 describe('getCurrentUser', () => {

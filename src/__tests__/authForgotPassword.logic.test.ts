@@ -1,7 +1,7 @@
 // WHIT-182 — requestPasswordReset / confirmPasswordReset. Cognito emails a code, then
 // the code + a new password reset it (stateless; never seats a session). SDK mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { loadAuth } from './support/authModule';
+import { clearCognitoEnv, loadAuth, setCognitoEnv } from './support/authModule';
 
 const mockForgotPassword = jest.fn<(cb: Record<string, (arg?: unknown) => void>) => void>();
 const mockConfirmPassword =
@@ -23,12 +23,10 @@ beforeEach(() => {
   mockForgotPassword.mockReset();
   mockConfirmPassword.mockReset();
   mockUserCtor.mockReset();
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
-  process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = 'ap-southeast-2_abc';
+  setCognitoEnv({ userPool: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  clearCognitoEnv();
 });
 
 describe('requestPasswordReset', () => {

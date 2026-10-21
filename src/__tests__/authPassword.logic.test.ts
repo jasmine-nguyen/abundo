@@ -9,7 +9,18 @@
 // expo-crypto getRandomValues polyfill — cannot be exercised here (SDK + fetch are
 // mocked, polyfill lives in the app entry). Those are on-device manual gates.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, fakeSession, loadAuth, nowSec } from './support/authModule';
+import {
+  REFRESH_KEY,
+  SENTINEL_KEY,
+  METHOD_KEY,
+  SRP_METHOD,
+  clearCognitoEnv,
+  fakeSession,
+  loadAuth,
+  nowSec,
+  setCognitoEnv,
+  stubFetch,
+} from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, callbacks: Record<string, (arg?: unknown) => void>) => void>();
@@ -30,9 +41,7 @@ jest.mock('expo-auth-session', () =>
   require('./support/authModule').authSessionMock({ refresh: mockRefreshAsync }),
 );
 
-const POOL_ID = 'ap-southeast-2_abc123';
-
-let mockFetch: jest.Mock<(url: string, init?: { body: string }) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>;
+let mockFetch: ReturnType<typeof stubFetch>;
 
 beforeEach(() => {
   jest.resetModules();
@@ -41,16 +50,11 @@ beforeEach(() => {
   mockSetItem.mockClear();
   mockDeleteItem.mockClear();
   mockRefreshAsync.mockReset();
-  mockFetch = jest.fn<(url: string, init?: { body: string }) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>();
-  (globalThis as unknown as { fetch: unknown }).fetch = mockFetch;
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
-  process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = POOL_ID;
+  mockFetch = stubFetch();
+  setCognitoEnv({ hostedUi: true, userPool: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  clearCognitoEnv();
 });
 
 describe('signInWithPassword — success', () => {
@@ -65,7 +69,7 @@ describe('signInWithPassword — success', () => {
     const writes = Object.fromEntries(mockSetItem.mock.calls.map((c) => [c[0], c[1]]));
     expect(writes[REFRESH_KEY]).toBe('REFRESHTOK');
     expect(writes[SENTINEL_KEY]).toBe('1');
-    expect(writes[METHOD_KEY]).toBe('srp'); // provenance recorded for the refresh path
+    expect(writes[METHOD_KEY]).toBe(SRP_METHOD); // provenance recorded for the refresh path
 
     // The API authorizer needs the ID token, never the access token (pins api.ts).
     await expect(auth.getAuthToken()).resolves.toBe('IDTOK');
@@ -88,7 +92,7 @@ describe('signInWithPassword — success', () => {
     const claims = { iat: nowSec() - 3570, exp: nowSec() + 30 };
     mockAuthenticateUser.mockImplementation((_d, cb) => cb.onSuccess!(fakeSession('ID_STALE', 'AC', claims, 'R')));
     // route the ensuing refresh through InitiateAuth (srp) and return a fresh token
-    mockGetItem.mockImplementation(async (k) => (k === METHOD_KEY ? 'srp' : null));
+    mockGetItem.mockImplementation(async (k) => (k === METHOD_KEY ? SRP_METHOD : null));
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ AuthenticationResult: { IdToken: 'ID_FRESH', AccessToken: 'AC2', ExpiresIn: 3600 } }) });
     const auth = loadAuth();
 
@@ -147,7 +151,7 @@ describe('SRP refresh routing (WHIT-178)', () => {
     // Seat an already-expired SRP session so the next getAuthToken must refresh.
     const claims = { iat: nowSec() - 4000, exp: nowSec() - 400 };
     mockAuthenticateUser.mockImplementation((_d, cb) => cb.onSuccess!(fakeSession('ID_OLD', 'AC', claims, 'REFRESHTOK')));
-    mockGetItem.mockImplementation(async (k) => (k === METHOD_KEY ? 'srp' : null));
+    mockGetItem.mockImplementation(async (k) => (k === METHOD_KEY ? SRP_METHOD : null));
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ AuthenticationResult: { IdToken: 'ID_NEW', ExpiresIn: 3600 } }) });
     const auth = loadAuth();
 
