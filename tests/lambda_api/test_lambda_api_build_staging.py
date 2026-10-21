@@ -49,24 +49,15 @@ def _write(root: pathlib.Path, relative: str, body: str) -> None:
     path.write_text(body)
 
 
-def _stub_python3_env(root: pathlib.Path) -> dict:
-    """An env whose `python3` only appends its arguments to <root>/python3.log, so the pip step
-    runs offline."""
-    stub = root / "bin" / "python3"
-    if not stub.exists():
-        _write(root, "bin/python3", f'#!/usr/bin/env bash\necho "$*" >> "{root / "python3.log"}"\n')
-        stub.chmod(0o755)
-    env = _env(root)
-    env["PATH"] = f"{stub.parent}{os.pathsep}{env['PATH']}"
-    return env
-
-
 def _build(
     root: pathlib.Path, target: str = "lambda_api", cwd: pathlib.Path | None = None
 ) -> subprocess.CompletedProcess:
     env = _env(root)
     if target == "webhook":
-        env = _stub_python3_env(root)
+        # A stub python3 that only logs its arguments to <root>/python3.log, so pip runs offline.
+        _write(root, "bin/python3", f'#!/usr/bin/env bash\necho "$*" >> "{root / "python3.log"}"\n')
+        (root / "bin" / "python3").chmod(0o755)
+        env["PATH"] = f"{root / 'bin'}{os.pathsep}{env['PATH']}"
     return subprocess.run(
         ["bash", str(root / "scripts" / _SCRIPT.name), target],
         cwd=cwd or root, env=env, capture_output=True, text=True,
