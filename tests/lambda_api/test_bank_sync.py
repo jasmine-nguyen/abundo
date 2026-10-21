@@ -164,15 +164,17 @@ def test_the_webhook_grace_is_spent_only_when_the_bank_reports_new_transactions(
     assert elapsed[3] - elapsed[0] == 2
 
 
-def test_a_rejected_key_is_forgotten_so_the_next_pull_rereads_it(handler, monkeypatch):
+@pytest.mark.parametrize(("code", "forgets"), [(401, True), (429, False), (500, False)])
+def test_a_rejected_key_is_forgotten_so_the_next_pull_rereads_it(handler, monkeypatch, code, forgets):
+    # Only a 401 means the key is bad; other failures keep the cached key. [A1]
     forgotten = []
     monkeypatch.setattr(handler.feed_sync, "forget_api_key", forgotten.append)
-    urlopen, _ = fake_bank(raise_for(401), job("completed"))
+    urlopen, _ = fake_bank(raise_for(code), job("completed"))
 
     resp = _pull(handler, monkeypatch, FakeClock(), urlopen)
 
     assert resp["statusCode"] == 502
-    assert set(forgotten) == {handler.BANKSYNC_API_KEY_PATH}
+    assert set(forgotten) == ({handler.BANKSYNC_API_KEY_PATH} if forgets else set())
 
 
 def _timed_bank(clock, job_reply, trigger_reply=started):
