@@ -25,7 +25,7 @@ from _category_fakes import (
 )
 from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES
 from _feed_fakes import (
-    SPENDING, _row, _rule, charge_writes, fail_writes, on_write, real_repos, set_category, stored,
+    ANZ, HOMELOAN, SPENDING, _row, _rule, charge_writes, fail_writes, on_write, real_repos, set_category, stored,
     vanish_on_write,
 )
 
@@ -1514,3 +1514,22 @@ def test_clean_up_skips_income_and_live_categories(handler, act):
 
     assert len(rule_repo.list_rules()) == 2
     assert charge_writes(table) == []
+
+
+def test_delete_clean_up_reaches_every_account_and_keeps_user_flags(handler):
+    # [A1] The history read spans every account, the budget flag is recomputed per account (the
+    # home loan never counts), and a user's budget_excluded survives the unfile.
+    table, transaction_repo, rule_repo = real_repos({
+        ANZ: [_row(ANZ, "2026-10-01", "card", category="groceries", budget_excluded=True)],
+        HOMELOAN: [_row(HOMELOAN, "2026-10-02", "loan", category="groceries",
+                        counts_to_budget=False)],
+    })
+
+    assert _delete_groceries(handler, rule_repo, transaction_repo)["statusCode"] == 200
+
+    card = stored(table, "card", ANZ)
+    loan = stored(table, "loan", HOMELOAN)
+    assert "category" not in card and "category" not in loan
+    assert card["budget_excluded"] is True
+    assert card["counts_to_budget"] is True
+    assert loan["counts_to_budget"] is False
