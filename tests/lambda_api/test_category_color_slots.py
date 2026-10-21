@@ -17,7 +17,7 @@ from _api_event import api_event
 from _category_fakes import (
     _before_next_update, budget_repo,
     _CFG, _SLOT, _cat, _categories_event,
-    _repo_with_fake_table, _slot_histogram,
+    _repo_with_fake_table, _slot_histogram, inject_empty_stores,
 )
 
 
@@ -285,6 +285,7 @@ def test_post_categories_returns_201_and_a_plain_integer_slot(handler, monkeypat
     repo.list_categories()                           # seed
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
+    inject_empty_stores(handler, monkeypatch)
 
     response = handler.lambda_handler(_categories_event(), None)
 

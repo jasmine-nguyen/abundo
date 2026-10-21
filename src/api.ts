@@ -35,7 +35,8 @@ const BALANCE_REFRESH_TIMEOUT_MS = 30_000;
  * BankSync, then writes up to 300 charges — seconds of work, so the default 15s read budget
  * would abort a run that is actually succeeding. Its own constant rather than a reuse of
  * BALANCE_REFRESH_TIMEOUT_MS: same number today, unrelated reasons, so retuning one must not
- * silently move the other. 30s is the API-Gateway integration ceiling.
+ * silently move the other. 30s is the API-Gateway integration ceiling. Creating and deleting a
+ * category use it too: both walk the whole history to clear an old category's labels (ABU-33).
  */
 const APPLY_RULES_TIMEOUT_MS = 30_000;
 
@@ -629,7 +630,7 @@ export const createCategory = endpoint(
     send,
     input: { name: string; bucket: Bucket; icon: string; parent?: string | null; transfer?: boolean },
   ): Promise<Category> =>
-    send({ path: "/categories", method: "POST", body: input }),
+    send({ path: "/categories", method: "POST", body: input, timeoutMs: APPLY_RULES_TIMEOUT_MS }),
   { withReason: true },
 );
 
@@ -653,8 +654,8 @@ export const updateCategory = endpoint(
 );
 
 /**
- * Hard-delete a category. The server does no cascade, so transactions still
- * pointing at the deleted id render as Uncategorized client-side.
+ * Hard-delete a category. The server also deletes its budget and rules and
+ * unfiles the transactions filed to it (ABU-33).
  *
  * @param id - The immutable category id/slug to delete (e.g. "groceries").
  * @returns The id of the deleted category.
@@ -662,7 +663,7 @@ export const updateCategory = endpoint(
  */
 export const deleteCategory = endpoint(
   (send, id: string): Promise<{ id: string }> =>
-    send({ path: `/categories/${encodeURIComponent(id)}`, method: "DELETE" }),
+    send({ path: `/categories/${encodeURIComponent(id)}`, method: "DELETE", timeoutMs: APPLY_RULES_TIMEOUT_MS }),
   { withReason: true },
 );
 

@@ -473,9 +473,8 @@ class CategoryRepository(RepositoryBase):
             build, action="update category", on_conflict=lambda: self._raise_if_gone(cat_id))
 
     def delete_category(self, cat_id: str) -> str:
-        """Hard-delete a category (REMOVE its map key). No server-side cascade for
-        transactions — those still referencing the id render as Uncategorized
-        client-side. Any sub-categories are promoted to top-level (their `parent`
+        """Hard-delete a category (REMOVE its map key). Only the category map is edited
+        here — the handler clears its rules and transaction labels (ABU-33). Any sub-categories are promoted to top-level (their `parent`
         is cleared) in the SAME atomic write, so deleting a parent never strands
         its children pointing at a gone id. Raises CategoryNotFoundError if the id
         is absent.
