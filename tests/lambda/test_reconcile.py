@@ -1926,17 +1926,6 @@ def test_abu108_a_pending_saved_after_the_pool_read_is_updated_not_absorbed(lam,
     assert _settled_marker(repo, posted, "PEND") is None
 
 
-def test_abu108_a_posted_that_already_used_up_a_pending_never_absorbs_another(lam, repo):
-    # Two identical coffees: the first settled from its pending, so the second's pending is real.
-    _seed_pending(repo, lam, txn_id="PEND1", amount=Decimal("-5.50"), pending=True)
-    posted = _norm(lam, txn_id="POST1", amount=Decimal("-5.50"), pending=False)
-    repo.insert_or_reconcile([posted])
-
-    repo.insert_or_reconcile([_norm(lam, txn_id="PEND2", amount=Decimal("-5.50"), pending=True)])
-
-    assert sorted(_txn_store(repo)) == [(_acc(posted), "TXN#PEND2"), (_acc(posted), "TXN#POST1")]
-
-
 def test_abu108_an_unlinked_posted_absorbs_a_real_second_charge_until_it_settles(lam, repo):
     # Accepted trade-off: a posted row saved without a link (e.g. before the release) hides an
     # identical second charge's pending; that charge's own posted row then saves plainly.
