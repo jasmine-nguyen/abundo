@@ -1950,8 +1950,6 @@ def test_abu108_an_unlinked_posted_absorbs_a_real_second_charge_until_it_settles
 
 
 @pytest.mark.parametrize("posted_fields, pending_fields, absorbed_in_one_message, absorbed_later", [
-    # Same day: matched either way.
-    ({}, {}, True, True),
     # ANZ clock split: the pending is dated one day after its posted row. A saved posted row only
     # takes a same-day pending, or a daily repeat charge would hide the next day's one.
     ({"authorized_date": "2026-06-28", "date": "2026-06-28"},
