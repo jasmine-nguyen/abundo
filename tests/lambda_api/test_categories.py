@@ -1356,19 +1356,6 @@ def _assert_groceries_leftovers_cleared(table, rule_repo):
     assert {sk for _, sk in charge_writes(table)} == {"TXN#hand", "TXN#stamped"}
 
 
-def test_delete_category_clears_its_rules_and_transaction_labels(handler):
-    table, transaction_repo, rule_repo = _leftover_stores()
-    repo = FakeCategoryRepo(categories=[_cat("petrol")])
-
-    resp = handler.delete_category(
-        _category_item_event("DELETE", cat_id="groceries", body=None),
-        repo, budget_repo({"groceries": {"target": 100}}), rule_repo, transaction_repo)
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"id": "groceries"}
-    _assert_groceries_leftovers_cleared(table, rule_repo)
-
-
 def test_recreating_a_category_name_does_not_inherit_old_rules_or_rows(handler, monkeypatch):
     # Leftovers from a delete made before ABU-33 (or one cut short): recreating "Groceries"
     # through the POST route must clear them before the category exists again.
@@ -1427,7 +1414,6 @@ def test_delete_clean_up_lets_a_refile_in_the_gap_win(handler):
     lambda table: vanish_on_write(table, "hand"),
     lambda table: fail_writes(table, "hand"),
     lambda table: table.fail("delete_item"),
-    lambda table: table.fail("query", when=lambda query: query.get("IndexName") == "date-index"),
 ])
 def test_delete_clean_up_is_best_effort(handler, break_store):
     table, transaction_repo, rule_repo = _leftover_stores()
@@ -1443,8 +1429,9 @@ def test_delete_clean_up_clears_rules_before_reading_history(handler):
     table, transaction_repo, rule_repo = _leftover_stores()
     table.fail("query", when=lambda query: query.get("IndexName") == "date-index")
 
-    _delete_groceries(handler, rule_repo, transaction_repo)
+    resp = _delete_groceries(handler, rule_repo, transaction_repo)
 
+    assert resp["statusCode"] == 200
     assert [rule["category_id"] for rule in rule_repo.list_rules()] == ["petrol"]
 
 
