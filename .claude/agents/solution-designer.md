@@ -114,7 +114,7 @@ Return these fields:
 - `validity_evidence` — the `path:line` evidence for that verdict, one or two lines.
 - `clarifying_questions` — `question` + `recommendation`, only when the card is too
   thin to plan; otherwise empty.
-**Plain English is critical.** The user knows the app but doesn't read the code.
+**Plain English.** The user knows the app but doesn't read the code.
 Everything they see from you (`clarifying_questions`, `problem`, `task`, `solution`,
 `decisions` and slice titles) must make sense without opening the repo. If they
 can't follow it, they approve blind or the build stalls while someone explains.

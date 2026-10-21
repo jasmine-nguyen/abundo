@@ -105,7 +105,7 @@ Stop and return status `ESCALATE` when:
 Leave your work in place: you'll get the answer and continue. Don't escalate anything
 you can find out yourself from the code.
 
-### Write the question in plain English. This is critical.
+### Write the question in plain English
 
 The user knows the app but doesn't read the code. If they can't understand your
 question, the build stalls until someone explains it, and they pick blind. That's

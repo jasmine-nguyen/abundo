@@ -29,7 +29,7 @@ tail -n +1 -f <its output file> | grep -E --line-buffered '^(⌛|✅|❌|↩️|
 
 Each line it reports is a progress line to relay (step 2).
 
-## Plain English is critical
+## Plain English
 
 The user knows the app but doesn't read the code. Every message and question they
 see from you must make sense without opening the repo. If they can't understand
