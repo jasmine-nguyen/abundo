@@ -167,18 +167,11 @@ class TransactionRepository(_SharedTransactionRepository):
     def mark_settled(self, pk: str, sk: str) -> None:
         """Record that the pending at (pk, sk) was used up by its posted twin, so a re-send can't
         bring it back (ABU-36). Written before the pending is deleted; expires via `expires_at`."""
-        with db_errors("mark settled"):
-            self._get_table().put_item(Item={
-                "pk": _build_settled_pk(pk),
-                "sk": sk,
-                "expires_at": int(time.time()) + SETTLED_PENDING_TTL_SECONDS,
-            })
+        self._put_marker(_build_settled_pk(pk), sk, SETTLED_PENDING_TTL_SECONDS, "mark settled")
 
     def is_settled(self, account_id: str, transaction_id: str, *, consistent: bool = False) -> bool:
         """True while the settled marker for this pending hasn't expired."""
-        key = {"pk": _build_settled_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
-        with db_errors("read"):
-            return "Item" in self._get_table().get_item(Key=key, ConsistentRead=consistent)
+        return self._has_marker(_build_settled_pk(_build_pk(account_id)), transaction_id, consistent)
 
     def _refresh_carried_fields(self, twin: dict) -> dict:
         """Re-read a matched twin with ConsistentRead to close the race window (WHIT-513).
