@@ -20,6 +20,9 @@ export const nowSec = (): number => Math.floor(Date.now() / 1000);
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
 export const loadAuth = (): typeof import('../../auth') => require('../../auth');
 
+/** The error expo-auth-session's refreshAsync throws when Cognito revokes the refresh token. */
+export const invalidGrantError = (): Error => Object.assign(new Error('invalid_grant'), { code: 'invalid_grant' });
+
 /** A stand-in CognitoUserSession with the getters seatCognitoSession reads. */
 export function fakeSession(
   idJwt = 'IDTOK',

@@ -5,7 +5,7 @@
 // silent refresh with a single-flight guard, the near-expiry skew buffer, sign-out,
 // restoreSession, and the pure gateRedirect decision.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, loadAuth, nowSec } from './support/authModule';
+import { METHOD_KEY, REFRESH_KEY, invalidGrantError, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -160,14 +160,14 @@ describe('getAuthToken', () => {
     mockRefresh.mockRejectedValueOnce(new Error('network'));
     mockRefresh.mockResolvedValueOnce({ idToken: 'SECOND_TRY', accessToken: 'a', issuedAt: nowSec(), expiresIn: 3600 });
     const auth = loadAuth();
-    await expect(auth.getAuthToken()).resolves.toBeUndefined();
+    await expect(auth.getAuthToken()).rejects.toThrow(TypeError);
     await expect(auth.getAuthToken()).resolves.toBe('SECOND_TRY');
     expect(mockRefresh).toHaveBeenCalledTimes(2);
   });
 
-  it('returns undefined when the refresh fails', async () => {
+  it('returns undefined when the refresh is rejected', async () => {
     mockStore.set(REFRESH_KEY, 'STORED_REFRESH');
-    mockRefresh.mockRejectedValue(new Error('nope'));
+    mockRefresh.mockRejectedValue(invalidGrantError());
     const auth = loadAuth();
     await expect(auth.getAuthToken()).resolves.toBeUndefined();
   });
@@ -289,14 +289,14 @@ describe('lock (WHIT-205 cache-survival)', () => {
 });
 
 // WHIT-205: clearSession is the SINGLE choke point for every "session gone -> anon" transition
-// — NOT just signOut. These lock the OTHER production route into it: a token-refresh FAILURE
+// — NOT just signOut. These lock the OTHER production route into it: a token-refresh REJECTION
 // (getAuthToken / restoreSession -> refreshFromStoredToken -> clearSession). If clearSession
 // stopped clearing, account A's cached rows would survive the drop-to-login and could render
 // under account B on re-auth. Fail-on-revert: remove queryClient.clear() and both assertions flip.
 describe('refresh-failure clears the query cache (WHIT-205 choke point)', () => {
-  it('getAuthToken -> clearSession on a failed refresh empties the cache and goes anon', async () => {
+  it('getAuthToken -> clearSession on a rejected refresh empties the cache and goes anon', async () => {
     mockStore.set(REFRESH_KEY, 'STORED_REFRESH'); // a session exists…
-    mockRefresh.mockRejectedValue(new Error('offline')); // …but the refresh fails
+    mockRefresh.mockRejectedValue(invalidGrantError()); // …but Cognito refuses the refresh
     const auth = loadAuth();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { queryClient } = require('../queryClient') as typeof import('../queryClient');
@@ -323,5 +323,248 @@ describe('gateRedirect (pure)', () => {
     ['locked', { navReady: true, status: 'locked', onIndex: false }, null],
   ] as const)('%s → %j', (_case, opts, expected) => {
     expect(auth.gateRedirect(opts)).toBe(expected);
+  });
+});
+
+// ABU-84 — the hourly token swap: a hang must time out, a network failure must not sign the user
+// out, and a swap that finishes after lock() must leave the Face ID cover up.
+describe('token swap outcomes (ABU-84)', () => {
+  const okToken = (idToken: string, extra: Record<string, unknown> = {}) => ({
+    idToken, accessToken: 'a', issuedAt: nowSec(), expiresIn: 3600, ...extra,
+  });
+  const loadQueryClient = () =>
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require('../queryClient') as typeof import('../queryClient')).queryClient;
+  const loadIsOffline = () =>
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require('../apiError') as typeof import('../apiError')).readFailureIsOffline;
+  const useSrpRefresh = (response: () => Promise<unknown>) => {
+    mockStore.set(METHOD_KEY, 'srp');
+    process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = 'ap-southeast-2_pool123';
+    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(response);
+  };
+
+  function recordStatuses(auth: typeof import('../auth')): string[] {
+    const seen: string[] = [];
+    auth.subscribe(() => seen.push(auth.getStatus()));
+    return seen;
+  }
+
+  // Seat a session whose id token is already near expiry, so the next getAuthToken swaps.
+  async function signedInNearExpiry(): Promise<typeof import('../auth')> {
+    mockStore.set(REFRESH_KEY, 'R');
+    mockRefresh.mockResolvedValueOnce(okToken('ID1', { issuedAt: nowSec() - 3600 }));
+    const auth = loadAuth();
+    await expect(auth.getAuthToken()).resolves.toBe('ID1');
+    expect(auth.getStatus()).toBe('authed');
+    return auth;
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  });
+
+  describe('a swap that never answers', () => {
+    // Fail-on-revert: without a time limit around the whole swap the promise never settles and
+    // the 3s test cap trips.
+    it('OAuth: getAuthToken rejects as offline after 15s', async () => {
+      mockStore.set(REFRESH_KEY, 'R');
+      mockRefresh.mockReturnValue(new Promise(() => {}));
+      const auth = loadAuth();
+
+      const settled = auth.getAuthToken().then(() => 'resolved', (err: unknown) => err);
+      await jest.advanceTimersByTimeAsync(15_000);
+
+      expect(loadIsOffline()(await settled)).toBe(true);
+    }, 3000);
+
+    it('InitiateAuth: getAuthToken rejects as offline after 15s when fetch never connects', async () => {
+      mockStore.set(REFRESH_KEY, 'R');
+      useSrpRefresh(() => new Promise(() => {}));
+      const auth = loadAuth();
+
+      const settled = auth.getAuthToken().then(() => 'resolved', (err: unknown) => err);
+      await jest.advanceTimersByTimeAsync(15_000);
+
+      expect(loadIsOffline()(await settled)).toBe(true);
+    }, 3000);
+
+    it('unlock() gives up after 15s and stays locked, and a second Unlock then works', async () => {
+      mockStore.set(REFRESH_KEY, 'R');
+      mockRefresh.mockReturnValueOnce(new Promise(() => {}));
+      const auth = loadAuth();
+
+      const first = auth.unlock();
+      await jest.advanceTimersByTimeAsync(15_000);
+      await expect(first).resolves.toBe(false);
+      expect(auth.getStatus()).toBe('locked');
+
+      mockRefresh.mockResolvedValueOnce(okToken('UNLOCKED'));
+      await expect(auth.unlock()).resolves.toBe(true);
+      expect(auth.getStatus()).toBe('authed');
+    }, 3000);
+  });
+
+  describe('offline at expiry', () => {
+    it('rejects as offline, stays signed in, keeps the saved data, and recovers once back online', async () => {
+      const auth = await signedInNearExpiry();
+      const queryClient = loadQueryClient();
+      queryClient.setQueryData(['homeLoan'], { balance: 596642.43 });
+      mockRefresh.mockRejectedValueOnce(new Error('Network request failed'));
+
+      const err = await auth.getAuthToken().then(() => 'resolved', (e: unknown) => e);
+
+      expect(loadIsOffline()(err)).toBe(true);
+      expect(auth.getStatus()).toBe('authed');
+      expect(queryClient.getQueryData(['homeLoan'])).toEqual({ balance: 596642.43 });
+      expect(mockStore.get(REFRESH_KEY)).toBe('R');
+
+      mockRefresh.mockResolvedValueOnce(okToken('BACK_ONLINE'));
+      await expect(auth.getAuthToken()).resolves.toBe('BACK_ONLINE');
+    });
+
+    it('InitiateAuth 500 is a network failure, not a sign-out', async () => {
+      mockStore.set(REFRESH_KEY, 'R');
+      useSrpRefresh(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+      const auth = loadAuth();
+
+      const err = await auth.getAuthToken().then(() => 'resolved', (e: unknown) => e);
+
+      expect(loadIsOffline()(err)).toBe(true);
+      expect(auth.getStatus()).not.toBe('anon');
+    });
+
+    it('restoreSession() at a cold launch with no signal goes into the app and keeps the saved sign-in', async () => {
+      mockStore.set(REFRESH_KEY, 'R');
+      mockRefresh.mockRejectedValueOnce(new Error('Network request failed'));
+      const auth = loadAuth();
+
+      await expect(auth.restoreSession()).resolves.toBe(true);
+      expect(auth.getStatus()).toBe('authed');
+      expect(mockStore.get(REFRESH_KEY)).toBe('R');
+    });
+  });
+
+  describe('a real rejection still signs out', () => {
+    it('OAuth invalid_grant → undefined, anon, cache cleared', async () => {
+      const auth = await signedInNearExpiry();
+      const queryClient = loadQueryClient();
+      queryClient.setQueryData(['homeLoan'], { balance: 1 });
+      mockRefresh.mockRejectedValueOnce(invalidGrantError());
+
+      await expect(auth.getAuthToken()).resolves.toBeUndefined();
+      expect(auth.getStatus()).toBe('anon');
+      expect(queryClient.getQueryData(['homeLoan'])).toBeUndefined();
+    });
+
+    it('InitiateAuth 400 NotAuthorizedException → undefined, anon', async () => {
+      mockStore.set(REFRESH_KEY, 'R');
+      useSrpRefresh(async () => ({
+        ok: false, status: 400, json: async () => ({ __type: 'NotAuthorizedException' }),
+      }));
+      const auth = loadAuth();
+
+      await expect(auth.getAuthToken()).resolves.toBeUndefined();
+      expect(auth.getStatus()).toBe('anon');
+    });
+  });
+
+  describe('a swap that finishes after lock()', () => {
+    it('a successful late swap leaves the Face ID cover up', async () => {
+      const auth = await signedInNearExpiry();
+      let finishSwap: (v: unknown) => void = () => {};
+      mockRefresh.mockReturnValueOnce(new Promise((r) => { finishSwap = r; }));
+      const pending = auth.getAuthToken().catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(0);
+
+      auth.lock();
+      const afterLock = recordStatuses(auth);
+      finishSwap(okToken('LATE'));
+      await pending;
+
+      expect(afterLock).not.toContain('authed');
+      expect(auth.getStatus()).toBe('locked');
+    });
+
+    it('a refused late swap does not sign the user out from the lock screen', async () => {
+      const auth = await signedInNearExpiry();
+      let failSwap: (e: unknown) => void = () => {};
+      mockRefresh.mockReturnValueOnce(new Promise((_, reject) => { failSwap = reject; }));
+      const pending = auth.getAuthToken().catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(0);
+
+      auth.lock();
+      const afterLock = recordStatuses(auth);
+      failSwap(invalidGrantError());
+      await pending;
+
+      expect(afterLock).not.toContain('anon');
+      expect(auth.getStatus()).toBe('locked');
+    });
+
+    it('a swap that finishes after sign-out does not write its rotated token back to the keychain', async () => {
+      const auth = await signedInNearExpiry();
+      let finishSwap: (v: unknown) => void = () => {};
+      mockRefresh.mockReturnValueOnce(new Promise((r) => { finishSwap = r; }));
+      const pending = auth.getAuthToken().catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(0);
+
+      await auth.signOut();
+      finishSwap(okToken('LATE', { refreshToken: 'ROTATED' }));
+      await pending;
+
+      expect(auth.getStatus()).toBe('anon');
+      expect(mockStore.has(REFRESH_KEY)).toBe(false);
+    });
+
+    // [A1] The next Face ID unlock needs the rotated token, so a late swap after a lock still saves it.
+    it('a late swap after lock() still saves its rotated token for the next unlock', async () => {
+      const auth = await signedInNearExpiry();
+      let finishSwap: (v: unknown) => void = () => {};
+      mockRefresh.mockReturnValueOnce(new Promise((r) => { finishSwap = r; }));
+      const pending = auth.getAuthToken().catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(0);
+
+      auth.lock();
+      finishSwap(okToken('LATE', { refreshToken: 'ROTATED' }));
+      await pending;
+
+      expect(auth.getStatus()).toBe('locked');
+      expect(mockStore.get(REFRESH_KEY)).toBe('ROTATED');
+    });
+  });
+
+  // [A2] "Sign in again" tapped while the unlock's swap is still running: the swap must not
+  // bring the user back in.
+  it('signOut during a pending unlock swap → unlock resolves false and the user stays signed out', async () => {
+    mockStore.set(REFRESH_KEY, 'R');
+    let finishSwap: (v: unknown) => void = () => {};
+    mockRefresh.mockReturnValueOnce(new Promise((r) => { finishSwap = r; }));
+    const auth = loadAuth();
+    const unlocking = auth.unlock();
+    await jest.advanceTimersByTimeAsync(0);
+
+    await auth.signOut();
+    const afterSignOut = recordStatuses(auth);
+    finishSwap(okToken('LATE'));
+
+    await expect(unlocking).resolves.toBe(false);
+    expect(afterSignOut).toEqual([]);
+    expect(auth.getStatus()).toBe('anon');
+  });
+
+  // [A3] Only invalid_grant is a refusal; any other OAuth error code keeps the session.
+  it('an OAuth error other than invalid_grant → offline error, stays signed in', async () => {
+    const auth = await signedInNearExpiry();
+    mockRefresh.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'temporarily_unavailable' }));
+
+    const err = await auth.getAuthToken().then(() => 'resolved', (e: unknown) => e);
+
+    expect(loadIsOffline()(err)).toBe(true);
+    expect(auth.getStatus()).toBe('authed');
   });
 });

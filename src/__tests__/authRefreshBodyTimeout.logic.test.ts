@@ -31,9 +31,9 @@ afterEach(() => {
 });
 
 describe('InitiateAuth refresh body-read timeout (WHIT-448)', () => {
-  // Fail-on-revert: drop withBodyTimeout from the res.json() read → the stalled body never settles →
-  // getAuthToken never resolves → the explicit 3s test cap trips it red instead of hanging the runner.
-  it('resolves undefined when the refresh body stalls forever, on the 15s budget', async () => {
+  // Fail-on-revert: drop the swap's withBodyTimeout → the stalled body never settles →
+  // getAuthToken never settles → the explicit 3s test cap trips it red instead of hanging the runner.
+  it('rejects as offline when the refresh body stalls forever, on the 15s budget', async () => {
     (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
       ok: true,
       json: () => new Promise(() => {}),   // headers arrived; the body never settles
@@ -41,7 +41,7 @@ describe('InitiateAuth refresh body-read timeout (WHIT-448)', () => {
     const auth = loadAuth();
 
     const pending = auth.getAuthToken();
-    const resolves = expect(pending).resolves.toBeUndefined();   // refresh gives up → no token
+    const resolves = expect(pending).rejects.toThrow(TypeError);   // refresh gives up → offline
     await jest.advanceTimersByTimeAsync(0);        // flush the keychain reads + the fetch resolve
     await jest.advanceTimersByTimeAsync(15_000);   // trip the body-read timeout
     await resolves;

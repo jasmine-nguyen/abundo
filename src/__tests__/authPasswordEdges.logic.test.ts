@@ -92,19 +92,53 @@ describe('SRP InitiateAuth refresh — failure modes', () => {
     await auth.signInWithPassword('me@x.com', 'pw');
   }
 
-  it('a !ok response → no token, session cleared to anon, never throws', async () => {
+  it('a !ok response that is not a refusal → offline error, stays signed in', async () => {
     const auth = loadAuth();
     await seatExpiredSrp(auth);
     mockFetch.mockResolvedValue({ ok: false, json: async () => ({}) });
-    await expect(auth.getAuthToken()).resolves.toBeUndefined();
-    expect(auth.getStatus()).toBe('anon');
+    await expect(auth.getAuthToken()).rejects.toThrow(TypeError);
+    expect(auth.getStatus()).toBe('authed');
   });
 
-  it('fetch itself rejecting (offline) → undefined, never throws', async () => {
+  it('fetch itself rejecting (offline) → offline error', async () => {
     const auth = loadAuth();
     await seatExpiredSrp(auth);
     mockFetch.mockRejectedValue(new Error('Network request failed'));
-    await expect(auth.getAuthToken()).resolves.toBeUndefined();
+    await expect(auth.getAuthToken()).rejects.toThrow(TypeError);
+  });
+
+  // [A4] ABU-84: only a 400 NotAuthorizedException signs out; every other answer keeps the session.
+  it.each([
+    ['400 with another error type', 400, async () => ({ __type: 'InvalidParameterException' }), 'offline'],
+    ['400 with an unreadable body', 400, async () => { throw new SyntaxError('bad json'); }, 'offline'],
+    ['429 throttled', 429, async () => ({ __type: 'NotAuthorizedException' }), 'offline'],
+    ['200 without an IdToken', 200, async () => ({ AuthenticationResult: {} }), 'offline'],
+    ['400 namespaced NotAuthorizedException', 400, async () => ({ __type: 'com.amazonaws.cognito#NotAuthorizedException' }), 'anon'],
+  ])('%s → %s', async (_label, status, json, expected) => {
+    const auth = loadAuth();
+    await seatExpiredSrp(auth);
+    mockFetch.mockResolvedValue({ ok: status < 300, status, json } as never);
+    const settled = await auth.getAuthToken().then((v) => v, (e: unknown) => e);
+    if (expected === 'anon') {
+      expect(settled).toBeUndefined();
+      expect(auth.getStatus()).toBe('anon');
+      return;
+    }
+    expect(settled).toBeInstanceOf(TypeError);
+    expect(auth.getStatus()).toBe('authed');
+  });
+
+  // [A5] Saving a rotated token failing mid-session is not a sign-out (it retries next time).
+  it('a rotated token whose keychain save fails → offline error, stays signed in', async () => {
+    const auth = loadAuth();
+    await seatExpiredSrp(auth);
+    mockSetItem.mockRejectedValue(new Error('keychain busy'));
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ AuthenticationResult: { IdToken: 'ID_NEW', ExpiresIn: 3600, RefreshToken: 'ROTATED' } }),
+    });
+    await expect(auth.getAuthToken()).rejects.toThrow(TypeError);
+    expect(auth.getStatus()).toBe('authed');
   });
 
   it('a ROTATED refresh token in the response is persisted', async () => {
