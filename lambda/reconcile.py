@@ -483,10 +483,10 @@ def _absorbing_posted(
     transactions: list[Transaction], insert_ids: set[str], pools: MatchPools,
 ) -> dict[str, tuple[str, Optional[dict]]]:
     """The reverse of the settlement search (ABU-108): each never-saved pending in the batch
-    whose posted twin is a first-sight posted row in this batch (`insert_ids`, every tier), or
-    is already saved and unclaimed (same-day tiers only). A saved row matched across days would
-    hide a daily repeat charge, whose own posted row then saves unclaimed and hides the next
-    day's, with no end. Returns pending id -> (posted id, stored posted row or None)."""
+    whose posted twin is a first-sight posted row in this batch (`insert_ids`) or is already
+    saved and unclaimed. Same-day tiers only: a match across days would hide a daily repeat
+    charge, whose own posted row then saves unclaimed and hides the next day's, with no end.
+    Returns pending id -> (posted id, stored posted row or None)."""
     new_pendings: dict[str, list[dict]] = {}
     for txn in transactions:
         if txn.get("status") != PENDING_STATUS:
@@ -504,8 +504,7 @@ def _absorbing_posted(
         key=lambda row: row.get("transaction_id", ""),
     )
     stored_by_id = {row["transaction_id"]: row for row in stored_posted}
-    matches = [*match_all(batch_posted, new_pendings),
-               *match_all(stored_posted, new_pendings, tiers=_SAME_DAY_TIERS)]
+    matches = match_all([*batch_posted, *stored_posted], new_pendings, tiers=_SAME_DAY_TIERS)
     return {
         pending["transaction_id"]: (posted["transaction_id"], stored_by_id.get(posted["transaction_id"]))
         for posted, pending in matches
