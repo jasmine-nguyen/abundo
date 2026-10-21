@@ -64,11 +64,11 @@ def _fire(alerts, monkeypatch, repo, before, batch):
     monkeypatch.setattr(ba, "send_push",
                         lambda title, body, toks, data=None: sent.append(title) or {"sent": 1, "ok": 1, "pruned": []})
     notify = notify_repo()
-    pending_pools = repo.get_pending_pools(batch)
-    ctx = ba.capture_pre_write(batch, pending_pools=pending_pools, device_repo=FakeDeviceRepo(["ExpoPushToken[a]"]),
+    pools = repo.get_match_pools(batch)
+    ctx = ba.capture_pre_write(batch, pools=pools, device_repo=FakeDeviceRepo(["ExpoPushToken[a]"]),
                                budget_repo=_Budgets(), paycycle_repo=_Paycycle(),
                                webhook_repo=_AccountTransactionRepo(before))
-    repo.insert_or_reconcile(batch, pending_pools=pending_pools)
+    repo.insert_or_reconcile(batch, pools=pools)
     ba.fire_budget_alerts(ctx, batch, category_repo=_Categories(), notify_repo=notify)
     return sent, notify, ctx
 
@@ -130,3 +130,23 @@ def test_preview_rows_equal_the_real_save_on_a_mixed_batch(alerts, repo, monkeyp
     ledger = list(_txn_store(repo).values())
     assert sorted(r["transaction_id"] for r in ledger) == ["NEW", "OP", "RS", "SET"]
     assert _view(alerts.budget_alerts._simulate_after(ctx, batch)) == _view(ledger)
+
+
+# ABU-108 — a pending arriving with its posted twin, or after it, is absorbed by the real save;
+# the preview must not count it either.
+@pytest.mark.parametrize("posted_saved_first", [False, True])
+def test_preview_matches_the_save_when_a_pending_is_absorbed(alerts, repo, monkeypatch, posted_saved_first):
+    posted = _norm_real(alerts, txn_id="POST", amount=Decimal("-60"), pending=False, category="groceries")
+    pending = _norm_real(alerts, txn_id="PEND", amount=Decimal("-60"), pending=True, category="groceries")
+    batch = [pending, posted]
+    if posted_saved_first:
+        repo.insert_transactions([posted])
+        batch = [pending]
+    before = [dict(r) for r in repo._table.store.values()]
+
+    sent, _, ctx = _fire(alerts, monkeypatch, repo, before, batch)
+
+    ledger = list(_txn_store(repo).values())
+    assert [r["transaction_id"] for r in ledger] == ["POST"]
+    assert _view(alerts.budget_alerts._simulate_after(ctx, batch)) == _view(ledger)
+    assert sent == []                                              # $60 of $100: no 80% push

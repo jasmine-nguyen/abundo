@@ -1820,16 +1820,21 @@ def test_whit545_settlement_unfiled_twin_does_not_clobber_the_rule_fill(lam, rep
 # returned by rule_ingest.apply into insert_or_reconcile. A pending twin holds the raw enum; the
 # incoming posted is rule-filled by the user's KKV rule. FAIL-ON-REVERT: change handler.py's
 # insert_or_reconcile call to is_unfiled=None and the raw enum clobbers the rule-fill.
-def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
+def _quiet_webhook(lam, monkeypatch, rules=(), categories=()):
+    """The webhook's process_transaction with its side repositories faked; the budget-alert
+    path is neutralised (no device tokens -> capture returns None early)."""
     h = lam.handler
-    monkeypatch.setattr(h, "RuleRepository",
-                        lambda: FakeRuleStore([KKV_RULE]))
-    monkeypatch.setattr(h, "CategoryRepository", lambda: FakeCategoryRepo(["groceries"]))
-    # Neutralise the budget-alert side path (no device tokens -> capture returns None early).
+    monkeypatch.setattr(h, "RuleRepository", lambda: FakeRuleStore(list(rules)))
+    monkeypatch.setattr(h, "CategoryRepository", lambda: FakeCategoryRepo(list(categories)))
     monkeypatch.setattr(h, "DeviceRepository", lambda: FakeDeviceRepo([]))
     monkeypatch.setattr(h, "BudgetRepository", lambda: None)
     monkeypatch.setattr(h, "PayCycleRepository", lambda: None)
     monkeypatch.setattr(h, "NotifyRepository", lambda: None)
+    return h
+
+
+def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
+    h = _quiet_webhook(lam, monkeypatch, rules=[KKV_RULE], categories=["groceries"])
 
     _seed_pending(repo, lam, txn_id="P", amount=Decimal("-5.50"), authorized_date="2026-06-29",
                   pending=True, category="FOOD_AND_DRINK")
@@ -1841,3 +1846,163 @@ def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
     row = repo._table.store[(_acc(_norm(lam, txn_id="POST", amount=Decimal("-5.50"))), "TXN#POST")]
     assert row["category"] == "groceries"                        # rule-fill survives settlement
     assert (_acc(_norm(lam, txn_id="P", amount=Decimal("-5.50"))), "TXN#P") not in repo._table.store
+
+
+# --- ABU-108: a pending arriving with or after its posted twin -------------------------------
+
+
+def test_abu108_pending_and_its_posted_in_one_message_leave_one_row(lam, repo, monkeypatch):
+    # The pending pool is read before the write, so the message's own new pending is never a twin
+    # for its posted row: both were saved and the charge counted twice.
+    h = _quiet_webhook(lam, monkeypatch)
+    payload = {"data": [_bank_row("PEND", Decimal("-5.50"), pending=True),
+                        _bank_row("POST", Decimal("-5.50"), pending=False)]}
+
+    h.process_transaction(payload, repo)
+
+    acc = _acc(_norm(lam, txn_id="POST", amount=Decimal("-5.50")))
+    assert list(_txn_store(repo)) == [(acc, "TXN#POST")]
+
+
+def test_abu108_pending_arriving_after_its_posted_leaves_one_row(lam, repo, monkeypatch):
+    # Matching only ran from the posted side, so a pending arriving later was saved beside its
+    # already-saved posted twin. A re-send of that pending must not bring it back either.
+    h = _quiet_webhook(lam, monkeypatch)
+    pending_message = {"data": [_bank_row("PEND", Decimal("-5.50"), pending=True)]}
+
+    h.process_transaction({"data": [_bank_row("POST", Decimal("-5.50"), pending=False)]}, repo)
+    h.process_transaction(pending_message, repo)
+    h.process_transaction(pending_message, repo)
+
+    acc = _acc(_norm(lam, txn_id="POST", amount=Decimal("-5.50")))
+    assert list(_txn_store(repo)) == [(acc, "TXN#POST")]
+
+
+def _settled_marker(repo, txn, pending_id):
+    return repo._table.store.get(("SETTLED#" + _acc(txn), "TXN#" + pending_id))
+
+
+@pytest.mark.parametrize("posted_saved_first", [False, True])
+def test_abu108_an_absorbed_pending_links_its_posted_and_leaves_a_settled_marker(lam, repo, posted_saved_first):
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True)
+    if posted_saved_first:
+        repo.insert_or_reconcile([posted])
+        repo.insert_or_reconcile([pending])
+    else:
+        repo.insert_or_reconcile([pending, posted])
+
+    assert list(_txn_store(repo)) == [(_acc(posted), "TXN#POST")]
+    assert _txn_store(repo)[(_acc(posted), "TXN#POST")]["pending_transaction_id"] == "PEND"
+    assert _settled_marker(repo, posted, "PEND") is not None
+
+
+def test_abu108_a_saved_pending_resent_beside_an_unclaimed_posted_is_kept(lam, repo):
+    # A posted row settled before the release has no link; a saved pending's re-send must never be
+    # absorbed into it, or the user's category on that pending is lost.
+    stored = _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True)])
+
+    store = _txn_store(repo)
+    assert store[(_acc(stored), "TXN#PEND")]["category"] == "coffee"
+    assert "pending_transaction_id" not in store[(_acc(stored), "TXN#POST")]
+    assert _settled_marker(repo, stored, "PEND") is None
+
+
+def test_abu108_a_pending_saved_after_the_pool_read_is_updated_not_absorbed(lam, repo):
+    # Another message saved the pending after this one read its pools: it is updated in place.
+    posted = _seed_pending(repo, lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+    pools = repo.get_match_pools([posted])
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True, category="coffee")
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND", amount=Decimal("-5.75"), pending=True)], pools=pools)
+
+    store = _txn_store(repo)
+    assert store[(_acc(posted), "TXN#PEND")]["amount"] == Decimal("-5.75")
+    assert store[(_acc(posted), "TXN#PEND")]["category"] == "coffee"
+    assert "pending_transaction_id" not in store[(_acc(posted), "TXN#POST")]
+    assert _settled_marker(repo, posted, "PEND") is None
+
+
+def test_abu108_a_posted_that_already_used_up_a_pending_never_absorbs_another(lam, repo):
+    # Two identical coffees: the first settled from its pending, so the second's pending is real.
+    _seed_pending(repo, lam, txn_id="PEND1", amount=Decimal("-5.50"), pending=True)
+    posted = _norm(lam, txn_id="POST1", amount=Decimal("-5.50"), pending=False)
+    repo.insert_or_reconcile([posted])
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND2", amount=Decimal("-5.50"), pending=True)])
+
+    assert sorted(_txn_store(repo)) == [(_acc(posted), "TXN#PEND2"), (_acc(posted), "TXN#POST1")]
+
+
+def test_abu108_an_unlinked_posted_absorbs_a_real_second_charge_until_it_settles(lam, repo):
+    # Accepted trade-off: a posted row saved without a link (e.g. before the release) hides an
+    # identical second charge's pending; that charge's own posted row then saves plainly.
+    posted = _seed_pending(repo, lam, txn_id="POST1", amount=Decimal("-5.50"), pending=False)
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND2", amount=Decimal("-5.50"), pending=True)])
+    assert list(_txn_store(repo)) == [(_acc(posted), "TXN#POST1")]
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="POST2", amount=Decimal("-5.50"), pending=False)])
+    assert sorted(_txn_store(repo)) == [(_acc(posted), "TXN#POST1"), (_acc(posted), "TXN#POST2")]
+
+
+@pytest.mark.parametrize("posted_fields, pending_fields, absorbed", [
+    # ANZ clock split: the pending is dated one day after its posted row.
+    ({"authorized_date": "2026-06-28", "date": "2026-06-28"},
+     {"authorized_date": "2026-06-29", "date": "2026-06-29"}, True),
+    # No swipe date on the posted row: matched within the 7-day window...
+    ({"authorized_date": "", "date": "2026-06-29"}, {"authorized_date": "2026-06-25", "date": "2026-06-25"}, True),
+    # ...and not outside it.
+    ({"authorized_date": "", "date": "2026-06-29"}, {"authorized_date": "2026-06-20", "date": "2026-06-20"}, False),
+    # Nothing alike: the pending saves as today.
+    ({}, {"amount": Decimal("-7.00")}, False),
+])
+def test_abu108_a_later_pending_is_matched_by_every_settlement_rule(lam, repo, posted_fields, pending_fields,
+                                                                    absorbed):
+    posted = _seed_pending(repo, lam, **{"txn_id": "POST", "amount": Decimal("-5.50"), "pending": False,
+                                         **posted_fields})
+
+    repo.insert_or_reconcile([_norm(lam, **{"txn_id": "PEND", "amount": Decimal("-5.50"), "pending": True,
+                                            **pending_fields})])
+
+    assert ((_acc(posted), "TXN#PEND") in _txn_store(repo)) is not absorbed
+
+
+def test_abu108_a_bank_linked_posted_absorbs_its_pending_in_the_same_message(lam, repo):
+    # The amounts and days differ, so only the bank's own link can pair them.
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-5.00"), pending=True, authorized_date="2026-06-26")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-6.00"), pending=False, pending_transaction_id="PEND")
+
+    repo.insert_or_reconcile([pending, posted])
+
+    assert list(_txn_store(repo)) == [(_acc(posted), "TXN#POST")]
+
+
+def test_abu108_one_posted_absorbs_only_one_of_two_identical_pendings(lam, repo):
+    posted = _seed_pending(repo, lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+
+    repo.insert_or_reconcile([_norm(lam, txn_id=txn_id, amount=Decimal("-5.50"), pending=True)
+                              for txn_id in ("PEND1", "PEND2")])
+
+    assert sorted(_txn_store(repo)) == [(_acc(posted), "TXN#PEND2"), (_acc(posted), "TXN#POST")]
+
+
+def test_abu108_a_posted_claimed_by_another_message_mid_write_keeps_the_pending(lam, repo):
+    # Another message linked the posted row after this one read it. The marker is written before
+    # the claim, so the pending is still saved, and a marker on a saved pending is harmless.
+    posted = _seed_pending(repo, lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+
+    def link_by_another_message(key, table):
+        if key["sk"] == "TXN#POST":
+            table.store[(key["pk"], key["sk"])]["pending_transaction_id"] = "OTHER"
+    repo._table.before_write(link_by_another_message)
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True)])
+
+    store = _txn_store(repo)
+    assert (_acc(posted), "TXN#PEND") in store
+    assert store[(_acc(posted), "TXN#POST")]["pending_transaction_id"] == "OTHER"
+    assert _settled_marker(repo, posted, "PEND") is not None

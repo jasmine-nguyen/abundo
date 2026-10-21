@@ -12,7 +12,7 @@ empty sync, now catches those.
 Two entry points straddle the webhook's `insert_or_reconcile`, both best-effort at
 the call site (a failure never breaks the transaction write):
   * `capture_pre_write` — BEFORE the write: snapshot tokens, budget targets, the
-    cycle window, the pre-write windowed rows, AND the pending pools reconcile will
+    cycle window, the pre-write windowed rows, AND the match pools reconcile will
     consume. Returns None (skip) when there are no tokens or no budgets.
   * `fire_budget_alerts` — AFTER the write succeeds: compute the post-write spend by
     replaying the write in memory over the snapshot (the SAME `reconcile` plan the
@@ -62,13 +62,13 @@ _COPY = {
 }
 
 
-def capture_pre_write(normalised, *, pending_pools, device_repo, budget_repo, paycycle_repo, webhook_repo):
+def capture_pre_write(normalised, *, pools, device_repo, budget_repo, paycycle_repo, webhook_repo):
     """Snapshot (BEFORE the write) everything `fire_budget_alerts` needs. Returns a
     context dict, or None to skip alerting. Short-circuits cheapest-first: no
     registered device tokens → done; no budget targets → done.
 
-    `pending_pools` is the SAME pre-write pool the real write gets, so the Δ simulation
-    matches pending twins exactly as the write does (post-write the settled twins are gone)."""
+    `pools` are the SAME pre-write match pools the real write gets, so the Δ simulation
+    matches twins exactly as the write does (post-write the settled twins are gone)."""
     tokens = device_repo.list_tokens()
     if not tokens:
         return None
@@ -89,7 +89,7 @@ def capture_pre_write(normalised, *, pending_pools, device_repo, budget_repo, pa
     return {
         "tokens": tokens, "targets": targets, "window": window,
         "start": start, "end": end,
-        "before_rows": before_rows, "pending_pools": pending_pools,
+        "before_rows": before_rows, "pools": pools,
         "rollover_txns": all_rows,
     }
 
@@ -98,12 +98,12 @@ def _simulate_after(ctx, normalised, is_unfiled=None) -> list[dict]:
     """The windowed row set AFTER `insert_or_reconcile` applies `normalised`, built
     in memory from the pre-write snapshot — never a second (GSI-lagging) read. Plans
     with the same `reconcile.plan_reconcile` the real write carries out, over the same
-    pre-write pending pools, so it can't drift from the real write."""
+    pre-write match pools, so it can't drift from the real write."""
     by_id = {r["transaction_id"]: r for r in ctx["before_rows"] if r.get("transaction_id") is not None}
     # A posted row already in the snapshot under its own id is a re-send (WHIT-331).
     stored_rows = {t["transaction_id"]: by_id[t["transaction_id"]] for t in normalised
                    if t.get("status") != PENDING_STATUS and t["transaction_id"] in by_id}
-    plan = reconcile.plan_reconcile(normalised, stored_rows, ctx["pending_pools"])
+    plan = reconcile.plan_reconcile(normalised, stored_rows, ctx["pools"])
     rows = reconcile.apply_plan(by_id, plan, is_unfiled)
 
     # A just-inserted row dated outside the cycle window must not inflate the total.

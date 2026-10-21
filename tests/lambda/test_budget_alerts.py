@@ -78,7 +78,7 @@ def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=_TOKENS,
     notify = notify or notify_repo()
     ctx = ba.capture_pre_write(
         normalised,
-        pending_pools=webhook_repo.get_pending_pools(normalised) if webhook_repo else {},
+        pools=webhook_repo.get_match_pools(normalised) if webhook_repo else alerts.reconcile.MatchPools(),
         device_repo=FakeDeviceRepo(tokens),
         budget_repo=FakeBudgetRepo(budgets),
         paycycle_repo=FakePaycycleRepo(last_pay_date=paycycle[0], length=paycycle[1]),
@@ -268,10 +268,10 @@ class _WriteRecordingRepo:
     def save_failed_transactions(self, rows):
         pass
 
-    def get_pending_pools(self, txns):
+    def get_match_pools(self, txns):
         return {}
 
-    def insert_or_reconcile(self, txns, *, is_unfiled=None, pending_pools=None):
+    def insert_or_reconcile(self, txns, *, is_unfiled=None, pools=None):
         self.wrote = True
 
 
@@ -387,7 +387,7 @@ def test_alert_fires_reading_window_and_pending_twins_from_the_webhook_store(ale
     notify = notify_repo()
 
     ctx = ba.capture_pre_write(
-        settled, pending_pools=repo.get_pending_pools(settled), device_repo=FakeDeviceRepo(_TOKENS),
+        settled, pools=repo.get_match_pools(settled), device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(), webhook_repo=repo,
     )
@@ -462,7 +462,7 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     new = _txn("new1", "groceries", -15, "posted")
     store = _AccountPagesTransactionRepo({_ACCT: [([rows[0]], "c1"), ([rows[1]], None)]})
     ctx = ba.capture_pre_write(
-        [new], pending_pools={}, device_repo=FakeDeviceRepo(_TOKENS),
+        [new], pools=alerts.reconcile.MatchPools(), device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(), webhook_repo=store,
     )
@@ -690,7 +690,7 @@ def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_r
                         description="SQ *KKV INTERNATIONAL PTY Sunshine",
                         merchant_name="SQ *KKV INTERNATIONAL PTY ")
     ctx = {"before_rows": before,
-           "pending_pools": {account: list(repo.get_account_transactions(account, "pending"))},
+           "pools": alerts.reconcile.MatchPools(pending={account: list(repo.get_account_transactions(account, "pending"))}),
            "start": "2026-07-01", "end": "2026-07-14"}
 
     simulated = alerts.budget_alerts._simulate_after(ctx, [posted, resend])  # posted FIRST
@@ -873,7 +873,7 @@ def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, 
 
     before = [_txn("old", "groceries", -70, "posted")]
     ctx = ba.capture_pre_write(
-        [posted], pending_pools=repo.get_pending_pools([posted]), device_repo=FakeDeviceRepo(_TOKENS),
+        [posted], pools=repo.get_match_pools([posted]), device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
         webhook_repo=_AccountTransactionRepo(before))
@@ -937,7 +937,7 @@ def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_lin
     before = [_txn("g", "groceries", -90, "posted"), _txn("c", "coffee", -45, "posted")]
     notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "coffee#80")
-    ctx = ba.capture_pre_write([], pending_pools={}, device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo(budgets),
+    ctx = ba.capture_pre_write([], pools=alerts.reconcile.MatchPools(), device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo(budgets),
                                paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
     ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
                           notify_repo=notify)

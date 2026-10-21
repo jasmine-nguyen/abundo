@@ -56,10 +56,10 @@ def test_a_deleted_charge_resent_by_the_bank_is_not_saved_again(lam, repo, monke
 
     monkeypatch.setattr(handler.budget_alerts, "capture_pre_write", recording_capture)
 
-    # The stale pending and a posted charge are stored, then the user deletes both.
-    handler.process_transaction(
-        {"id": "evt-1", "data": [_raw("dup-pending", pending=True),
-                                 _raw("dup-posted", pending=False)]}, repo)
+    # The stale pending and a posted charge are stored, then the user deletes both. Seeded
+    # directly: one message carrying both is now saved as a single row (ABU-108).
+    repo.insert_transactions([lam.banksync.normalise(_raw("dup-pending", pending=True)),
+                              lam.banksync.normalise(_raw("dup-posted", pending=False))])
     assert _stored_charge(repo, "dup-pending") is not None
     assert _stored_charge(repo, "dup-posted") is not None
     repo.delete_transaction(_ACCOUNT_PK, "TXN#dup-pending")

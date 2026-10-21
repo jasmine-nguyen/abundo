@@ -1,6 +1,6 @@
 """Pending -> posted settlement planning, pure (no database) (WHIT-624).
 
-`plan_reconcile` takes the new charges, the stored posted rows and the pending pools and
+`plan_reconcile` takes the new charges, the stored posted rows and the match pools and
 returns a plan of steps. `insert_or_reconcile` (webhook_repository.py) carries the plan out against
 the table; the budget-alert preview (budget_alerts.py) carries it out in memory with
 `apply_plan`. One planner, so the two can't drift.
@@ -431,6 +431,8 @@ def settle(
     trusted."""
     merged = with_carried_category(posted_txn, twin, is_unfiled=is_unfiled)
     inherit_swipe_date(merged, posted_txn, twin)
+    # Marks the posted row as having used up a pending, so a later pending can't be absorbed into it (ABU-108).
+    merged["pending_transaction_id"] = twin["transaction_id"]
     return merged
 
 
@@ -447,6 +449,15 @@ def bank_field_updates(txn: Transaction, inherit_date_from: Optional[dict] = Non
 
 
 @dataclass
+class MatchPools:
+    """The stored rows a batch matches against, per account: `pending` (the recent pendings a
+    posted row can settle) and `posted` (the posted rows saved within FEED_WINDOW_DAYS a
+    never-saved pending can be absorbed into, ABU-108)."""
+    pending: dict[str, list[dict]] = field(default_factory=dict)
+    posted: dict[str, list[dict]] = field(default_factory=dict)
+
+
+@dataclass
 class ReconcilePlan:
     """What saving a batch does, in batch order. Each step is one of:
       ("update", txn, inherit_date_from_or_None) — overwrite the bank fields of the row
@@ -455,20 +466,54 @@ class ReconcilePlan:
       ("settle", txn, twin) — first settlement matched to a pending twin: write
           `settle(txn, twin)`
       ("insert", txn) — first settlement with no twin
+      ("absorb", pending_txn, posted_id, stored_posted_or_None) — a never-saved pending
+          whose posted twin is already saved (`stored_posted`) or in this batch (None): it is
+          not saved, and the posted row's `pending_transaction_id` is set to it (ABU-108).
+          If the pending's own row turns out to exist, it is updated like "update" instead.
     `stale_pending_keys` are the (pk, sk) of consumed twins to delete after the writes."""
     steps: list[tuple] = field(default_factory=list)
     stale_pending_keys: list[tuple[str, str]] = field(default_factory=list)
 
 
+def _absorbing_posted(
+    transactions: list[Transaction], insert_ids: set[str], pools: MatchPools,
+) -> dict[str, tuple[str, Optional[dict]]]:
+    """The reverse of the settlement search (ABU-108): each never-saved pending in the batch
+    whose posted twin is already saved and unclaimed, or is a first-sight posted row in this
+    batch (`insert_ids`). Returns pending id -> (posted id, stored posted row or None)."""
+    new_pendings: dict[str, list[dict]] = {}
+    for txn in transactions:
+        if txn.get("status") != PENDING_STATUS:
+            continue
+        saved_ids = {row.get("transaction_id") for row in pools.pending.get(txn["account_id"], [])}
+        if txn["transaction_id"] not in saved_ids:
+            new_pendings.setdefault(txn["account_id"], []).append(dict(txn))
+    if not new_pendings:
+        return {}
+
+    batch_posted = [txn for txn in transactions if txn["transaction_id"] in insert_ids]
+    stored_posted = sorted(
+        (row for rows in pools.posted.values() for row in rows
+         if not row.get("pending_transaction_id") and row.get("transaction_id") not in insert_ids),
+        key=lambda row: row.get("transaction_id", ""),
+    )
+    stored_by_id = {row["transaction_id"]: row for row in stored_posted}
+    return {
+        pending["transaction_id"]: (posted["transaction_id"], stored_by_id.get(posted["transaction_id"]))
+        for posted, pending in match_all([*batch_posted, *stored_posted], new_pendings)
+        if pending is not None
+    }
+
+
 def plan_reconcile(
     transactions: list[Transaction],
     stored_rows: dict[str, dict],
-    pending_pools: dict[str, list[dict]],
+    match_pools: MatchPools,
 ) -> ReconcilePlan:
     """Plan a batch save. `stored_rows` holds the rows already stored under a posted
-    charge's own transaction_id; `pending_pools` the stored pending rows per account.
+    charge's own transaction_id; `match_pools` the stored pending and posted rows per account.
     Neither input is mutated."""
-    pools = {account_id: list(rows) for account_id, rows in pending_pools.items()}
+    pools = {account_id: list(rows) for account_id, rows in match_pools.pending.items()}
 
     # A posted row already stored under its OWN id is a re-send, not a settlement:
     # BankSync repeats a settled transaction for FEED_WINDOW_DAYS, and it claimed its
@@ -497,6 +542,13 @@ def plan_reconcile(
         twin_key = (twin["pk"], twin["sk"])
         if twin_key != (_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"])):
             plan.stale_pending_keys.append(twin_key)
+
+    insert_ids = {step[1]["transaction_id"] for step in plan.steps if step[0] == "insert"}
+    absorbed = _absorbing_posted(transactions, insert_ids, match_pools)
+    for index, step in enumerate(plan.steps):
+        match = absorbed.get(step[1]["transaction_id"])
+        if step[0] == "update" and step[1].get("status") == PENDING_STATUS and match is not None:
+            plan.steps[index] = ("absorb", step[1], *match)
     return plan
 
 
@@ -506,20 +558,24 @@ def apply_plan(
 ) -> dict[str, dict]:
     """The rows (keyed by transaction_id) after `plan` is carried out over `rows_by_id`,
     in memory. Mirrors the real save: an update keeps the stored row and overwrites only
-    its bank fields (or inserts when there is no stored row), and consumed twins are
-    removed after every write, so a pending re-send in the same batch as its own
-    settlement does not survive."""
+    its bank fields (or inserts when there is no stored row), an absorbed pending is not
+    saved unless its own row already exists, and consumed twins are removed after every
+    write, so a pending re-send in the same batch as its own settlement does not survive."""
     rows = dict(rows_by_id)
     consumed_twin_ids: set[str] = set()
+    links: dict[str, str] = {}
     for step in plan.steps:
         kind, txn = step[0], step[1]
         transaction_id = txn["transaction_id"]
-        if kind == "update":
+        if kind == "absorb" and transaction_id not in rows:
+            links[step[2]] = transaction_id
+        elif kind in ("update", "absorb"):
             existing = rows.get(transaction_id)
+            inherit_date_from = step[2] if kind == "update" else None
             if existing is None:
                 rows[transaction_id] = dict(txn)
             else:
-                rows[transaction_id] = {**existing, **bank_field_updates(txn, step[2])}
+                rows[transaction_id] = {**existing, **bank_field_updates(txn, inherit_date_from)}
         elif kind == "settle":
             twin = step[2]
             rows[transaction_id] = dict(settle(txn, twin, is_unfiled))
@@ -527,6 +583,9 @@ def apply_plan(
                 consumed_twin_ids.add(twin.get("transaction_id"))
         else:
             rows[transaction_id] = dict(txn)
+    for posted_id, pending_id in links.items():
+        if posted_id in rows:
+            rows[posted_id] = {**rows[posted_id], "pending_transaction_id": pending_id}
     for twin_id in consumed_twin_ids:
         rows.pop(twin_id, None)
     return rows

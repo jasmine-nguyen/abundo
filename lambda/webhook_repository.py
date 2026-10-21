@@ -4,7 +4,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
-from constants import EVENT_MARKER_TTL_SECONDS, PENDING_LOOKBACK_DAYS, PENDING_STATUS, SETTLED_PENDING_TTL_SECONDS
+from constants import EVENT_MARKER_TTL_SECONDS, FEED_WINDOW_DAYS, PENDING_LOOKBACK_DAYS, PENDING_STATUS, SETTLED_PENDING_TTL_SECONDS
 from repository_base import conditional_write, db_errors, logger, update_expression
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
@@ -47,18 +47,22 @@ class TransactionRepository(_SharedTransactionRepository):
             filter_expression=Attr("status").eq(status),
         )
 
-    def get_pending_pools(self, transactions: list[Transaction]) -> dict[str, list[dict]]:
-        """The recent pendings of every account with a non-pending row in `transactions` — the
-        pool reconcile matches settlements against. Read once per bank message and shared by
-        the alert preview and the write, so both see the same pool (ABU-41). Bounded to the
-        last PENDING_LOOKBACK_DAYS through the date-index; age-out reaps anything older."""
-        start = (melbourne_today() - timedelta(days=PENDING_LOOKBACK_DAYS)).isoformat()
-        accounts = dict.fromkeys(t["account_id"] for t in transactions if t.get("status") != PENDING_STATUS)
-        return {
-            account_id: [row for row in read_date_range_pages(self, account_id, start, None)
-                         if row.get("status") == PENDING_STATUS]
-            for account_id in accounts
-        }
+    def get_match_pools(self, transactions: list[Transaction]) -> reconcile.MatchPools:
+        """The stored rows reconcile matches `transactions` against, for every account in it:
+        the pendings of the last PENDING_LOOKBACK_DAYS (age-out reaps anything older) and the
+        posted rows of the last FEED_WINDOW_DAYS (BankSync never sends a pending later than
+        that, ABU-108). One date-index read per account, done once per bank message and shared
+        by the alert preview and the write, so both see the same pools (ABU-41)."""
+        today = melbourne_today()
+        start = (today - timedelta(days=PENDING_LOOKBACK_DAYS)).isoformat()
+        posted_start = (today - timedelta(days=FEED_WINDOW_DAYS)).isoformat()
+        pools = reconcile.MatchPools()
+        for account_id in dict.fromkeys(t["account_id"] for t in transactions):
+            rows = read_date_range_pages(self, account_id, start, None)
+            pools.pending[account_id] = [row for row in rows if row.get("status") == PENDING_STATUS]
+            pools.posted[account_id] = [row for row in rows if row.get("status") != PENDING_STATUS
+                                        and (row.get("date") or "") >= posted_start]
+        return pools
 
     def get_failed_transactions(self) -> list[dict]:
         """Retrieve all dead-lettered rows — the ``pk="FAILED"`` partition written by
@@ -77,7 +81,7 @@ class TransactionRepository(_SharedTransactionRepository):
     def insert_or_reconcile(
         self, transactions: list[Transaction], *,
         is_unfiled: Optional[Callable[[Optional[str]], bool]] = None,
-        pending_pools: Optional[dict[str, list[dict]]] = None,
+        pools: Optional[reconcile.MatchPools] = None,
     ) -> None:
         """Insert transactions, reconciling pending->posted so a user's category
         survives settlement.
@@ -101,15 +105,17 @@ class TransactionRepository(_SharedTransactionRepository):
         exact twin is never starved by a tip- or skew-eligible sibling posting processed
         first.
 
-        Pending rows are inserted as-is. All inserts are batched at the end; stale
-        pendings are deleted after.
+        Pending rows are inserted as-is, unless they are never-saved and their posted twin is
+        already saved or in this batch: then they are absorbed — not saved, marked settled, and
+        the posted row's `pending_transaction_id` names them (ABU-108). All inserts are batched
+        at the end; stale pendings are deleted after.
 
         WHIT-545: `is_unfiled` (the caller's taxonomy check) gates the first-settlement
         carry so a stored raw category can't clobber a rule-fill, and recomputes
         counts_to_budget for the carried category. Absent -> the carry is unchanged.
 
-        `pending_pools`: the caller's get_pending_pools read, so the alert preview and the
-        write share one read (ABU-41). Absent -> read here.
+        `pools`: the caller's get_match_pools read, so the alert preview and the write share
+        one read (ABU-41). Absent -> read here.
         """
         if not transactions:
             return
@@ -124,37 +130,69 @@ class TransactionRepository(_SharedTransactionRepository):
             if stored is not None:
                 stored_rows[posted_txn["transaction_id"]] = stored
 
-        if pending_pools is None:
-            pending_pools = self.get_pending_pools(transactions)
+        if pools is None:
+            pools = self.get_match_pools(transactions)
 
-        plan = reconcile.plan_reconcile(transactions, stored_rows, pending_pools)
+        plan = reconcile.plan_reconcile(transactions, stored_rows, pools)
 
-        to_insert: list[Transaction] = []
+        to_insert: dict[str, Transaction] = {}
+        links: dict[str, str] = {}
         for step in plan.steps:
             match step:
                 case ("update", txn, inherit_date_from):
-                    # WHIT-513: partial update — only overwrite bank-owned fields, so the
-                    # user's category/notes/tags/budget_excluded stay untouched. Falls back
-                    # to a plain insert when the row doesn't exist yet.
-                    own_pk = _build_pk(txn["account_id"])
-                    own_sk = _build_sk(txn["transaction_id"])
-                    if self._update_bank_fields(own_pk, own_sk, txn, inherit_date_from=inherit_date_from):
+                    if not self._resave(txn, inherit_date_from):
+                        to_insert[txn["transaction_id"]] = txn
+                case ("absorb", txn, posted_id, stored_posted):
+                    if self._resave(txn, None):
                         continue
-                    if txn.get("status") == PENDING_STATUS and self._pending_was_removed(txn):
-                        logger.info("skipped re-sent pending %s: settled or deleted while in flight",
-                                    txn["transaction_id"])
+                    # Marked before the claim: a marker on a pending that ends up saved is
+                    # harmless, but a claim with no marker would let a retry save it twice.
+                    self.mark_settled(_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"]))
+                    if stored_posted is not None and not self._claim_posted(stored_posted, txn["transaction_id"]):
+                        to_insert[txn["transaction_id"]] = txn
                         continue
-                    to_insert.append(txn)
+                    if stored_posted is None:
+                        links[posted_id] = txn["transaction_id"]
+                    logger.info("absorbed pending into its posted twin: account=%s pending=%s posted=%s",
+                                txn["account_id"], txn["transaction_id"], posted_id)
                 case ("settle", txn, twin):
                     fresh = self._refresh_carried_fields(twin)
-                    to_insert.append(reconcile.settle(txn, fresh, is_unfiled))
+                    to_insert[txn["transaction_id"]] = reconcile.settle(txn, fresh, is_unfiled)
                 case ("insert", txn):
-                    to_insert.append(txn)
+                    to_insert[txn["transaction_id"]] = txn
 
-        self.insert_transactions(to_insert)
+        for posted_id, pending_id in links.items():
+            to_insert[posted_id] = {**to_insert[posted_id], "pending_transaction_id": pending_id}
+        self.insert_transactions(list(to_insert.values()))
         for pk, sk in plan.stale_pending_keys:
             self.mark_settled(pk, sk)
             self.delete_pending_if_present(pk, sk)
+
+    def _resave(self, txn: Transaction, inherit_date_from: Optional[dict]) -> bool:
+        """Re-save `txn` over its own stored row, True when that settled it: the row's bank fields
+        were updated (WHIT-513: the user's category/notes/tags/budget_excluded stay untouched), or
+        it is a pending that was settled or deleted while in flight, so it must not come back
+        (ABU-36). False -> no row, the caller saves it."""
+        own_pk = _build_pk(txn["account_id"])
+        own_sk = _build_sk(txn["transaction_id"])
+        if self._update_bank_fields(own_pk, own_sk, txn, inherit_date_from=inherit_date_from):
+            return True
+        if txn.get("status") == PENDING_STATUS and self._pending_was_removed(txn):
+            logger.info("skipped re-sent pending %s: settled or deleted while in flight",
+                        txn["transaction_id"])
+            return True
+        return False
+
+    def _claim_posted(self, posted_row: dict, pending_id: str) -> bool:
+        """Link a saved posted row to the pending it used up, unless it already has one (ABU-108).
+        False when another pending claimed it first, or the row is gone."""
+        return conditional_write("claim posted", lambda: self._get_table().update_item(
+            Key={"pk": posted_row["pk"], "sk": posted_row["sk"]},
+            UpdateExpression="SET #link = :link",
+            ExpressionAttributeNames={"#link": "pending_transaction_id"},
+            ExpressionAttributeValues={":link": pending_id},
+            ConditionExpression="attribute_exists(pk) AND attribute_not_exists(#link)",
+        ))
 
     def _pending_was_removed(self, txn: Transaction) -> bool:
         """Whether a pending's row vanished because it was settled or deleted by the user (ABU-36).

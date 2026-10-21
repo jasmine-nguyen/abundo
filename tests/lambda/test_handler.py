@@ -447,7 +447,7 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
 
     handler = lam.handler
 
-    def raising_insert(txns, *, is_unfiled=None, pending_pools=None):
+    def raising_insert(txns, *, is_unfiled=None, pools=None):
         raise botocore.exceptions.ClientError()
 
     repo = _real_repo(lam)
