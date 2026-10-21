@@ -7,7 +7,8 @@ its own copy — the copies were already byte-identical (and the txn-rows reader
 to drift, differing only by name), so if the fake table's key scheme ever changed that
 was three edits and a missed one fails confusingly (WHIT-494).
 
-Consumers: tests/lambda/test_reprocess.py and tests/lambda/test_westpac_recovery_qa.py.
+Consumers: tests/lambda/test_reprocess.py, tests/lambda/test_westpac_recovery_qa.py and
+tests/lambda/test_reconcile.py.
 
 Resolved by pytest.ini's `pythonpath = tests/shared`, the same way the API suites import
 `_feed_fakes`. This module is dependency-light (no imports), so it pulls no shared/-layer
@@ -23,3 +24,8 @@ def _failed_keys(repo):
 def _txn_rows(repo):
     """Stored ACCOUNT#/TXN# rows as {sk: item} (account-id agnostic)."""
     return {k[1]: v for k, v in repo._table.store.items() if k[0].startswith("ACCOUNT#")}
+
+
+def _txn_store(repo):
+    """Stored transaction rows as {(pk, sk): item}, leaving out marker rows (SETTLED#, DELETED#)."""
+    return {k: v for k, v in repo._table.store.items() if k[0].startswith("ACCOUNT#")}

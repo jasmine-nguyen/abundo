@@ -72,6 +72,11 @@ CARRY_DATE_SKEW_DAYS = 3
 # well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the deleted charge back.
 DELETED_TRANSACTION_TTL_SECONDS = 30 * 24 * 3600
 
+# How long the "settled" marker for a pending consumed by its posted twin lives (ABU-36). Must stay
+# well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the settled pending back.
+SETTLED_PENDING_TTL_SECONDS = 30 * 24 * 3600
+assert SETTLED_PENDING_TTL_SECONDS > FEED_WINDOW_DAYS * 24 * 3600, "the settled marker must outlast the feed window"
+
 # How long a webhook "already processed" marker (EVENT#<envelope>) lives (ABU-46). Written as
 # DynamoDB TTL (`expires_at`); must stay well past FEED_WINDOW_DAYS so every BankSync re-send
 # is still recognised as seen.

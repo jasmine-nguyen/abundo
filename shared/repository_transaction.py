@@ -199,13 +199,7 @@ class TransactionRepository(RepositoryBase):
         no index fields, so no read lists it, and DynamoDB's TTL expires it. A stray marker from a
         failed delete is harmless. Returns False when the row is already gone (a 404).
         """
-        now = int(datetime.now(timezone.utc).timestamp())
-        with db_errors("delete"):
-            self._get_table().put_item(Item={
-                "pk": _build_deleted_pk(pk),
-                "sk": sk,
-                "expires_at": now + DELETED_TRANSACTION_TTL_SECONDS,
-            })
+        self._put_marker(_build_deleted_pk(pk), sk, DELETED_TRANSACTION_TTL_SECONDS, "delete")
         return conditional_write("delete", lambda: self._get_table().delete_item(
             Key={"pk": pk, "sk": sk}, ConditionExpression="attribute_exists(pk)"
         ))
@@ -236,11 +230,20 @@ class TransactionRepository(RepositoryBase):
             ConditionExpression="attribute_exists(pk) AND #s = :pending",
         ))
 
-    def is_deleted(self, account_id: str, transaction_id: str) -> bool:
+    def is_deleted(self, account_id: str, transaction_id: str, *, consistent: bool = False) -> bool:
         """True while the user's "deleted by you" marker for this transaction hasn't expired."""
-        key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
+        return self._has_marker(_build_deleted_pk(_build_pk(account_id)), transaction_id, consistent)
+
+    def _put_marker(self, marker_pk: str, sk: str, ttl_seconds: int, action: str) -> None:
+        """Write a marker row (no index fields, so no read lists it) that DynamoDB's TTL expires."""
+        now = int(datetime.now(timezone.utc).timestamp())
+        with db_errors(action):
+            self._get_table().put_item(Item={"pk": marker_pk, "sk": sk, "expires_at": now + ttl_seconds})
+
+    def _has_marker(self, marker_pk: str, transaction_id: str, consistent: bool) -> bool:
+        key = {"pk": marker_pk, "sk": _build_sk(transaction_id)}
         with db_errors("read"):
-            return "Item" in self._get_table().get_item(Key=key)
+            return "Item" in self._get_table().get_item(Key=key, ConsistentRead=consistent)
 
     def mark_bank_synced(self, account_ids, now: int) -> None:
         """Record epoch seconds `now` as each account's latest bank delivery (plain put)."""

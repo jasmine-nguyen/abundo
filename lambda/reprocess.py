@@ -29,9 +29,10 @@ logger = logging.getLogger(__name__)
 
 def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
     """Re-drive every dead-lettered row and return a summary of what happened:
-    ``{"reprocessed": n, "skipped": n, "errors": n, "dropped_zero": n, "dropped_deleted": n}``.
-    A $0.00 row (WHIT-705) or a charge the user deleted (WHIT-654) is never stored: its
-    dead-letter is cleared and counted under ``dropped_zero`` / ``dropped_deleted``.
+    ``{"reprocessed": n, "skipped": n, "errors": n, "dropped_zero": n, "dropped_deleted": n,
+    "dropped_settled": n}``. A $0.00 row (WHIT-705), a charge the user deleted (WHIT-654) or a
+    pending already settled (ABU-36) is never stored: its dead-letter is cleared and counted under
+    ``dropped_zero`` / ``dropped_deleted`` / ``dropped_settled``.
 
     Never raises for a single bad row — a poison row is skipped (left in place) so
     it can't halt recovery for the rows behind it. A row is deleted ONLY after its
@@ -41,7 +42,8 @@ def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
     delivery. The rules + taxonomy are read ONCE for the whole sweep, not per row.
     """
     rows = repo.get_failed_transactions()
-    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0,
+               "dropped_settled": 0}
 
     book = rule_ingest.load_rules(rule_repo, category_repo)
     is_unfiled = None

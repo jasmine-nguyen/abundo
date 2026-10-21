@@ -8,10 +8,12 @@ lose the user's category. These tests build rows through `banksync.normalise`
 so the stored shapes match production, and inject a FakeTable via `repo._table`.
 """
 
+import time
 from decimal import Decimal
 
 import pytest
 
+from _deadletter_fakes import _txn_store
 from _feed_fakes import FakeCategoryRepo
 from _milestone_fakes import FakeDeviceRepo
 from _rule_ingest_fakes import KKV_RULE, FakeRuleStore
@@ -67,11 +69,80 @@ def test_reconcile_carries_category_and_deletes_pending(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert store[(acc, "TXN#B")]["category"] == "coffee"   # carried onto the posted row
     assert (acc, "TXN#A") not in store                      # stale pending removed
     assert len(store) == 1                                   # no duplicate
+
+
+def test_settling_a_pending_leaves_a_settled_marker_for_it(lam, repo):
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False)
+
+    repo.insert_or_reconcile([posted])
+
+    marker = repo._table.store.get(("SETTLED#" + _acc(posted), "TXN#A"))
+    assert marker is not None
+    # [A2] it must outlive every BankSync re-send of the pending
+    from constants import FEED_WINDOW_DAYS
+    assert marker["expires_at"] > time.time() + FEED_WINDOW_DAYS * 24 * 3600
+
+
+def test_a_pending_resent_while_its_settlement_lands_is_not_brought_back(lam, repo):
+    # ABU-36: the re-send of pending A read its row before posted B settled it, so its in-place
+    # update finds the row gone. It must not fall back to inserting A beside B (counted twice).
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+    resent_pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False)
+
+    repo.insert_or_reconcile([posted])
+    repo.insert_or_reconcile([resent_pending])
+
+    assert list(_txn_store(repo)) == [(_acc(posted), "TXN#B")]
+
+
+def test_a_pending_whose_update_misses_its_row_reads_both_markers_consistently(lam, repo):
+    # [A1] the marker was written moments ago by a parallel settlement: an eventually consistent
+    # read could miss it and re-create the pending beside its posted twin.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+
+    repo.insert_or_reconcile([pending])
+
+    reads = dict(zip((k["pk"].split("#")[0] for k in repo._table.get_item_keys),
+                     repo._table.consistent_reads))
+    assert reads["SETTLED"] is True
+    assert reads["DELETED"] is True
+
+
+def test_a_pending_resent_while_the_user_deletes_it_is_not_brought_back(lam, repo):
+    stored = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+    repo.delete_transaction(_acc(stored), "TXN#A")
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True)])
+
+    assert (_acc(stored), "TXN#A") not in repo._table.store
+
+
+def test_a_failed_settled_marker_write_keeps_the_pending(lam, repo):
+    # The marker is written before the pending is deleted, so a failed marker never leaves the
+    # pending gone with nothing to stop a re-send bringing it back.
+    import repository_errors
+    stored = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+    repo._table.fail("put_item", when=lambda item: item["pk"].startswith("SETTLED#"))
+
+    with pytest.raises(repository_errors.DatabaseError):
+        repo.insert_or_reconcile([_norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False)])
+
+    assert (_acc(stored), "TXN#A") in repo._table.store
+
+
+def test_a_first_sight_pending_is_still_inserted(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+
+    repo.insert_or_reconcile([pending])
+
+    assert (_acc(pending), "TXN#A") in repo._table.store
 
 
 def test_twin_under_the_posted_rows_own_key_is_kept_not_deleted(lam, repo):
@@ -85,7 +156,7 @@ def test_twin_under_the_posted_rows_own_key_is_kept_not_deleted(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert list(store) == [(_acc(posted), "TXN#SAME")]
     assert store[(_acc(posted), "TXN#SAME")]["category"] == "coffee"
     assert store[(_acc(posted), "TXN#SAME")]["status"] == "posted"
@@ -130,7 +201,7 @@ def test_blank_auth_settlement_reconciles_and_inherits_swipe_date(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     row = store[(acc, "TXN#POST")]
     assert row["date"] == "2026-07-17"              # swipe day, inherited from the twin
@@ -171,7 +242,7 @@ def test_blank_auth_does_not_merge_a_different_merchant(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") in store                # different merchant -> not merged
     assert store[(acc, "TXN#POST")]["date"] == "2026-07-21"  # no twin -> no inherit
@@ -192,7 +263,7 @@ def test_blank_auth_does_not_merge_outside_the_date_window(lam, repo):
     repo.insert_or_reconcile([posted])
 
     assert (_acc(posted), "TXN#PEND") in repo._table.store   # outside window -> not merged
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 def test_blank_auth_single_word_merchant_does_not_reconcile(lam, repo):
@@ -207,7 +278,7 @@ def test_blank_auth_single_word_merchant_does_not_reconcile(lam, repo):
     repo.insert_or_reconcile([posted])
 
     assert (_acc(posted), "TXN#PEND") in repo._table.store   # single-word merchant -> no merge
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 def test_reconcile_carries_notes_and_tags_onto_posted(lam, repo):
@@ -269,7 +340,7 @@ def test_tip_within_headroom_reconciles(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") not in store                          # stale pending removed
     assert store[(acc, "TXN#B")]["category"] == "coffee"        # category carried
@@ -294,7 +365,7 @@ def test_tip_real_doordash_shape_reconciles(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") not in store
     assert store[(acc, "TXN#B")]["category"] == "eatingout"
@@ -319,7 +390,7 @@ def test_different_merchant_same_day_within_headroom_does_not_merge(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") in store                                    # Nicole's untouched
     assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
@@ -338,7 +409,7 @@ def test_exact_amount_preferred_over_tip_candidate(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A2") not in store                              # exact twin consumed
     assert (acc, "TXN#A1") in store                                  # tip candidate untouched
@@ -358,7 +429,7 @@ def test_exact_pending_transaction_id_link(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") not in store
     assert store[(acc, "TXN#B")]["category"] == "coffee"
@@ -374,7 +445,7 @@ def test_bogus_link_falls_through_to_heuristic(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") not in store
     assert store[(acc, "TXN#B")]["category"] == "coffee"
@@ -399,7 +470,7 @@ def test_batch_mix_reconciles_and_queries_once_per_account(lam, repo):
 
     repo.insert_or_reconcile(batch)
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(batch[0])
     assert (acc, "TXN#C") in store                                   # new pending inserted
     assert (acc, "TXN#P") not in store                               # settled + deleted
@@ -426,7 +497,7 @@ def test_consume_on_match_pool_exhausts(lam, repo):
 
     repo.insert_or_reconcile(batch)
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(batch[0])
     assert (acc, "TXN#A1") not in store                              # consumed by B
     assert store[(acc, "TXN#B")]["category"] == "coffee"
@@ -446,7 +517,7 @@ def test_matched_pending_without_category_still_dedupes(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") not in store                          # stale pending removed
     assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"  # empty not carried
@@ -477,7 +548,7 @@ def test_single_common_word_merchant_does_not_merge(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A") in store                                   # Coles pending untouched
     assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
@@ -503,7 +574,7 @@ def test_only_merchant_matching_pending_consumed_not_lowest_id(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A2") not in store                              # true twin consumed
     assert (acc, "TXN#A1") in store                                  # Woolworths untouched
@@ -526,7 +597,7 @@ def test_pending_with_missing_amount_never_matches(lam, repo):
 
     repo.insert_or_reconcile([posted])                          # must not raise
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert (acc, "TXN#A") in store                                   # unmatched, survives
     assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"     # no carry
     assert len(store) == 2
@@ -556,7 +627,7 @@ def test_exact_beats_tip_regardless_of_batch_order(lam, repo):
         }
         repo.insert_or_reconcile([rows[order[0]], rows[order[1]]])
 
-        store = repo._table.store
+        store = _txn_store(repo)
         acc = _acc(rows["B"])
         assert store[(acc, "TXN#B")]["category"] == "coffee", order          # exact always wins
         assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK", order  # tip never carries
@@ -590,7 +661,7 @@ def test_two_pass_is_scoped_per_account(lam, repo):
 
     repo.insert_or_reconcile(batch)
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc1 = "ACCOUNT#" + batch[0]["account_id"]
     acc2 = "ACCOUNT#" + batch[1]["account_id"]
     assert acc1 != acc2
@@ -629,7 +700,7 @@ def test_multiple_exact_twins_each_consumed_once(lam, repo):
 
     repo.insert_or_reconcile(batch)
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(batch[0])
     assert store[(acc, "TXN#P1")]["category"] == "coffee"   # lowest-id pending -> 1st posting
     assert store[(acc, "TXN#P2")]["category"] == "tea"      # the other pending, not re-claimed
@@ -654,7 +725,7 @@ def test_exact_tier_prefers_same_shop_pending(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert store[(acc, "TXN#P")]["category"] == "coffee"
     assert (acc, "TXN#A2") not in store
@@ -669,7 +740,7 @@ def test_exact_tier_still_merges_when_no_pending_shop_matches(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert store[(acc, "TXN#P")]["category"] == "books"
     assert (acc, "TXN#A") not in store
@@ -693,7 +764,7 @@ def test_exact_tier_same_shop_wins_regardless_of_batch_order(lam, repo):
 
     repo.insert_or_reconcile(batch)
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(batch[0])
     assert store[(acc, "TXN#PY")]["category"] == "coffee"
     assert store[(acc, "TXN#PX")]["category"] == "books"
@@ -715,7 +786,7 @@ def test_exact_link_beats_a_same_shop_pending(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert store[(acc, "TXN#P")]["category"] == "books"
     assert (acc, "TXN#A1") not in store
@@ -731,7 +802,7 @@ def test_exact_tier_prefers_same_shop_on_anz_pending_rows(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert store[(acc, "TXN#POST")]["category"] == "groceries"
     assert (acc, "TXN#A2") not in store
@@ -818,7 +889,7 @@ def test_anz_skewed_date_pair_reconciles_and_keeps_the_melbourne_day(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") not in store           # twin removed — no double count
     assert len(store) == 1
@@ -854,7 +925,7 @@ def test_resync_after_skew_merge_does_not_consume_an_unrelated_pending(lam, repo
 
     repo.insert_or_reconcile([_skew_posted(lam)])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert (_acc(_skew_posted(lam)), "TXN#LATER") in store
     assert store[(_acc(_skew_posted(lam)), "TXN#POST")]["category"] == "coffee"
 
@@ -867,7 +938,7 @@ def test_two_genuine_consecutive_day_purchases_do_not_merge(lam, repo):
 
     repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_skew_posted(lam))
     assert (acc, "TXN#PEND21") not in store         # exact same-day twin consumed
     assert (acc, "TXN#PEND22") in store             # the OTHER real purchase survives
@@ -882,7 +953,7 @@ def test_both_consecutive_day_purchases_settle_without_losing_a_row(lam, repo):
     repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
     repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}
     assert len(store) == 2                          # nothing lost, nothing duplicated
 
@@ -900,7 +971,7 @@ def test_skew_single_word_merchant_does_not_merge_a_neighbouring_brand(lam, repo
     repo.insert_or_reconcile([_skew_posted(lam, description="COLES 0602 MELBOURNE",
                                           merchant_name="COLES 0602               ")])
 
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 # --- WHIT-653: skewed date AND a foreign fee folded into the settled amount ---------
@@ -937,7 +1008,7 @@ def test_westpac_overseas_charge_with_fee_a_day_earlier_reconciles(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") not in store           # stale pending removed — no double count
     assert len(store) == 1
@@ -958,7 +1029,7 @@ def test_skew_fee_merges_up_to_exactly_five_percent(lam, repo, posted_amount, ro
 
     repo.insert_or_reconcile([_fee_posted(lam, amount=posted_amount)])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert len(store) == rows_left
     assert (_acc(_fee_posted(lam)), "TXN#POST") in store
 
@@ -970,7 +1041,7 @@ def test_skew_fee_single_word_merchant_does_not_merge(lam, repo):
     repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-103.00"),
                                           description="NETFLIX", merchant_name="NETFLIX")])
 
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 def test_resend_after_a_skewed_fee_merge_keeps_the_day_and_category(lam, repo):
@@ -981,7 +1052,7 @@ def test_resend_after_a_skewed_fee_merge_keeps_the_day_and_category(lam, repo):
 
     repo.insert_or_reconcile([_fee_posted(lam)])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert len(store) == 1
     row = next(iter(store.values()))
     assert row["date"] == "2026-09-27"
@@ -999,7 +1070,7 @@ def test_same_day_tip_twin_beats_a_skewed_fee_twin(lam, repo):
 
     repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-51.00"))])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_fee_posted(lam))
     assert (acc, "TXN#SAMEDAY") not in store
     assert (acc, "TXN#NEXTDAY") in store
@@ -1015,7 +1086,7 @@ def test_exact_skew_twin_beats_fee_candidate_across_the_batch(lam, repo):
 
     repo.insert_or_reconcile([fee_first, exact_later])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(fee_first)
     assert (acc, "TXN#PEND") not in store
     assert len(store) == 2
@@ -1034,7 +1105,7 @@ def test_exact_twin_beats_skew_candidate_across_the_batch(lam, repo):
 
     repo.insert_or_reconcile([skew_first, exact_later])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(skew_first)
     assert (acc, "TXN#PEND") not in store
     assert store[(acc, "TXN#X")]["category"] == "coffee"   # exact twin won the pending
@@ -1053,7 +1124,7 @@ def test_skew_posting_wins_a_pending_contested_by_a_blank_auth_posting(lam, repo
 
     repo.insert_or_reconcile([loose, tight])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(tight)
     assert (acc, "TXN#PEND") not in store                      # claimed exactly once
     assert store[(acc, "TXN#TIGHT")]["category"] == "coffee"   # tighter tier won it
@@ -1094,7 +1165,7 @@ def test_skew_merge_reconciles_a_refund_pair(lam, repo):
 
     repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("11.00"))])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_skew_posted(lam))
     assert (acc, "TXN#PEND") not in store
     assert len(store) == 1
@@ -1110,7 +1181,7 @@ def test_skew_tier_never_takes_a_refund_pending_for_a_purchase(lam, repo):
 
     repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-11.00"))])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_skew_posted(lam))
     assert (acc, "TXN#ZZZ_SPEND") not in store      # the purchase's twin was consumed
     assert (acc, "TXN#AAA_REFUND") in store         # the refund is untouched
@@ -1131,7 +1202,7 @@ def test_pending_resend_and_its_skewed_posting_in_one_payload_leave_one_row(lam,
 
     repo.insert_or_reconcile([_skew_posted(lam), resend])   # posted FIRST
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_skew_posted(lam))
     assert set(store) == {(acc, "TXN#POST")}        # exactly one row, the settled one
     assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
@@ -1194,7 +1265,7 @@ def test_one_word_merchant_skewed_pair_reconciles_and_keeps_the_melbourne_day(la
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_coles_posted(lam))
     assert (acc, "TXN#PEND") not in store
     assert len(store) == 1
@@ -1221,7 +1292,7 @@ def test_unusable_stored_merchant_name_is_recovered_from_the_anz_column(lam, rep
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    assert len(repo._table.store) == 1, f"{label}: pending twin left behind"
+    assert len(_txn_store(repo)) == 1, f"{label}: pending twin left behind"
 
 
 def test_missing_merchant_name_on_a_non_anz_row_still_never_merges(lam, repo):
@@ -1233,7 +1304,7 @@ def test_missing_merchant_name_on_a_non_anz_row_still_never_merges(lam, repo):
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 def test_one_word_merchant_still_does_not_tip_reconcile(lam, repo):
@@ -1243,7 +1314,7 @@ def test_one_word_merchant_still_does_not_tip_reconcile(lam, repo):
     repo.insert_or_reconcile([_coles_posted(lam, authorized_date="2026-07-21",
                                             amount=Decimal("-70.00"))])
 
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 def test_same_cleaned_merchant_edges(lam):
@@ -1307,7 +1378,7 @@ def test_gate_name_branch_reconciles_end_to_end(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") not in store          # twin reconciled — no double count
     assert len(store) == 1
@@ -1324,7 +1395,7 @@ def test_anz_column_overrides_a_stored_merchant_name_that_disagrees(lam, repo):
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    assert len(repo._table.store) == 2
+    assert len(_txn_store(repo)) == 2
 
 
 # --- Single-word merchants: adversarial gaps (QA) ----------------------------
@@ -1371,7 +1442,7 @@ def test_one_word_skew_merges_for_every_named_single_word_shop(lam, repo, label,
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") not in store, f"{label}: pending twin left behind"
     assert len(store) == 1, f"{label}: duplicated"
@@ -1422,7 +1493,7 @@ def test_multi_word_non_anz_pending_with_no_stored_name_still_reconciles(lam, re
 
     repo.insert_or_reconcile([posted])
 
-    assert len(repo._table.store) == 1
+    assert len(_txn_store(repo)) == 1
 
 
 def test_one_word_tie_break_takes_the_lowest_id_and_carries_only_its_fields(lam, repo):
@@ -1439,7 +1510,7 @@ def test_one_word_tie_break_takes_the_lowest_id_and_carries_only_its_fields(lam,
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_coles_posted(lam))
     assert (acc, "TXN#AAA") not in store            # lowest id, deterministically
     assert store[(acc, "TXN#ZZZ")]["notes"] == "birthday cake"
@@ -1494,7 +1565,7 @@ def test_reconcile_carries_budget_excluded_onto_posted(lam, repo):
     row = repo._table.store[(acc, "TXN#B")]
     assert row["budget_excluded"] is True            # override carried onto the posted
     assert (acc, "TXN#A") not in repo._table.store   # stale pending removed
-    assert len(repo._table.store) == 1               # no duplicate
+    assert len(_txn_store(repo)) == 1               # no duplicate
 
 
 def test_blank_auth_tie_break_consumes_lowest_transaction_id(lam, repo):
@@ -1510,7 +1581,7 @@ def test_blank_auth_tie_break_consumes_lowest_transaction_id(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#A1") not in store              # lowest id consumed via _select_twin
     assert (acc, "TXN#A2") in store                  # the other survives untouched
@@ -1661,7 +1732,7 @@ def test_batch_mixes_pending_resend_posted_resync_and_settlement(lam, repo):
     ]
     repo.insert_or_reconcile(batch)
 
-    store = repo._table.store
+    store = _txn_store(repo)
     assert store[(acc, "TXN#PR")]["category"] == "transport"
     assert store[(acc, "TXN#PR")]["notes"] == "uber to work"
     assert store[(acc, "TXN#RS")]["category"] == "weekly shop"

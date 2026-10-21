@@ -4,8 +4,8 @@ from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
-from constants import EVENT_MARKER_TTL_SECONDS, PENDING_LOOKBACK_DAYS, PENDING_STATUS
-from repository_base import conditional_write, db_errors, update_expression
+from constants import EVENT_MARKER_TTL_SECONDS, PENDING_LOOKBACK_DAYS, PENDING_STATUS, SETTLED_PENDING_TTL_SECONDS
+from repository_base import conditional_write, db_errors, logger, update_expression
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
@@ -13,6 +13,10 @@ from repository_transaction import (
     read_date_range_pages,
 )
 from spend import melbourne_today
+
+
+def _build_settled_pk(account_pk: str) -> str:
+    return f"SETTLED#{account_pk}"
 
 
 class TransactionRepository(_SharedTransactionRepository):
@@ -134,8 +138,13 @@ class TransactionRepository(_SharedTransactionRepository):
                     # to a plain insert when the row doesn't exist yet.
                     own_pk = _build_pk(txn["account_id"])
                     own_sk = _build_sk(txn["transaction_id"])
-                    if not self._update_bank_fields(own_pk, own_sk, txn, inherit_date_from=inherit_date_from):
-                        to_insert.append(txn)
+                    if self._update_bank_fields(own_pk, own_sk, txn, inherit_date_from=inherit_date_from):
+                        continue
+                    if txn.get("status") == PENDING_STATUS and self._pending_was_removed(txn):
+                        logger.info("skipped re-sent pending %s: settled or deleted while in flight",
+                                    txn["transaction_id"])
+                        continue
+                    to_insert.append(txn)
                 case ("settle", txn, twin):
                     fresh = self._refresh_carried_fields(twin)
                     to_insert.append(reconcile.settle(txn, fresh, is_unfiled))
@@ -144,7 +153,25 @@ class TransactionRepository(_SharedTransactionRepository):
 
         self.insert_transactions(to_insert)
         for pk, sk in plan.stale_pending_keys:
+            self.mark_settled(pk, sk)
             self.delete_pending_if_present(pk, sk)
+
+    def _pending_was_removed(self, txn: Transaction) -> bool:
+        """Whether a pending's row vanished because it was settled or deleted by the user (ABU-36).
+        Read consistently: the settle writes its marker before deleting the row, so a failed update
+        after that delete always sees the marker."""
+        account_id, transaction_id = txn["account_id"], txn["transaction_id"]
+        return (self.is_settled(account_id, transaction_id, consistent=True)
+                or self.is_deleted(account_id, transaction_id, consistent=True))
+
+    def mark_settled(self, pk: str, sk: str) -> None:
+        """Record that the pending at (pk, sk) was used up by its posted twin, so a re-send can't
+        bring it back (ABU-36). Written before the pending is deleted; expires via `expires_at`."""
+        self._put_marker(_build_settled_pk(pk), sk, SETTLED_PENDING_TTL_SECONDS, "mark settled")
+
+    def is_settled(self, account_id: str, transaction_id: str, *, consistent: bool = False) -> bool:
+        """True while the settled marker for this pending hasn't expired."""
+        return self._has_marker(_build_settled_pk(_build_pk(account_id)), transaction_id, consistent)
 
     def _refresh_carried_fields(self, twin: dict) -> dict:
         """Re-read a matched twin with ConsistentRead to close the race window (WHIT-513).

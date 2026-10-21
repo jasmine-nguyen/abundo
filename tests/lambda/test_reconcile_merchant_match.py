@@ -7,6 +7,8 @@ from decimal import Decimal
 
 import pytest
 
+from _deadletter_fakes import _txn_store
+
 pytestmark = pytest.mark.usefixtures("pinned_pending_lookback")
 
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
@@ -98,7 +100,7 @@ def test_the_tighter_tip_tier_claims_its_twin_before_the_skew_tier_can(lam, repo
 
     repo.insert_or_reconcile([_woolies_posted(lam)])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(_woolies_posted(lam))
     assert (acc, "TXN#T") not in store                 # the TRUE twin was claimed
     assert (acc, "TXN#S") in store                     # the separate purchase survives
@@ -138,7 +140,7 @@ def test_live_full_column_names_the_old_gate_missed_now_reconcile(lam, repo, col
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") not in store
     assert len(store) == 1
@@ -166,7 +168,7 @@ def test_the_remaining_live_containment_pairs_never_merge_on_an_anz_pending(lam,
 
     repo.insert_or_reconcile([posted])
 
-    store = repo._table.store
+    store = _txn_store(repo)
     acc = _acc(posted)
     assert (acc, "TXN#PEND") in store                       # the real pending survives
     assert store[(acc, "TXN#PEND")]["category"] == "theirs"

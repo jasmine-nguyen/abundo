@@ -16,9 +16,11 @@ from decimal import Decimal
 from functools import partial
 
 import pytest
+
 from _budget_alert_fakes import fail_nth_write, notify_repo, released_markers
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _category_fakes import transfer_tree
+from _deadletter_fakes import _txn_store
 from _dynamo_fakes import _client_error
 from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountPagesTransactionRepo, _AccountTransactionRepo
@@ -694,7 +696,7 @@ def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_r
     simulated = alerts.budget_alerts._simulate_after(ctx, [posted, resend])  # posted FIRST
     repo.insert_or_reconcile([posted, resend])
 
-    stored = list(repo._table.store.values())
+    stored = list(_txn_store(repo).values())
     assert sorted(r["transaction_id"] for r in simulated) == sorted(r["transaction_id"] for r in stored)
     assert [r["transaction_id"] for r in stored] == ["POST"]
 
