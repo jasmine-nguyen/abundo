@@ -1983,8 +1983,8 @@ def test_abu108_one_posted_absorbs_only_one_of_two_identical_pendings(lam, repo)
 
 
 def test_abu108_a_posted_claimed_by_another_message_mid_write_keeps_the_pending(lam, repo):
-    # Another message linked the posted row after this one read it. The marker is written before
-    # the claim, so the pending is still saved, and a marker on a saved pending is harmless.
+    # Another message linked the posted row after this one read it, so the pending is saved and
+    # its marker dropped.
     posted = _seed_pending(repo, lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
 
     def link_by_another_message(key, table):
@@ -1997,7 +1997,50 @@ def test_abu108_a_posted_claimed_by_another_message_mid_write_keeps_the_pending(
     store = _txn_store(repo)
     assert (_acc(posted), "TXN#PEND") in store
     assert store[(_acc(posted), "TXN#POST")]["pending_transaction_id"] == "OTHER"
-    assert _settled_marker(repo, posted, "PEND") is not None
+    assert _settled_marker(repo, posted, "PEND") is None
+
+
+def _fail_first_insert(repo, monkeypatch):
+    real_insert = repo.insert_transactions
+
+    def fail_once(rows):
+        monkeypatch.setattr(repo, "insert_transactions", real_insert)
+        raise RuntimeError("write failed")
+    monkeypatch.setattr(repo, "insert_transactions", fail_once)
+
+
+def test_abu108_a_lost_claim_whose_save_fails_saves_the_pending_on_retry(lam, repo, monkeypatch):
+    # A marker left on the pending after a lost claim would make the bank's retry skip it.
+    posted = _seed_pending(repo, lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+
+    def link_by_another_message(key, table):
+        if key["sk"] == "TXN#POST":
+            table.store[(key["pk"], key["sk"])]["pending_transaction_id"] = "OTHER"
+    repo._table.before_write(link_by_another_message)
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True)
+    _fail_first_insert(repo, monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        repo.insert_or_reconcile([pending])
+    repo.insert_or_reconcile([pending])
+
+    assert (_acc(posted), "TXN#PEND") in _txn_store(repo)
+
+
+def test_abu108_a_retried_message_still_links_its_posted(lam, repo, monkeypatch):
+    # The first try marks the pending settled, then fails to save the posted row. The retry must
+    # still link it, or it could hide a later same-day identical charge.
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True)
+    _fail_first_insert(repo, monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        repo.insert_or_reconcile([pending, posted])
+    repo.insert_or_reconcile([pending, posted])
+
+    store = _txn_store(repo)
+    assert list(store) == [(_acc(posted), "TXN#POST")]
+    assert store[(_acc(posted), "TXN#POST")]["pending_transaction_id"] == "PEND"
 
 
 def test_abu108_a_settled_posted_keeps_its_link_through_bank_resends(lam, repo):

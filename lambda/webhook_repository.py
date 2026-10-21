@@ -143,12 +143,16 @@ class TransactionRepository(_SharedTransactionRepository):
                     if not self._resave(txn, inherit_date_from):
                         to_insert[txn["transaction_id"]] = txn
                 case ("absorb", txn, posted_id, stored_posted):
-                    if self._resave(txn, None):
+                    own_pk, own_sk = _build_pk(txn["account_id"]), _build_sk(txn["transaction_id"])
+                    # Only its own saved row stops the absorb. A marker alone (a retry of a failed
+                    # write) still absorbs, so the posted row keeps its link.
+                    if self._update_bank_fields(own_pk, own_sk, txn):
                         continue
-                    # Marked before the claim: a marker on a pending that ends up saved is
-                    # harmless, but a claim with no marker would let a retry save it twice.
-                    self.mark_settled(_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"]))
+                    # Marked before the claim: a claim with no marker would let a retry save it twice.
+                    self.mark_settled(own_pk, own_sk)
                     if stored_posted is not None and not self._claim_posted(stored_posted, txn["transaction_id"]):
+                        # It is saved after all: a leftover marker would make a retry skip it.
+                        self.unmark_settled(own_pk, own_sk)
                         to_insert[txn["transaction_id"]] = txn
                         continue
                     if stored_posted is None:
@@ -206,6 +210,11 @@ class TransactionRepository(_SharedTransactionRepository):
         """Record that the pending at (pk, sk) was used up by its posted twin, so a re-send can't
         bring it back (ABU-36). Written before the pending is deleted; expires via `expires_at`."""
         self._put_marker(_build_settled_pk(pk), sk, SETTLED_PENDING_TTL_SECONDS, "mark settled")
+
+    def unmark_settled(self, pk: str, sk: str) -> None:
+        """Drop the settled marker of a pending that ended up saved after all (ABU-108)."""
+        with db_errors("unmark settled"):
+            self._get_table().delete_item(Key={"pk": _build_settled_pk(pk), "sk": sk})
 
     def is_settled(self, account_id: str, transaction_id: str, *, consistent: bool = False) -> bool:
         """True while the settled marker for this pending hasn't expired."""
