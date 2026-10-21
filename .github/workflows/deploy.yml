@@ -19,7 +19,7 @@ on:
       - "**/requirements*.txt"
       - "scripts/build_terraform_artifacts.sh"
       - ".github/workflows/deploy.yml"
-  workflow_dispatch: # the deploy gate: apply runs only when you click Run workflow (use branch main)
+  workflow_dispatch: # the deploy gate: apply runs only when you click Run workflow; a non-main run is refused at the AWS login
 
 # One run per ref, and NEVER cancel an in-flight apply — a killed apply can leave
 # state locked or half-applied.
@@ -112,8 +112,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # Unprotected env — kept because the OIDC token's subject only carries
-    # :environment:production when the job declares this environment, and the apply
-    # role's trust is pinned to that subject. The manual trigger is the gate.
+    # :environment:production when the job declares this environment. The subject
+    # also carries :ref:refs/heads/main, and the apply role's trust is pinned to
+    # both, so only a run from main can log in. The manual trigger is the gate.
     environment: production
     steps:
       - uses: actions/checkout@v4

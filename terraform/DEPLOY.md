@@ -57,7 +57,9 @@ terraform apply
   for newer repos in an *immutable* form carrying numeric owner/repo ids
   (`repo:owner@<owner_id>/name@<repo_id>:...`) instead of the plain name
   (`repo:owner/name:...`). The CI role trust accepts **both** forms, so the login
-  works either way. The ids live in `github_owner_id` / `github_repo_id`
+  works either way. The repo's login-ID template also adds the run's branch as a
+  `:ref:` suffix (ABU-96): a PR run is `...:pull_request:ref:refs/pull/<n>/merge`, a
+  deploy is `...:environment:production:ref:refs/heads/main`. The ids live in `github_owner_id` / `github_repo_id`
   (`bootstrap/variables.tf`); the committed defaults are this repo's. For a
   different repo, read them with `gh api users/<owner> -q .id` and
   `gh api repos/<owner>/<repo> -q .id`.
@@ -69,7 +71,7 @@ terraform apply
   do, the CI plan job stays red with `Not authorized to perform
   sts:AssumeRoleWithWebIdentity`. The plan role is proven by the next PR preview;
   the apply role's immutable subject is inferred (same repo prefix +
-  `:environment:production`) — confirm it on your first manual deploy (the
+  `:environment:production:ref:refs/heads/main`) — confirm it on your first manual deploy (the
   apply job logs in without `AccessDenied`, or check the CloudTrail
   `AssumeRoleWithWebIdentity` event's `userName`).
 
@@ -149,10 +151,9 @@ gh api repos/jasmine-nguyen/abundo/environments/production -q '.protection_rules
 # manual button in step 8, plus: only you (with Actions write access) can press it.
 ```
 
-- **`main` only is by convention.** Branch-restriction is part of the same
-  Enterprise-only protection feature, so we can't enforce it. The apply role's trust
-  is pinned to `environment:production` but not to a branch → the Run-workflow menu
-  lets you pick any branch. **Always run it from `main`.**
+- **`main` only is enforced** by the apply role's trust plus the repo's login-ID
+  template (ABU-96): the trust only accepts `...:environment:production:ref:refs/heads/main`,
+  so a Run workflow from any other branch is refused at the AWS login step.
 - The name must be exactly `production` (pinned in the apply role's trust and `deploy.yml`).
 
 ### 5. Generate + commit the provider lock files (multi-platform) — MANDATORY
@@ -274,3 +275,33 @@ Terraform (`removed` blocks), so their values stop landing in state. Roll out in
 
 Doing step 2 first breaks PR previews until step 1 runs (the plan would try to read the
 SSM values and get denied).
+
+### Main-only deploy login (ABU-96) — rollout order
+
+The apply role's trust only accepts a login ID ending in
+`:environment:production:ref:refs/heads/main`. GitHub only puts the branch in the
+login ID once the repo's login-ID template includes `ref`. Roll out in this order:
+
+1. Merge.
+2. On your Mac: `cd terraform/bootstrap && terraform plan && terraform apply`. Expect
+   **exactly 2 in-place role updates** (`github_plan` and `github_apply`).
+3. Straight away, switch the repo's login-ID template, then verify:
+
+   ```bash
+   gh api --method PUT repos/jasmine-nguyen/abundo/actions/oidc/customization/sub \
+     -F use_default=false \
+     -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=ref'
+   gh api repos/jasmine-nguyen/abundo/actions/oidc/customization/sub
+   # expect use_default: false and include_claim_keys: ["repo","context","ref"]
+   ```
+
+4. Open or push a PR touching `terraform/` and check the preview logs in.
+5. **Run workflow** from `main` and check the apply logs in.
+6. **Run workflow** from a non-main branch and confirm the apply job fails at
+   Configure AWS credentials with `Not authorized to perform sts:AssumeRoleWithWebIdentity`.
+
+Between steps 2 and 3 both logins (preview and deploy) are refused: AWS expects the
+branch in the login ID, and GitHub doesn't send it yet. Do step 3 right after step 2.
+
+**Undo:** `gh api --method PUT repos/jasmine-nguyen/abundo/actions/oidc/customization/sub -F use_default=true`,
+then check out the previous bootstrap and re-run `terraform apply` in `terraform/bootstrap`.
