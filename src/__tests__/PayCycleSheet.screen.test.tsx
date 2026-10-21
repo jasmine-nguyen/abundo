@@ -16,7 +16,9 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { queryClient } from '../queryClient';
+import { payCycleKey } from '../queryKeys';
 import { openOverlays } from './support/openOverlays';
 import { renderedPickerProps } from './support/mockDatePicker';
 
@@ -92,7 +94,7 @@ describe('first load', () => {
     expect(screen.getByTestId('paycycle-loading')).toBeTruthy();
     expect(screen.queryByText('Weekly')).toBeNull();
     expect(screen.queryByTestId('mock-datepicker')).toBeNull();
-    await act(async () => { held.release(); });
+    await refreshInAct(() => held.release());
   });
 
   it('shows an error with Try again, and no options, when the first load fails', async () => {
@@ -110,5 +112,15 @@ describe('first load', () => {
     await screen.findByTestId('paycycle-error');
     await act(async () => { fireEvent.press(screen.getByTestId('paycycle-retry')); });
     await waitFor(() => expect(isTicked('Monthly')).toBe(true));
+  });
+
+  // [A4] A failed background refresh over a loaded cycle must keep the controls, not swap them for the error.
+  it('keeps the options when a refresh fails after the pay cycle has loaded', async () => {
+    await openPayCycle(30);
+    server.fail('/paycycle', 500);
+    await refreshInAct(() => queryClient.refetchQueries({ queryKey: payCycleKey }));
+    expect(queryClient.getQueryState(payCycleKey)?.status).toBe('error');
+    expect(screen.queryByTestId('paycycle-error')).toBeNull();
+    expect(isTicked('Monthly')).toBe(true);
   });
 });
