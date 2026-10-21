@@ -91,22 +91,44 @@ def _select_twin(pool: list[dict], predicate: Callable[[dict], bool]) -> Optiona
     return _pop_lowest_id(pool, candidates)
 
 
-def _find_exact_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
-    """Return AND consume the pending row that is an EXACT twin of `posted_txn`
-    (link, then same authorized_date + exact amount), or None. `pool` is the account's
-    pending rows, so the caller never gets an unverified key. Consumed rows are popped.
-    """
-    # 1. Exact link (forward-compat; pending_transaction_id is null today). The
-    #    pool IS the full account pending scan, so a link not in it means the
-    #    pending is already gone -> fall through to the heuristic, never a
-    #    fabricated key.
+def _find_exact_same_shop_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
+    """Return AND consume the exact twin (link, then same authorized_date + exact
+    amount) whose merchant also matches `posted_txn`, or None (ABU-49). Runs as its
+    own pass before the merchant-blind `_find_exact_twin`, so when two shops share a
+    day and amount each posting claims its own shop's pending regardless of batch
+    order. The merchant is only a preference here, never a gate: whatever this pass
+    leaves, `_find_exact_twin` still merges, because a strict gate would orphan
+    pendings whose descriptors differ and double-count their spend."""
+    # Exact link (forward-compat; pending_transaction_id is null today). The pool IS
+    # the full account pending scan, so a link not in it means the pending is already
+    # gone -> fall through to the heuristic, never a fabricated key.
     link_id = posted_txn.get("pending_transaction_id")
     if link_id:
         for i, item in enumerate(pool):
             if item.get("transaction_id") == link_id:
                 return pool.pop(i)
+    authorized_date = posted_txn.get("authorized_date")
+    if not authorized_date:
+        return None
+    amount = posted_txn.get("amount")
+    merchant = posted_txn.get("merchant_name") or ""
+    return _select_twin(
+        pool,
+        lambda item: item.get("authorized_date") == authorized_date
+        and item.get("amount") == amount
+        and merchant_matches_pending(merchant, item.get("merchant_name") or "",
+                                     item.get("description") or ""),
+    )
 
-    # 2. Heuristic: same authorized_date + EXACT amount (account already scoped by
+
+def _find_exact_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
+    """Return AND consume the pending row that is an EXACT twin of `posted_txn`
+    (same authorized_date + exact amount, any merchant), or None. `pool` is the
+    account's pending rows, so the caller never gets an unverified key. Consumed rows
+    are popped. The exact link is handled by `_find_exact_same_shop_twin`, which runs
+    first over the same pool.
+    """
+    # Heuristic: same authorized_date + EXACT amount (account already scoped by
     #    the pool). Skip when authorized_date is missing — matching on amount alone
     #    is too loose. authorized_date is USUALLY preserved across settlement, so it
     #    discriminates identical daily purchases. When it isn't — ANZ dates the
@@ -345,12 +367,13 @@ def match_all(
     """
     matches: list[Optional[dict]] = [None] * len(posted_txns)
     unmatched = list(range(len(posted_txns)))
-    # Tightest gate first: exact date+amount, then a tip on the same day, then a
-    # date split one day by the Melbourne/UTC clocks, then that same split with a
-    # small fee folded in, then the loosest (no swipe date at all, matched within a
-    # FEED_WINDOW_DAYS window).
-    for find_twin in (_find_exact_twin, _find_tip_twin, _find_skewed_auth_twin,
-                      _find_skewed_fee_twin, _find_blank_auth_twin):
+    # Tightest gate first: exact date+amount at the same shop, then exact date+amount
+    # at any shop, then a tip on the same day, then a date split one day by the
+    # Melbourne/UTC clocks, then that same split with a small fee folded in, then the
+    # loosest (no swipe date at all, matched within a FEED_WINDOW_DAYS window).
+    for find_twin in (_find_exact_same_shop_twin, _find_exact_twin, _find_tip_twin,
+                      _find_skewed_auth_twin, _find_skewed_fee_twin,
+                      _find_blank_auth_twin):
         still: list[int] = []
         for i in unmatched:
             pool = pending_pools.get(posted_txns[i]["account_id"], [])
