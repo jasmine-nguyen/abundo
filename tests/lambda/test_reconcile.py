@@ -638,6 +638,70 @@ def test_multiple_exact_twins_each_consumed_once(lam, repo):
     assert len(store) == 2                                  # both consumed once, no ghost
 
 
+_SHOP_X = "BLUE DOOR BOOKS"
+_SHOP_Y = "GREEN LEAF CAFE"
+
+
+def test_exact_tier_prefers_same_shop_pending(lam, repo):
+    # ABU-49: two different shops, same day, same amount. The lowest id (A1, shop X) must
+    # not win when the posted charge names shop Y.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"), pending=True,
+                  category="books", description=_SHOP_X, merchant_name=_SHOP_X)
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"), pending=True,
+                  category="coffee", description=_SHOP_Y, merchant_name=_SHOP_Y)
+    posted = _norm(lam, txn_id="P", amount=Decimal("-5.50"), pending=False,
+                   category="FOOD_AND_DRINK", description=_SHOP_Y, merchant_name=_SHOP_Y)
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert store[(acc, "TXN#P")]["category"] == "coffee"
+    assert (acc, "TXN#A2") not in store
+    assert store[(acc, "TXN#A1")]["category"] == "books"
+
+
+def test_exact_tier_still_merges_when_no_pending_shop_matches(lam, repo):
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"), pending=True,
+                  category="books", description=_SHOP_X, merchant_name=_SHOP_X)
+    posted = _norm(lam, txn_id="P", amount=Decimal("-5.50"), pending=False,
+                   category="FOOD_AND_DRINK", description=_SHOP_Y, merchant_name=_SHOP_Y)
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert store[(acc, "TXN#P")]["category"] == "books"
+    assert (acc, "TXN#A") not in store
+    assert len(store) == 1
+
+
+def test_exact_tier_same_shop_wins_regardless_of_batch_order(lam, repo):
+    # Posted X's descriptor fails the merchant gate against X2, and it comes first in the
+    # batch. It must not take Y1 (the lowest id) from posted Y, which names Y1's shop.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"), pending=True,
+                  category="coffee", description=_SHOP_Y, merchant_name=_SHOP_Y)
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"), pending=True,
+                  category="books", description=_SHOP_X, merchant_name=_SHOP_X)
+    batch = [
+        _norm(lam, txn_id="PX", amount=Decimal("-5.50"), pending=False,
+              category="FOOD_AND_DRINK", description="BLUEDOOR BOOKSTORE",
+              merchant_name="BLUEDOOR BOOKSTORE"),
+        _norm(lam, txn_id="PY", amount=Decimal("-5.50"), pending=False,
+              category="FOOD_AND_DRINK", description=_SHOP_Y, merchant_name=_SHOP_Y),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#PY")]["category"] == "coffee"
+    assert store[(acc, "TXN#PX")]["category"] == "books"
+    assert (acc, "TXN#A1") not in store
+    assert (acc, "TXN#A2") not in store
+    assert len(store) == 2
+
+
 # --- direct locks on the new pure helpers -----------------------------------
 
 

@@ -170,7 +170,8 @@ def _merchant_gate(merchant: str, pending_merchant: str, description: str) -> Op
     skewed-date merge log's gate= label; deriving both from this one return value is why
     they cannot drift (WHIT-338).
 
-    Shared by every heuristic tier that matches on a merchant — tip, skewed-date,
+    Shared by every heuristic tier that matches on a merchant — exact same-shop (a
+    preference pass before the merchant-blind exact tier, ABU-49), tip, skewed-date,
     skewed-fee and blank-auth. They MUST share it. The tiers run tightest-first so a tighter tier always
     claims its twin before a looser one can reach it, and that ordering silently inverts
     if one tier can recognise a merchant the tiers above it cannot: the loosest tier then
@@ -224,6 +225,7 @@ def _merchant_gate(merchant: str, pending_merchant: str, description: str) -> Op
 
 def merchant_matches_pending(merchant: str, pending_merchant: str, description: str) -> bool:
     """Whether a posted merchant names the same shop as a pending row — the bool view of
-    `_merchant_gate` (which branch matched). Shared by the tip, skewed-date, skewed-fee
-    and blank-auth tiers; see `_merchant_gate` for the full rationale."""
+    `_merchant_gate` (which branch matched). Shared by the exact same-shop pass (which
+    runs before the merchant-blind exact tier), tip, skewed-date, skewed-fee and
+    blank-auth tiers; see `_merchant_gate` for the full rationale."""
     return _merchant_gate(merchant, pending_merchant, description) is not None
