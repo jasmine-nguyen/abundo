@@ -2,10 +2,16 @@
 
 import logging
 
+from constants import PENDING_STATUS
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-SKIP_LOG = {"zero": "$0.00 transaction(s)", "deleted": "re-sent transaction(s) the user deleted"}
+SKIP_LOG = {
+    "zero": "$0.00 transaction(s)",
+    "deleted": "re-sent transaction(s) the user deleted",
+    "settled": "re-sent pending(s) already settled",
+}
 
 
 def skip_reason(repo, transaction) -> str | None:
@@ -14,11 +20,16 @@ def skip_reason(repo, transaction) -> str | None:
     A $0.00 row is information only (WHIT-705): e.g. Westpac's "FOREIGN FEE" rows, whose real fee
     is already folded into the purchase. A charge the user deleted must not come back through a
     BankSync re-send or a retry run (WHIT-654). $0 is checked first to save a database read.
+    A pending its posted twin already settled must not come back either, or both count (ABU-36);
+    only pendings are checked, since the settled marker only ever names a used-up pending.
     """
     if transaction["amount"] == 0:
         return "zero"
     if repo.is_deleted(transaction["account_id"], transaction["transaction_id"]):
         return "deleted"
+    if transaction.get("status") == PENDING_STATUS and repo.is_settled(
+            transaction["account_id"], transaction["transaction_id"]):
+        return "settled"
     return None
 
 

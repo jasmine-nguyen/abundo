@@ -41,7 +41,8 @@ def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
     delivery. The rules + taxonomy are read ONCE for the whole sweep, not per row.
     """
     rows = repo.get_failed_transactions()
-    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0,
+               "dropped_settled": 0}
 
     book = rule_ingest.load_rules(rule_repo, category_repo)
     is_unfiled = None

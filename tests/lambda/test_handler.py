@@ -247,6 +247,25 @@ def test_a_repeated_posted_row_settles_one_pending_and_leaves_the_other(lam, mon
     assert ("ACCOUNT#up-spending", "TXN#B") in store
 
 
+def test_a_pending_resent_after_its_settlement_is_not_brought_back(lam, monkeypatch):
+    # ABU-36: posted P settles (and deletes) pending A; a later re-send of A must not re-create
+    # it, or A and P both count toward spend.
+    from datetime import date
+    monkeypatch.setattr(lam.repository, "melbourne_today", lambda: date(2026, 10, 13))
+    repo = _ingest_repo(lam, monkeypatch)
+    posted = _delivery_row("P", _UP_SPENDING)
+    pending = {**posted, "id": "A", "pending": True}
+    repo.insert_transactions([lam.banksync.normalise(pending)])
+
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_settle", "data": [posted]})
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_resend", "data": [pending]})
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+
+    transaction_keys = [key for key in repo._table.store if key[0].startswith("ACCOUNT#")]
+    assert transaction_keys == [("ACCOUNT#up-spending", "TXN#P")]
+
+
 def test_a_repeated_row_keeps_the_last_copy(lam, monkeypatch):
     repo = _ingest_repo(lam, monkeypatch)
     first = {**_delivery_row("p1", _UP_SPENDING), "pending": True, "amount": "-5.50"}

@@ -8,8 +8,10 @@ from decimal import Decimal
 from functools import partial
 
 import pytest
+
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _deadletter_fakes import _txn_store
 from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountTransactionRepo
 
@@ -91,7 +93,7 @@ def test_resend_of_an_unfiled_stored_row_does_not_count_the_incoming_category(al
 
     sent, notify, ctx = _fire(alerts, monkeypatch, repo, before, [resend])
 
-    ledger = list(repo._table.store.values())
+    ledger = list(_txn_store(repo).values())
     assert [r.get("category") for r in ledger] == [None]           # the real save kept it unfiled
     assert sent == []
     assert notify.fired_markers("2026-07-01", 14) == set()
@@ -125,6 +127,6 @@ def test_preview_rows_equal_the_real_save_on_a_mixed_batch(alerts, repo, monkeyp
     ]
     _, _, ctx = _fire(alerts, monkeypatch, repo, before, batch)
 
-    ledger = list(repo._table.store.values())
+    ledger = list(_txn_store(repo).values())
     assert sorted(r["transaction_id"] for r in ledger) == ["NEW", "OP", "RS", "SET"]
     assert _view(alerts.budget_alerts._simulate_after(ctx, batch)) == _view(ledger)

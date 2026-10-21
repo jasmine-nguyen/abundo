@@ -236,11 +236,11 @@ class TransactionRepository(RepositoryBase):
             ConditionExpression="attribute_exists(pk) AND #s = :pending",
         ))
 
-    def is_deleted(self, account_id: str, transaction_id: str) -> bool:
+    def is_deleted(self, account_id: str, transaction_id: str, *, consistent: bool = False) -> bool:
         """True while the user's "deleted by you" marker for this transaction hasn't expired."""
         key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
         with db_errors("read"):
-            return "Item" in self._get_table().get_item(Key=key)
+            return "Item" in self._get_table().get_item(Key=key, ConsistentRead=consistent)
 
     def mark_bank_synced(self, account_ids, now: int) -> None:
         """Record epoch seconds `now` as each account's latest bank delivery (plain put)."""

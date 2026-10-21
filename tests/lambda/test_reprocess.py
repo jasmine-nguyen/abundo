@@ -56,7 +56,7 @@ def test_reprocess_recovers_and_deletes_the_failed_row(lam, repo):
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     # The transaction is now stored under its ACCOUNT#/TXN# keys...
     assert any(k[1] == "TXN#r1" for k in _txn_keys(repo))
     # ...and the dead-letter row is gone.
@@ -72,7 +72,7 @@ def test_reprocess_recovers_a_readded_westpac_row_under_its_internal_account(lam
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert ("ACCOUNT#westpac-altitude-qantas-black", "TXN#wbc1") in _txn_keys(repo)
     assert _failed_keys(repo) == []
 
@@ -92,7 +92,7 @@ def test_reprocess_recovers_a_row_missing_its_category(lam, repo):
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert any(k[1] == "TXN#nocat" for k in _txn_keys(repo))
     assert _failed_keys(repo) == []
 
@@ -103,7 +103,7 @@ def test_still_unmapped_account_is_skipped_and_survives(lam, repo):
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert len(_failed_keys(repo)) == 1          # survives for a later run
     assert _txn_keys(repo) == []                 # nothing inserted
 
@@ -120,7 +120,7 @@ def test_an_unrecoverable_row_is_skipped_and_kept(lam, repo, raw):
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert ("FAILED", "poison") in repo._table.store
     assert _txn_keys(repo) == []
 
@@ -140,7 +140,7 @@ def test_insert_failure_leaves_failed_row_and_counts_error(lam, repo, monkeypatc
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert len(_failed_keys(repo)) == 1                 # NOT deleted
     assert _txn_keys(repo) == []
 
@@ -173,14 +173,14 @@ def test_delete_failure_after_insert_counts_error_and_rerun_is_safe(lam, repo, m
     monkeypatch.setattr(repo, "delete_failed_transaction", boom)
     first = reprocess_failed(lam.reprocess, repo)
 
-    assert first == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0}
+    assert first == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert any(k == "TXN#r1" for k in _txn_rows(repo))  # insert DID land
     assert len(_failed_keys(repo)) == 1                          # dead-letter NOT deleted
 
     monkeypatch.undo()
     second = reprocess_failed(lam.reprocess, repo)
 
-    assert second == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert second == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert len([k for k in _txn_rows(repo) if k == "TXN#r1"]) == 1
     assert _failed_keys(repo) == []
 
@@ -198,7 +198,20 @@ def test_a_charge_the_user_deleted_stays_deleted_after_a_recovery_run(lam, repo)
 
     assert "TXN#r1" not in _txn_rows(repo)
     assert _failed_keys(repo) == []
-    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 1}
+    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 1, "dropped_settled": 0}
+
+
+def test_a_parked_pending_that_has_since_settled_is_cleared_not_stored(lam, repo):
+    # ABU-36: its posted twin already used the pending up, so storing it would count it twice.
+    pending = lam.banksync.normalise(_raw_row(txn_id="r1", pending=True))
+    repo.mark_settled(f"ACCOUNT#{pending['account_id']}", "TXN#r1")
+    repo.save_failed_transactions([_raw_row(txn_id="r1", pending=True)])
+
+    summary = reprocess_failed(lam.reprocess, repo)
+
+    assert "TXN#r1" not in _txn_rows(repo)
+    assert _failed_keys(repo) == []
+    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 1}
 
 
 def test_a_failed_deleted_by_you_check_leaves_the_row_parked_and_stores_nothing(lam, repo):
@@ -209,7 +222,7 @@ def test_a_failed_deleted_by_you_check_leaves_the_row_parked_and_stores_nothing(
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert _txn_keys(repo) == []
     assert len(_failed_keys(repo)) == 1
 
@@ -226,7 +239,7 @@ def test_multi_page_backlog_with_mixed_outcomes(lam, repo):
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert summary == {"reprocessed": 2, "skipped": 3, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 2, "skipped": 3, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert summary["reprocessed"] + summary["skipped"] + summary["errors"] == 5
     stored = _txn_rows(repo)
     assert "TXN#ok0" in stored and "TXN#ok1" in stored   # both recovered across pages
@@ -242,7 +255,7 @@ def test_lambda_handler_serialises_the_real_summary(lam, repo, monkeypatch):
     resp = lam.reprocess.lambda_handler({"ignored": True}, None)
 
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert json.loads(resp["body"]) == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     assert _failed_keys(repo) == []
 
 
@@ -258,7 +271,7 @@ def test_reprocess_with_an_unreadable_rule_book_still_recovers_every_row_unfiled
     summary = lam.reprocess.reprocess_failed(
         repo, rule_repo=FakeRuleStore(error=True), category_repo=FakeCategoryRepo(["groceries"]))
 
-    assert summary == {"reprocessed": 2, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0}
+    assert summary == {"reprocessed": 2, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 0}
     rows = _txn_rows(repo)
     assert rows["TXN#r1"]["category"] == "FOOD_AND_DRINK"
     assert rows["TXN#r2"]["category"] == "FOOD_AND_DRINK"
