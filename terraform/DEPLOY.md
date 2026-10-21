@@ -156,23 +156,23 @@ gh api repos/jasmine-nguyen/abundo/environments/production -q '.protection_rules
   so a Run workflow from any other branch is refused at the AWS login step.
 - The name must be exactly `production` (pinned in the apply role's trust and `deploy.yml`).
 
-### 5. Generate + commit the provider lock files (multi-platform) — MANDATORY
+### 5. Provider lock files (committed) and upgrading a provider
 
 The deploy runs non-interactively (no prompt to pin a version mid-run), so provider
-versions must be **pinned** (not re-resolved from `~> 6.0` every run). CI runs on Linux
-and your Mac isn't, so generate the lock for
-both platforms. **The PR2 branch the assistant pushes does NOT contain these lock
-files — you generate them here and commit them onto the PR2 branch before merge**
-(the assistant's sandbox can't reach the provider registry). CI's first `init` works
-without them; committing them pins every run after.
+versions must be **pinned** (not re-resolved from `~> 6.0` every run). Both lock files
+(`terraform/.terraform.lock.hcl` and `terraform/bootstrap/.terraform.lock.hcl`) are
+committed, with hashes for Linux (CI) and both Mac types (ABU-52).
+
+CI runs `terraform init -lockfile=readonly`, so it never picks a new version on its own:
+if the lock file doesn't match `providers.tf`, CI fails at init until you update it.
+
+**Upgrading a provider** (on your Mac):
 
 ```bash
-cd terraform             && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
-cd ../terraform/bootstrap && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
-# then commit BOTH terraform/.terraform.lock.hcl and terraform/bootstrap/.terraform.lock.hcl onto the PR2 branch
+cd terraform             && terraform init -backend=false -upgrade && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
+cd ../terraform/bootstrap && terraform init -backend=false -upgrade && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
+# then commit the changed .terraform.lock.hcl file(s) and read the CI preview plan before deploying
 ```
-
-(You'll actually run this during step 6, once you've checked out the PR2 branch.)
 
 ---
 
@@ -184,7 +184,7 @@ as literals; **bucket** supplied at init via `-backend-config` from the
 that stops ignoring the lock files, and `scripts/build_terraform_artifacts.sh` — the
 one recipe the workflow runs to rebuild the gitignored lambda/layer bundles before
 Terraform (CI can't rely on Terraform's own build steps re-firing against remote
-state). You add the committed lock files (step 5) onto the branch.
+state). The provider lock files are already committed (step 5).
 
 ### 6. Migrate state onto the PR2 branch (on your Mac)
 
@@ -210,13 +210,13 @@ What must be true: **zero destroys**, and **zero changes to real AWS resources**
 `aws_cognito_identity_provider.google` or `aws_sns_topic_subscription.alerts_email` —
 means a `TF_VAR_*` from step 3 is missing locally; stop and fix it.
 
-Then generate + commit the lock files (step 5) and push the branch.
+Then push the branch.
 
 ### 7. Read the CI preview before you merge — the real destroy-guard
 
 Merging no longer deploys anything, but the preview is still what proves **CI** holds
 the secrets before your first manual deploy. Your local `plan` used **your Mac's**
-secrets; the **preview plan comment** the workflow posts after your migrate + lock
+secrets; the **preview plan comment** the workflow posts after your migrate +
 push is the one that used CI's:
 
 - Expected: the three `null_resource.prepare_*` replaced (benign, as above), and

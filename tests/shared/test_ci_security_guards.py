@@ -161,3 +161,11 @@ def test_plan_role_trusts_only_pull_requests():
 def test_trust_pins_the_audience(role):
     # [A3] moving sub into StringLike must not drag aud along or drop it.
     assert '"token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"' in _trust_conditions(role)["StringEquals"]
+
+
+def test_deploy_init_reuses_the_committed_provider_versions():
+    # [A1] ABU-52 decision A: CI's init must stop on a lock mismatch, never pick new provider versions.
+    inits = re.findall(r"terraform -chdir=\S+ init\b.*", (WORKFLOWS_DIR / "deploy.yml").read_text())
+    assert len(inits) == 2, "expected the plan and apply jobs' init steps"
+    for init in inits:
+        assert "-lockfile=readonly" in init.split(), f"init can pick new provider versions: {init}"
