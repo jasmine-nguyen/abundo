@@ -662,6 +662,6 @@ def test_slow_hold_survives_the_sweep_and_settles_with_its_filing(lam, repo, mon
     posted = _norm(lam, "hotel_settled", (_TODAY - timedelta(days=1)).isoformat(), pending=False, amount=-320.00,
                    description="HOTEL GRAND", category=None)
     posted["authorized_date"] = hold["authorized_date"] if posted_authorized_date == "same" else None
-    repo.insert_or_reconcile([posted], pending_pools=repo.get_pending_pools([posted]))
+    repo.insert_or_reconcile([posted], pools=repo.get_match_pools([posted]))
 
     assert [(r["status"], r.get("category")) for r in _rows(repo).values()] == [("posted", "groceries")]
