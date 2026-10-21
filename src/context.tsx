@@ -628,6 +628,8 @@ function categoryInput(form: CategoryForm, name: string) {
 
 const Ctx = createContext<AppContext | null>(null);
 
+const PAY_CYCLE_SAVE_FAILED = 'Could not save pay cycle. Please try again.';
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -738,13 +740,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // fields together), then invalidate the windowed reads. Roll the cache back + toast
   // on failure. WHIT-192: the caller mutates the CURRENT cached cycle — sourced here
   // via getQueryData, not a store useState. If the ['payCycle'] read hasn't resolved
-  // (cold cache) we bail rather than persist a defaulted cycle, which would silently
-  // reset the sibling field (e.g. a Monthly user's length). The pay-cycle sheet warms
-  // this cache on open, so a cold write is a belt-and-braces guard, not the norm.
+  // (cold cache) we bail with the save-failed toast rather than persist a defaulted cycle,
+  // which would silently reset the sibling field (e.g. a Monthly user's length). The
+  // pay-cycle sheet hides its controls until this cache is warm, so a cold write is a
+  // belt-and-braces guard, not the norm.
   const persistPayCycle = useCallback(
     async (mutate: (prev: PayCycle) => PayCycle) => {
       const prev = queryClient.getQueryData<PayCycle>(payCycleKey);
-      if (!prev) return;
+      if (!prev) {
+        showToast(PAY_CYCLE_SAVE_FAILED);
+        return;
+      }
       const next = mutate(prev);
       // Drop any stale server days_left from the optimistic write — the new length/payday
       // changes it, so let cycleClockView fall back to the local cycleClock until the
@@ -767,7 +773,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: budgetsKey });
           queryClient.invalidateQueries({ queryKey: breakdownKey });
         },
-        onFailed: () => showToast('Could not save pay cycle. Please try again.'),
+        onFailed: () => showToast(PAY_CYCLE_SAVE_FAILED),
         whenSignedOut: undefined,
       });
     },
