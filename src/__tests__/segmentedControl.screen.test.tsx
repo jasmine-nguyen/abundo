@@ -36,8 +36,9 @@ describe('SegmentedControl', () => {
   });
 });
 
-// WHIT-846: the optional count bubble and per-segment width the Transactions tabs use.
-describe('SegmentedControl count bubble and width', () => {
+// WHIT-846: the optional count bubble the Transactions tabs use.
+describe('SegmentedControl count bubble and equal widths', () => {
+  // The stray `flex` is a leftover per-option width: the control must ignore it (ABU-105).
   const BADGED = [{ ...STR_OPTIONS[0], flex: 1.45, badge: 0 }, STR_OPTIONS[1]];
 
   // [A2] a rose bubble, the same whether its segment is selected or not; a zero count still shows.
@@ -48,11 +49,16 @@ describe('SegmentedControl count bubble and width', () => {
     expect(styleOf(hostParent(count)).backgroundColor).toBe(tint(C.bad, 0.2));
   });
 
-  // [A3] no badge → no bubble; flex defaults to 1 so the Insights toggles stay even.
-  it('draws no bubble without a badge and defaults a segment to flex 1', () => {
+  // [A3] no badge → no bubble.
+  it('draws no bubble without a badge', () => {
     render(<SegmentedControl value="earning" onChange={jest.fn()} options={BADGED} />);
     expect(within(screen.getByTestId('seg-earning')).queryAllByText(/\d/)).toHaveLength(0);
+  });
+
+  // ABU-105: every segment is flex 1 — a badge or a per-option width can't make one wider.
+  it('gives every segment an equal width', () => {
+    render(<SegmentedControl value="spending" onChange={jest.fn()} options={BADGED} />);
+    expect(styleOf(screen.getByTestId('seg-spending')).flex).toBe(1);
     expect(styleOf(screen.getByTestId('seg-earning')).flex).toBe(1);
-    expect(styleOf(screen.getByTestId('seg-spending')).flex).toBe(1.45);
   });
 });

@@ -14,7 +14,6 @@ export type SegmentedOption<T> = {
   activeTint: string;       // background of the active segment
   activeTextColor: string;  // text colour of the active segment
   badge?: number;           // rose count bubble after the label (WHIT-846)
-  flex?: number;            // relative width, default 1
 };
 
 export function SegmentedControl<T extends string | number>({ options, value, onChange }: {
@@ -33,7 +32,7 @@ export function SegmentedControl<T extends string | number>({ options, value, on
             onPress={() => onChange(option.value)}
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
-            style={({ pressed }) => [styles.segment, { flex: option.flex ?? 1 }, active && { backgroundColor: option.activeTint }, pressed && PRESSED]}
+            style={({ pressed }) => [styles.segment, active && { backgroundColor: option.activeTint }, pressed && PRESSED]}
           >
             <Text style={[styles.segmentText, active && { color: option.activeTextColor, fontWeight: '700' }]}>{option.label}</Text>
             {option.badge !== undefined && (
@@ -50,7 +49,7 @@ export function SegmentedControl<T extends string | number>({ options, value, on
 
 const styles = StyleSheet.create({
   container: { flexDirection: 'row', gap: 3, padding: 3, marginBottom: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14 },
-  segment: { flexDirection: 'row', gap: 6, minHeight: 44, paddingVertical: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  segment: { flex: 1, flexDirection: 'row', gap: 6, minHeight: 44, paddingVertical: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   segmentText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
   badge: { minWidth: 18, minHeight: 18, borderRadius: 999, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: tint(C.bad, 0.2) },
   badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: C.badBright },
