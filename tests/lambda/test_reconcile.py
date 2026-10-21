@@ -702,6 +702,42 @@ def test_exact_tier_same_shop_wins_regardless_of_batch_order(lam, repo):
     assert len(store) == 2
 
 
+def test_exact_link_beats_a_same_shop_pending(lam, repo):
+    # [A4] The bank's own link names A1 (shop X); the same-shop pass must honour it rather
+    # than take A2 just because A2's shop matches the posted merchant.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"), pending=True,
+                  category="books", description=_SHOP_X, merchant_name=_SHOP_X)
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"), pending=True,
+                  category="coffee", description=_SHOP_Y, merchant_name=_SHOP_Y)
+    posted = _norm(lam, txn_id="P", amount=Decimal("-5.50"), pending=False,
+                   category="FOOD_AND_DRINK", description=_SHOP_Y, merchant_name=_SHOP_Y,
+                   pending_transaction_id="A1")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert store[(acc, "TXN#P")]["category"] == "books"
+    assert (acc, "TXN#A1") not in store
+    assert store[(acc, "TXN#A2")]["category"] == "coffee"
+
+
+def test_exact_tier_prefers_same_shop_on_anz_pending_rows(lam, repo):
+    # [A5] Production shape: ANZ pendings store no merchant_name, so the tie-break has to
+    # read the fixed-width column. The lower id (another shop) must not win.
+    _coles_pending(repo, lam, txn_id="A1", category="eating out", description=_ISAN_PEND_DESC)
+    _coles_pending(repo, lam, txn_id="A2", category="groceries")
+    posted = _coles_posted(lam, authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+    assert (acc, "TXN#A2") not in store
+    assert store[(acc, "TXN#A1")]["category"] == "eating out"
+
+
 # --- direct locks on the new pure helpers -----------------------------------
 
 

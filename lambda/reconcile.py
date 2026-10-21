@@ -99,6 +99,9 @@ def _find_exact_same_shop_twin(posted_txn: Transaction, pool: list[dict]) -> Opt
     order. The merchant is only a preference here, never a gate: whatever this pass
     leaves, `_find_exact_twin` still merges, because a strict gate would orphan
     pendings whose descriptors differ and double-count their spend."""
+    # Exact link (forward-compat; pending_transaction_id is null today). The pool IS
+    # the full account pending scan, so a link not in it means the pending is already
+    # gone -> fall through to the heuristic, never a fabricated key.
     link_id = posted_txn.get("pending_transaction_id")
     if link_id:
         for i, item in enumerate(pool):
@@ -120,20 +123,12 @@ def _find_exact_same_shop_twin(posted_txn: Transaction, pool: list[dict]) -> Opt
 
 def _find_exact_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
     """Return AND consume the pending row that is an EXACT twin of `posted_txn`
-    (link, then same authorized_date + exact amount), or None. `pool` is the account's
-    pending rows, so the caller never gets an unverified key. Consumed rows are popped.
+    (same authorized_date + exact amount, any merchant), or None. `pool` is the
+    account's pending rows, so the caller never gets an unverified key. Consumed rows
+    are popped. The exact link is handled by `_find_exact_same_shop_twin`, which runs
+    first over the same pool.
     """
-    # 1. Exact link (forward-compat; pending_transaction_id is null today). The
-    #    pool IS the full account pending scan, so a link not in it means the
-    #    pending is already gone -> fall through to the heuristic, never a
-    #    fabricated key.
-    link_id = posted_txn.get("pending_transaction_id")
-    if link_id:
-        for i, item in enumerate(pool):
-            if item.get("transaction_id") == link_id:
-                return pool.pop(i)
-
-    # 2. Heuristic: same authorized_date + EXACT amount (account already scoped by
+    # Heuristic: same authorized_date + EXACT amount (account already scoped by
     #    the pool). Skip when authorized_date is missing — matching on amount alone
     #    is too loose. authorized_date is USUALLY preserved across settlement, so it
     #    discriminates identical daily purchases. When it isn't — ANZ dates the
