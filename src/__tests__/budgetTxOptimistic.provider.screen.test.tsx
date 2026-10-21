@@ -17,6 +17,7 @@ import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
+import { UPDATED } from './support/apiContract';
 import { refreshInAct } from './support/renderWithQueries';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
@@ -326,7 +327,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
     it('applyCategoryToMany partial failure restores ONLY the failed row (Decision A)', async () => {
       // t1 saves, t2 fails → t2 reappears in the food list, t1 stays gone.
-      server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
+      server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: UPDATED }] } });
       const result = mount([txn('t1'), txn('t2')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1'), txn('t2')]);
 
@@ -531,7 +532,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
     it("[ALL-MULTI] applyCategory('all') partial failure restores ONLY the failed id (the 'all' re-drop path)", async () => {
       // t1 saves, t2 fails → t2 reappears in food's list, t1 stays gone. Distinct code path from
       // applyCategoryToMany's partial-failure re-drop (context.tsx ~905 vs ~992).
-      server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
+      server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: UPDATED }] } });
       const t1 = txn('t1', { category: null });
       const t2 = txn('t2', { category: null });
       const result = mount([t1, t2]);

@@ -11,6 +11,7 @@ import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, ty
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
+import { UPDATED } from './support/apiContract';
 import { DINING, GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
 import { colesTxn } from './factory';
@@ -87,7 +88,7 @@ it('applyCategory(all) writes every same-merchant charge into the cache + invali
 
 it('applyCategory(all) rolls back ONLY the failed ids in the cache (partial)', async () => {
   // t2's save comes back not-updated → only t2 reverts; t1 stays categorised.
-  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
+  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: UPDATED }] } });
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
@@ -280,7 +281,7 @@ it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + inv
 });
 
 it('applyCategoryToMany reverts only the FAILED ids to their previous category (partial)', async () => {
-  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } }); // t2 not saved
+  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: UPDATED }] } }); // t2 not saved
   const result = mount([{ ...txn('t1'), category: 'dining' }, { ...txn('t2'), category: 'dining' }]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
 

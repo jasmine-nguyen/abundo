@@ -15,6 +15,7 @@ import { findTransaction } from '../transactionCache';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
+import { UPDATED } from './support/apiContract';
 import { DELETE_DINING, DELETE_GROCERIES, tx, page } from './support/deleteCategorySeed';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
@@ -60,7 +61,7 @@ afterEach(() => { queryClient.clear(); });
 it('a batch re-file updates every copy, undoes only the charge that failed, and refreshes the right lists', async () => {
   // t2's save fails; t1 and t3 save.
   server.once('PATCH', '/transactions', {
-    body: { results: [{ id: 't1', status: 'updated' }, { id: 't3', status: 'updated' }] },
+    body: { results: [{ id: 't1', status: UPDATED }, { id: 't3', status: UPDATED }] },
   });
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2'), tx('t3', { category: null })]));
@@ -151,7 +152,7 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
   // t9 is an unfiled same-merchant charge that exists ONLY in a budget list — a stale scoped copy
   // that a re-file sweep must never pick up (WHIT-524).
   server.once('PATCH', '/transactions', {
-    body: { results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }, { id: 't3', status: 'error' }] },
+    body: { results: [{ id: 't1', status: UPDATED }, { id: 't2', status: UPDATED }, { id: 't3', status: 'error' }] },
   });
   server.once('POST', '/rules', { body: { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } });
   seedServerDerived();

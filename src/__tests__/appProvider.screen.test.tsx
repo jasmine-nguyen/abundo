@@ -14,6 +14,7 @@ import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer, type LoggedRequest } from './support/fakeServer';
+import { UPDATED } from './support/apiContract';
 import { GROCERIES } from './support/categories';
 import { DELETE_GROCERIES } from './support/deleteCategorySeed';
 import { invalidatedKeys } from './support/queryClient';
@@ -187,7 +188,7 @@ it('applyCategory(all) rolls back only the ids the batch reports as not saved', 
   // Partial server success: the batch files t1 but reports t2 not_found. Only t2
   // reverts (to uncategorised); t1 stays filed. Rollback keys BY ID, not position.
   server.once('PATCH', '/transactions', {
-    body: { results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }] },
+    body: { results: [{ id: 't1', status: UPDATED }, { id: 't2', status: 'not_found' }] },
   });
   seed([
     { ...TXN, transaction_id: 't1', category: null },
@@ -261,7 +262,7 @@ it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule 
 it('applyCategory(all) invalidates budgets + breakdown when at least one charge saved', async () => {
   // Partial: t1 saved, t2 not — still >=1 saved, so spend changed -> a refresh MUST fire.
   server.once('PATCH', '/transactions', {
-    body: { results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }] },
+    body: { results: [{ id: 't1', status: UPDATED }, { id: 't2', status: 'not_found' }] },
   });
   seed([
     { ...TXN, transaction_id: 't1', category: null },
@@ -317,7 +318,7 @@ it('applyCategory(all) reverts only the failed chunk when one of several rejects
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
   // First chunk (t0..t99) succeeds; the second (t100..t149) is lost -> only those 50 revert.
   const first100 = many.slice(0, 100).map((t) => t.transaction_id);
-  server.once('PATCH', '/transactions', { body: { results: first100.map((id) => ({ id, status: 'updated' })) } });
+  server.once('PATCH', '/transactions', { body: { results: first100.map((id) => ({ id, status: UPDATED })) } });
   server.once('PATCH', '/transactions', 'dropped');
   seed(many);
   const result = mount();
