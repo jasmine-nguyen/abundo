@@ -1949,25 +1949,36 @@ def test_abu108_an_unlinked_posted_absorbs_a_real_second_charge_until_it_settles
     assert sorted(_txn_store(repo)) == [(_acc(posted), "TXN#POST1"), (_acc(posted), "TXN#POST2")]
 
 
-@pytest.mark.parametrize("posted_fields, pending_fields, absorbed", [
-    # ANZ clock split: the pending is dated one day after its posted row.
+@pytest.mark.parametrize("posted_fields, pending_fields, absorbed_in_one_message, absorbed_later", [
+    # Same day: matched either way.
+    ({}, {}, True, True),
+    # ANZ clock split: the pending is dated one day after its posted row. A saved posted row only
+    # takes a same-day pending, or a daily repeat charge would hide the next day's one.
     ({"authorized_date": "2026-06-28", "date": "2026-06-28"},
-     {"authorized_date": "2026-06-29", "date": "2026-06-29"}, True),
-    # No swipe date on the posted row: matched within the 7-day window...
-    ({"authorized_date": "", "date": "2026-06-29"}, {"authorized_date": "2026-06-25", "date": "2026-06-25"}, True),
+     {"authorized_date": "2026-06-29", "date": "2026-06-29"}, True, False),
+    # No swipe date on the posted row: matched within the 7-day window in one message...
+    ({"authorized_date": "", "date": "2026-06-29"}, {"authorized_date": "2026-06-25", "date": "2026-06-25"},
+     True, False),
     # ...and not outside it.
-    ({"authorized_date": "", "date": "2026-06-29"}, {"authorized_date": "2026-06-20", "date": "2026-06-20"}, False),
+    ({"authorized_date": "", "date": "2026-06-29"}, {"authorized_date": "2026-06-20", "date": "2026-06-20"},
+     False, False),
     # Nothing alike: the pending saves as today.
-    ({}, {"amount": Decimal("-7.00")}, False),
+    ({}, {"amount": Decimal("-7.00")}, False, False),
 ])
-def test_abu108_a_later_pending_is_matched_by_every_settlement_rule(lam, repo, posted_fields, pending_fields,
-                                                                    absorbed):
-    posted = _seed_pending(repo, lam, **{"txn_id": "POST", "amount": Decimal("-5.50"), "pending": False,
-                                         **posted_fields})
+@pytest.mark.parametrize("in_one_message", [True, False])
+def test_abu108_which_settlement_rules_pair_a_new_pending(lam, repo, posted_fields, pending_fields,
+                                                          absorbed_in_one_message, absorbed_later,
+                                                          in_one_message):
+    posted = _norm(lam, **{"txn_id": "POST", "amount": Decimal("-5.50"), "pending": False, **posted_fields})
+    pending = _norm(lam, **{"txn_id": "PEND", "amount": Decimal("-5.50"), "pending": True, **pending_fields})
 
-    repo.insert_or_reconcile([_norm(lam, **{"txn_id": "PEND", "amount": Decimal("-5.50"), "pending": True,
-                                            **pending_fields})])
+    if in_one_message:
+        repo.insert_or_reconcile([pending, posted])
+    else:
+        repo.insert_transactions([posted])
+        repo.insert_or_reconcile([pending])
 
+    absorbed = absorbed_in_one_message if in_one_message else absorbed_later
     assert ((_acc(posted), "TXN#PEND") in _txn_store(repo)) is not absorbed
 
 
@@ -2006,3 +2017,65 @@ def test_abu108_a_posted_claimed_by_another_message_mid_write_keeps_the_pending(
     assert (_acc(posted), "TXN#PEND") in store
     assert store[(_acc(posted), "TXN#POST")]["pending_transaction_id"] == "OTHER"
     assert _settled_marker(repo, posted, "PEND") is not None
+
+
+def test_abu108_a_settled_posted_keeps_its_link_through_bank_resends(lam, repo):
+    # [A1] BankSync re-sends a settled charge for FEED_WINDOW_DAYS with no pendingTransactionId. The
+    # re-send must not wipe the link, or the posted row could hide the next identical charge.
+    _seed_pending(repo, lam, txn_id="PEND1", amount=Decimal("-5.50"), pending=True)
+    posted = _norm(lam, txn_id="POST1", amount=Decimal("-5.50"), pending=False)
+    repo.insert_or_reconcile([posted])
+    repo.insert_or_reconcile([_norm(lam, txn_id="POST1", amount=Decimal("-5.50"), pending=False)])
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND2", amount=Decimal("-5.50"), pending=True)])
+
+    store = _txn_store(repo)
+    assert store[(_acc(posted), "TXN#POST1")]["pending_transaction_id"] == "PEND1"
+    assert (_acc(posted), "TXN#PEND2") in store
+
+
+def test_abu108_a_posted_that_settles_a_saved_pending_never_absorbs_a_new_one_too(lam, repo):
+    # [A2] The forward pass runs first: a message's posted row that used up a saved pending is no
+    # longer a twin for the message's new identical pending, which is a second real charge.
+    _seed_pending(repo, lam, txn_id="PEND1", amount=Decimal("-5.50"), pending=True)
+    posted = _norm(lam, txn_id="POST1", amount=Decimal("-5.50"), pending=False)
+
+    repo.insert_or_reconcile([_norm(lam, txn_id="PEND2", amount=Decimal("-5.50"), pending=True), posted])
+
+    store = _txn_store(repo)
+    assert sorted(store) == [(_acc(posted), "TXN#PEND2"), (_acc(posted), "TXN#POST1")]
+    assert store[(_acc(posted), "TXN#POST1")]["pending_transaction_id"] == "PEND1"
+
+
+def test_abu108_a_pending_is_never_absorbed_into_another_accounts_posted(lam, repo):
+    # [A3] Same shop, day and amount on a different card is a different charge.
+    other_posted = _norm(lam, txn_id="POST", amount=Decimal("-5.50"), pending=False)
+    other_posted["account_id"] = "up-spending"
+    repo.insert_transactions([other_posted])
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-5.50"), pending=True)
+    other_pending = _norm(lam, txn_id="OTHER", amount=Decimal("-9.00"), pending=True)
+    other_pending["account_id"] = "up-spending"                  # so that account's rows are read too
+
+    repo.insert_or_reconcile([pending, other_pending])
+
+    store = _txn_store(repo)
+    assert (_acc(pending), "TXN#PEND") in store
+    assert "pending_transaction_id" not in store[(_acc(other_posted), "TXN#POST")]
+
+
+def test_abu108_a_hidden_repeat_charge_does_not_hide_the_next_days_one_too(lam, repo):
+    # [A4] The plan's worst case: an unlinked posted row hides a real repeat charge until it settles,
+    # and that exposure ends 7 days after release. But the hidden charge's own posted row then saves
+    # unlinked, so it hides the NEXT day's identical charge (one-day skew rule), and so on: a daily
+    # same-price purchase reads one charge low every day, with no end.
+    def charge(txn_id, day, pending):
+        return _norm(lam, txn_id=txn_id, amount=Decimal("-5.50"), pending=pending,
+                     authorized_date=day, date=day)
+    posted1 = charge("POST1", "2026-06-27", pending=False)
+    repo.insert_transactions([posted1])                                    # saved before the release
+
+    repo.insert_or_reconcile([charge("PEND2", "2026-06-28", pending=True)])   # hidden: accepted
+    repo.insert_or_reconcile([charge("POST2", "2026-06-28", pending=False)])  # saves unlinked
+    repo.insert_or_reconcile([charge("PEND3", "2026-06-29", pending=True)])
+
+    assert (_acc(posted1), "TXN#PEND3") in _txn_store(repo)

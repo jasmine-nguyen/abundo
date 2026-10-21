@@ -350,8 +350,14 @@ def _find_blank_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optional
     )
 
 
+# The tiers whose twin shares the posted row's swipe day.
+_SAME_DAY_TIERS = (_find_exact_same_shop_twin, _find_exact_twin, _find_tip_twin)
+_ALL_TIERS = (*_SAME_DAY_TIERS, _find_skewed_auth_twin, _find_skewed_fee_twin, _find_blank_auth_twin)
+
+
 def match_all(
-    posted_txns: list[Transaction], pending_pools: dict[str, list[dict]]
+    posted_txns: list[Transaction], pending_pools: dict[str, list[dict]],
+    tiers: tuple[Callable[[Transaction, list[dict]], Optional[dict]], ...] = _ALL_TIERS,
 ) -> list[tuple[Transaction, Optional[dict]]]:
     """Match every posted row in a batch to its pending twin, tightest tier first
     across the whole batch (WHIT-117). Returns (posted_txn, match_or_None) in the
@@ -371,9 +377,7 @@ def match_all(
     # at any shop, then a tip on the same day, then a date split one day by the
     # Melbourne/UTC clocks, then that same split with a small fee folded in, then the
     # loosest (no swipe date at all, matched within a FEED_WINDOW_DAYS window).
-    for find_twin in (_find_exact_same_shop_twin, _find_exact_twin, _find_tip_twin,
-                      _find_skewed_auth_twin, _find_skewed_fee_twin,
-                      _find_blank_auth_twin):
+    for find_twin in tiers:
         still: list[int] = []
         for i in unmatched:
             pool = pending_pools.get(posted_txns[i]["account_id"], [])
@@ -479,8 +483,10 @@ def _absorbing_posted(
     transactions: list[Transaction], insert_ids: set[str], pools: MatchPools,
 ) -> dict[str, tuple[str, Optional[dict]]]:
     """The reverse of the settlement search (ABU-108): each never-saved pending in the batch
-    whose posted twin is already saved and unclaimed, or is a first-sight posted row in this
-    batch (`insert_ids`). Returns pending id -> (posted id, stored posted row or None)."""
+    whose posted twin is a first-sight posted row in this batch (`insert_ids`, every tier), or
+    is already saved and unclaimed (same-day tiers only). A saved row matched across days would
+    hide a daily repeat charge, whose own posted row then saves unclaimed and hides the next
+    day's, with no end. Returns pending id -> (posted id, stored posted row or None)."""
     new_pendings: dict[str, list[dict]] = {}
     for txn in transactions:
         if txn.get("status") != PENDING_STATUS:
@@ -498,9 +504,11 @@ def _absorbing_posted(
         key=lambda row: row.get("transaction_id", ""),
     )
     stored_by_id = {row["transaction_id"]: row for row in stored_posted}
+    matches = [*match_all(batch_posted, new_pendings),
+               *match_all(stored_posted, new_pendings, tiers=_SAME_DAY_TIERS)]
     return {
         pending["transaction_id"]: (posted["transaction_id"], stored_by_id.get(posted["transaction_id"]))
-        for posted, pending in match_all([*batch_posted, *stored_posted], new_pendings)
+        for posted, pending in matches
         if pending is not None
     }
 
