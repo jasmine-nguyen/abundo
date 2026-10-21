@@ -6,14 +6,15 @@
 // wrapped/changed shape must surface as a thrown error (the query's error state), not crash a
 // downstream .map or silently render "no suggestions" over habits the user really has.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { fetchFilingSuggestions } from '../api';
 import { selectFilingSuggestions } from '../queries';
 import type { FilingSuggestions } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('tok'));
 
-const fetchMock = jest.fn<() => Promise<Response>>();
-beforeEach(() => { fetchMock.mockReset(); (globalThis as unknown as { fetch: typeof fetchMock }).fetch = fetchMock; });
+let fetchMock: ReturnType<typeof stubFetch>;
+beforeEach(() => { fetchMock = stubFetch(); });
 
 const BODY: FilingSuggestions = {
   suggestions: [

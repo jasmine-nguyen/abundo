@@ -6,6 +6,7 @@
 // violates the `API error: N` contract ~99 assertions pin AND defeats src/queryClient.ts's auth
 // detection, silently retrying a dead session.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
@@ -15,7 +16,7 @@ import { ApiError } from '../apiError';
 import { makeQueryClient } from '../queryClient';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 
 const respond = (status: number, json: () => Promise<unknown>) =>
   Promise.resolve({ ok: false, status, json });
@@ -23,8 +24,7 @@ const respond = (status: number, json: () => Promise<unknown>) =>
 beforeEach(() => {
   mockGetAuthToken.mockReset();
   mockGetAuthToken.mockResolvedValue('tok');
-  fetchMock = jest.fn();
-  (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
+  fetchMock = stubFetch();
 });
 
 const create = () => createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' });

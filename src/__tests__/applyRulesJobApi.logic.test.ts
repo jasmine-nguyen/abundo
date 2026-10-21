@@ -6,6 +6,7 @@
 // must carry the auth header and throw ApiError(404) for an expired id (distinct from a network
 // throw, which the poll loop tolerates). fetch + auth mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { startApplyRulesJob, getApplyRulesJob } from '../api';
 import { ApiError } from '../apiError';
 import { applyRulesJob } from './support/applyRulesReport';
@@ -15,15 +16,11 @@ jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('tes
 const JOB = applyRulesJob({ jobId: 'abc123' });
 
 function okFetch(body: unknown = JOB, status = 202) {
-  const mock = jest.fn(async () => ({ ok: true, status, json: async () => body }));
-  (globalThis as unknown as { fetch: unknown }).fetch = mock;
-  return mock;
+  return stubFetch(async () => ({ ok: true, status, json: async () => body }));
 }
 
 function notOkFetch(status: number) {
-  const mock = jest.fn(async () => ({ ok: false, status, json: async () => ({}) }));
-  (globalThis as unknown as { fetch: unknown }).fetch = mock;
-  return mock;
+  return stubFetch(async () => ({ ok: false, status, json: async () => ({}) }));
 }
 
 beforeEach(() => { jest.clearAllMocks(); });

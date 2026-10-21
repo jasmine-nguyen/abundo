@@ -4,6 +4,7 @@
 // mostly-successful live call. These lock both budgets, each fail-on-revert if the arg is dropped.
 // fetch + auth mocked; fake timers advance the clock.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { refreshAccountBalances } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
@@ -15,7 +16,7 @@ describe('refreshAccountBalances 30s budget', () => {
   // BODY read budget. Fail-on-revert: drop BALANCE_REFRESH_TIMEOUT_MS from its request and the
   // body falls back to the 15s default, so the "still pending at 15s" assertion reddens.
   it('gives the body read the 30s budget, not the 15s default', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
+    stubFetch(async () => ({
       ok: true,
       status: 200,
       json: () => new Promise(() => {}),   // headers arrived; the body never settles
@@ -37,7 +38,7 @@ describe('refreshAccountBalances 30s budget', () => {
   // REQUEST (headers) budget. request() aborts its own AbortController at timeoutMs. Fail-on-revert:
   // drop the arg from request()'s timed fetch and the request aborts at 15s, so "still pending at 15s" reddens.
   it('gives the request the 30s budget before aborting, not the 15s default', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn((_url: string, init?: RequestInit) =>
+    stubFetch((_url: string, init?: RequestInit) =>
       new Promise((_resolve, reject) => {
         // Reject only when request()'s timer aborts the signal — mimics a hung request.
         init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')));

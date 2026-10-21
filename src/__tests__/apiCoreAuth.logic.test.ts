@@ -6,6 +6,7 @@
 //  (2) proof the token is read PER CALL (getAuthToken invoked each time), not frozen.
 // '../auth' and fetch are mocked; no network.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
@@ -24,12 +25,11 @@ function okJson(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 }
 
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 
 beforeEach(() => {
   mockGetAuthToken.mockReset();
-  fetchMock = jest.fn();
-  (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+  fetchMock = stubFetch();
 });
 
 // One call per exported fetcher. If any forgot the auth gate it would call fetch with

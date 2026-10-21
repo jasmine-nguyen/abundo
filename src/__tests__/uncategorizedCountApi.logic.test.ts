@@ -5,12 +5,13 @@
 // and that a MALFORMED / stringified count throws (so the hook stays undefined and consumers fall
 // back to the local count) rather than feeding a bad value into the badge and the `=== 0` gate.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { fetchUncategorizedCount } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('tok'));
 
-const fetchMock = jest.fn<() => Promise<Response>>();
-beforeEach(() => { fetchMock.mockReset(); (globalThis as unknown as { fetch: typeof fetchMock }).fetch = fetchMock; });
+let fetchMock: ReturnType<typeof stubFetch>;
+beforeEach(() => { fetchMock = stubFetch(); });
 
 const okJson = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response);
