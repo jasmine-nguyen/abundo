@@ -520,5 +520,51 @@ describe('token swap outcomes (ABU-84)', () => {
       expect(auth.getStatus()).toBe('anon');
       expect(mockStore.has(REFRESH_KEY)).toBe(false);
     });
+
+    // [A1] The next Face ID unlock needs the rotated token, so a late swap after a lock still saves it.
+    it('a late swap after lock() still saves its rotated token for the next unlock', async () => {
+      const auth = await signedInNearExpiry();
+      let finishSwap: (v: unknown) => void = () => {};
+      mockRefresh.mockReturnValueOnce(new Promise((r) => { finishSwap = r; }));
+      const pending = auth.getAuthToken().catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(0);
+
+      auth.lock();
+      finishSwap(okToken('LATE', { refreshToken: 'ROTATED' }));
+      await pending;
+
+      expect(auth.getStatus()).toBe('locked');
+      expect(mockStore.get(REFRESH_KEY)).toBe('ROTATED');
+    });
+  });
+
+  // [A2] "Sign in again" tapped while the unlock's swap is still running: the swap must not
+  // bring the user back in.
+  it('signOut during a pending unlock swap → unlock resolves false and the user stays signed out', async () => {
+    mockStore.set(REFRESH_KEY, 'R');
+    let finishSwap: (v: unknown) => void = () => {};
+    mockRefresh.mockReturnValueOnce(new Promise((r) => { finishSwap = r; }));
+    const auth = loadAuth();
+    const unlocking = auth.unlock();
+    await jest.advanceTimersByTimeAsync(0);
+
+    await auth.signOut();
+    const afterSignOut = recordStatuses(auth);
+    finishSwap(okToken('LATE'));
+
+    await expect(unlocking).resolves.toBe(false);
+    expect(afterSignOut).toEqual([]);
+    expect(auth.getStatus()).toBe('anon');
+  });
+
+  // [A3] Only invalid_grant is a refusal; any other OAuth error code keeps the session.
+  it('an OAuth error other than invalid_grant → offline error, stays signed in', async () => {
+    const auth = await signedInNearExpiry();
+    mockRefresh.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'temporarily_unavailable' }));
+
+    const err = await auth.getAuthToken().then(() => 'resolved', (e: unknown) => e);
+
+    expect(loadIsOffline()(err)).toBe(true);
+    expect(auth.getStatus()).toBe('authed');
   });
 });
