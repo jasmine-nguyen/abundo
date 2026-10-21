@@ -119,3 +119,9 @@ def test_plan_role_trusts_only_pull_requests():
     assert len(entries) == 2
     for entry in entries:
         assert entry.endswith(":pull_request:ref:refs/pull/*"), f"preview login trusts a non-PR login ID: {entry}"
+
+
+@pytest.mark.parametrize("role", ["github_apply", "github_plan"])
+def test_trust_pins_the_audience(role):
+    # [A3] moving sub into StringLike must not drag aud along or drop it.
+    assert '"token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"' in _trust_conditions(role)["StringEquals"]
