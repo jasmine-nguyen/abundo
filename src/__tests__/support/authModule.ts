@@ -31,14 +31,7 @@ export function clearCognitoEnv() {
   delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
 }
 
-type FetchFake = (url: string, init?: { body: string }) => Promise<unknown>;
-
-/** Swaps global fetch for a jest.fn and returns it. */
-export function stubFetch(impl?: FetchFake) {
-  const fetch = jest.fn<FetchFake>(impl);
-  (globalThis as unknown as { fetch: unknown }).fetch = fetch;
-  return fetch;
-}
+export { stubFetch } from './fetchStub';
 
 export const nowSec = (): number => Math.floor(Date.now() / 1000);
 

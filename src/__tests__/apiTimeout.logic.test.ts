@@ -4,6 +4,7 @@
 // read (success and failure) gets its own budget via withBodyTimeout. request() and failed() are
 // internal, so we drive them through public readers. fetch + auth mocked; fake timers advance the clock.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { fetchCategories, updateCategory } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
@@ -11,7 +12,7 @@ jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('tes
 const input = { name: 'Coffee', bucket: 'Lifestyle' as const, icon: 'coffee' };
 
 function stalledBody(ok: boolean, status: number) {
-  return jest.fn(async () => ({
+  return stubFetch(async () => ({
     ok,
     status,
     json: () => new Promise(() => {}),   // headers arrived; the body never settles
@@ -24,12 +25,11 @@ describe('request timeout', () => {
 
   it('aborts a hung request after 15s and rejects the read', async () => {
     // A fetch that never settles on its own — it only rejects if its abort signal fires.
-    const fetchMock = jest.fn((_url: string, init: RequestInit) =>
+    const fetchMock = stubFetch((_url: string, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {
-        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
       }),
     );
-    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
 
     const pending = fetchCategories();
     const rejects = expect(pending).rejects.toThrow(); // attach the catch before advancing time
@@ -45,7 +45,7 @@ describe('request timeout', () => {
   // Fail-on-revert (both below): swap the timed body read for a bare `response.json()` → the read
   // never settles → updateCategory never rejects → this hits the explicit 3s test timeout.
   it('rejects when a 2xx body stalls forever, on the default read budget', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = stalledBody(true, 200);
+    stalledBody(true, 200);
 
     const pending = updateCategory('coffee', input);
     const rejects = expect(pending).rejects.toThrow('body read timed out');
@@ -55,7 +55,7 @@ describe('request timeout', () => {
   }, 3000);
 
   it('rejects with a status-only ApiError when the error body stalls forever', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = stalledBody(false, 400);
+    stalledBody(false, 400);
 
     const pending = updateCategory('coffee', input);
     const rejects = expect(pending).rejects.toMatchObject({

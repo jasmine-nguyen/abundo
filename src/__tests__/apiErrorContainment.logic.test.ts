@@ -8,6 +8,7 @@
 // never reviewed for user-facing wording. This sweeps every exported endpoint against a not-OK
 // response that DOES carry an `error` body.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
@@ -17,7 +18,7 @@ import { ApiError } from '../apiError';
 import { REASON_ENDPOINTS } from './support/apiWire';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 
 // 418 is deliberately a status no endpoint special-cases, and LEAK is deliberately not a real
 // message: if it ever shows up in an error's `message`, something folded the body into the text.
@@ -27,9 +28,8 @@ const LEAK = 'LEAKED SERVER REASON';
 beforeEach(() => {
   mockGetAuthToken.mockReset();
   mockGetAuthToken.mockResolvedValue('tok');
-  fetchMock = jest.fn(() =>
+  fetchMock = stubFetch(() =>
     Promise.resolve({ ok: false, status: STATUS, json: () => Promise.resolve({ error: LEAK }) }));
-  (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
 });
 
 // Every exported endpoint with plausible arguments. Keyed by name so the tripwire below can

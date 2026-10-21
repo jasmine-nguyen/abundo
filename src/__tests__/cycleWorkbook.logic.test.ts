@@ -3,6 +3,7 @@
 // each sheet's XML is read back into a grid of cells. Expected values are written by hand
 // from the card's column spec (same rules as WHIT-700's CSV).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
@@ -476,12 +477,11 @@ describe('buildBudgetRows', () => {
 
 describe('shareCycleExport', () => {
   it('user can share last cycle as an .xlsx file with the Excel file type', async () => {
-    const fetchMock = jest.fn(async () => ({
+    const fetchMock = stubFetch(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ start: '2026-06-01', end: '2026-06-30', transactions: TRANSACTIONS }),
     }));
-    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
 
     await shareCycleExport(1, category);
 
@@ -505,7 +505,7 @@ describe('shareCycleExport', () => {
   });
 
   it('a failed fetch rejects without writing or sharing', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
+    stubFetch(async () => ({
       ok: false, status: 500, json: async () => ({ error: 'boom' }),
     }));
     await expect(shareCycleExport(0, category)).rejects.toBeTruthy();

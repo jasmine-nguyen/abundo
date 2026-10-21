@@ -7,6 +7,7 @@
 // APPLY_RULES_TIMEOUT_MS on BOTH the request and the body read, like refreshAccountBalances.
 // fetch + auth mocked; fake timers advance the clock for the budget cases.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { applyRulesToUncategorized } from '../api';
 import type { ApplyRulesResult } from '../api';
 import { ApiError } from '../apiError';
@@ -30,9 +31,7 @@ const FULL_BODY: ApplyRulesResult = {
 };
 
 function okFetch(body: unknown = FULL_BODY) {
-  const mock = jest.fn(async () => ({ ok: true, status: 200, json: async () => body }));
-  (globalThis as unknown as { fetch: unknown }).fetch = mock;
-  return mock;
+  return stubFetch(async () => ({ ok: true, status: 200, json: async () => body }));
 }
 
 describe('applyRulesToUncategorized', () => {
@@ -65,8 +64,7 @@ describe('applyRulesToUncategorized', () => {
   // ApiError carrying the STATUS, so the sheet can tell a clash from any other failure. Fail-on-
   // revert: throw a plain Error and `instanceof ApiError` / `.status === 409` both go false.
   it('throws an ApiError carrying the 409 status on a clash', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch =
-      jest.fn(async () => ({ ok: false, status: 409, json: async () => ({ error: "you already have a rule for that" }) }));
+    stubFetch(async () => ({ ok: false, status: 409, json: async () => ({ error: "you already have a rule for that" }) }));
 
     const error = await applyRulesToUncategorized(false, { value: 'COLES', categoryId: 'groceries' })
       .then(() => null, (e: unknown) => e);
@@ -84,7 +82,7 @@ describe('applyRulesToUncategorized 30s budget', () => {
   // BODY read budget. Fail-on-revert: drop APPLY_RULES_TIMEOUT_MS from its request and the
   // body falls back to the 15s default, so "still pending at 15s" reddens.
   it('gives the body read the 30s budget, not the 15s default', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
+    stubFetch(async () => ({
       ok: true,
       status: 200,
       json: () => new Promise(() => {}),   // headers arrived; the body never settles
@@ -106,7 +104,7 @@ describe('applyRulesToUncategorized 30s budget', () => {
   // REQUEST (headers) budget. Fail-on-revert: drop the arg from request()'s timed fetch and the request aborts at
   // 15s, mid-write, leaving the user with an unknown outcome on a run that was going to succeed.
   it('gives the request the 30s budget before aborting, not the 15s default', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn((_url: string, init?: RequestInit) =>
+    stubFetch((_url: string, init?: RequestInit) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
       }));

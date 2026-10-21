@@ -3,6 +3,7 @@
 // shaping (encodeURIComponent, optional query strings). fetch is mocked; no network.
 // (WHIT-52, WHIT-162)
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { listRules, createRule, generateAiInsights, fetchCategoryTransactions, fetchTransactionsFeed, setBudget } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
@@ -15,13 +16,12 @@ function okJson(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 }
 
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 
 beforeEach(() => {
   // WHIT-162: authenticate with the Cognito ID token; mock a signed-in session.
   mockGetAuthToken.mockReset().mockResolvedValue('test-token');
-  fetchMock = jest.fn();
-  (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+  fetchMock = stubFetch();
 });
 
 const RULE = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' };
