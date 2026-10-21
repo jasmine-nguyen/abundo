@@ -8,6 +8,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { persistCategoryBatch } from '../context';
 import { installFakeServer } from './support/fakeServer';
+import { apiContract as contract, UPDATED } from './support/apiContract';
 import { resetAuth, setAuthToken } from './support/authMock';
 import { colesTxn } from './factory';
 
@@ -16,7 +17,7 @@ const server = installFakeServer();
 beforeEach(() => resetAuth());
 
 // Server "everything updated" reply for a given chunk of ids.
-const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });
+const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: UPDATED })) });
 // The `updates` of every batch save the app sent, in order.
 const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
@@ -40,7 +41,7 @@ describe('persistCategoryBatch', () => {
   it('reconciles saved ids BY id, not array position', async () => {
     // Server reports ids out of order and omits one; only reported-updated ids are saved.
     server.once('PATCH', '/transactions', {
-      body: { results: [{ id: 'b', status: 'updated' }, { id: 'a', status: 'updated' }] },
+      body: { results: [{ id: 'b', status: UPDATED }, { id: 'a', status: UPDATED }] },
     });
 
     const out = await persistCategoryBatch(['a', 'b', 'c'], 'coffee', []);
@@ -60,15 +61,15 @@ describe('persistCategoryBatch', () => {
     expect(out.savedIds.size).toBe(100);
   });
 
-  it('treats a not_found status as failed (only "updated" counts as saved)', async () => {
-    server.once('PATCH', '/transactions', {
-      body: { results: [{ id: 'a', status: 'updated' }, { id: 'b', status: 'not_found' }] },
-    });
+  it('sends the shared sample request and reads its reply: updated ids are saved, the not_found id failed', async () => {
+    server.once('PATCH', '/transactions', { body: contract.batchCategory.response });
+    const cached = [colesTxn({ transaction_id: 't1', account_id: 'a' })];
 
-    const out = await persistCategoryBatch(['a', 'b'], 'coffee', []);
+    const out = await persistCategoryBatch(['t1', 't2', 't3'], 'coffee', cached);
 
-    expect([...out.savedIds]).toEqual(['a']);
-    expect(out.failedIds).toEqual(['b']);
+    expect(server.sent('PATCH', '/transactions')[0].body).toEqual(contract.batchCategory.request);
+    expect([...out.savedIds]).toEqual(['t1', 't3']);
+    expect(out.failedIds).toEqual(['t2']);
   });
 
   it('sends one PATCH /transactions carrying each id, the chosen category and the cached charge\'s account', async () => {

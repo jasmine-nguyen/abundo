@@ -20,6 +20,7 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { apiContract } from './support/apiContract';
 import { invalidatedKeys } from './support/queryClient';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import { applyRulesJob } from './support/applyRulesReport';
@@ -263,6 +264,21 @@ describe('lock and variant edges', () => {
     expect(queryClient.getQueryData(['rules'])).toEqual([]); // no optimistic prepend
     const keys = invalidatedKeys(invalidate).slice(before);
     expect(keys).toContain('rules'); // refreshed normally
+  });
+
+  // ABU-43: the job words come from the shared sample the server test checks, so a rename on either
+  // side stops the run reaching its success reconcile (the minted rule never lands).
+  it('reaches the success reconcile on the server\'s own running → succeeded words', async () => {
+    queryClient.setQueryData(['rules'], []);
+    const { running, succeeded } = apiContract.jobStatuses;
+    server.once('GET', JOB_PATH, { body: applyRulesJob({ status: running, matched: 5, filed: 2 }) });
+    server.once('GET', JOB_PATH, { body: applyRulesJob({ status: succeeded, matched: 5, filed: 5, createdRule: minted }) });
+
+    const r = mount();
+    await act(async () => { await r.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, BIG_RUN); });
+    await tick(2);
+
+    expect(queryClient.getQueryData(['rules'])).toEqual([expect.objectContaining({ id: 'r-new', isNew: true })]);
   });
 });
 

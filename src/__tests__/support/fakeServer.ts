@@ -16,6 +16,7 @@
 // the full path, query included. No timers of its own, so it works under jest fake timers.
 import { beforeEach, afterEach } from '@jest/globals';
 import { applyRulesReport } from './applyRulesReport';
+import { apiContract, UPDATED } from './apiContract';
 
 const API_BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -69,7 +70,7 @@ function remove(store: Store, path: string, id: string) {
 
 function startJob({ store, nextId }: Call, prefix: string, jobsPath: string, extra: Record<string, unknown>) {
   const jobId = nextId(prefix);
-  const job = { jobId, status: 'running', ...extra };
+  const job = { jobId, status: apiContract.jobStatuses.running, ...extra };
   store.set(`${jobsPath}/${jobId}`, job);
   return job;
 }
@@ -88,7 +89,7 @@ const CHAT_JOBS = '/ai/chat/jobs';
 const ROUTES: [Method, string, (call: Call) => unknown][] = [
   ['GET', '/transactions', readSeeded([])],
   ['PATCH', '/transactions', ({ body }) => ({
-    results: body.updates.map((update: { id: string }) => ({ id: update.id, status: 'updated' })),
+    results: body.updates.map((update: { id: string }) => ({ id: update.id, status: UPDATED })),
   })],
   ['GET', '/transactions/feed', readSeeded({ transactions: [], nextCursor: null })],
   ['GET', '/transactions/uncategorized/feed', readSeeded({ transactions: [], nextCursor: null })],
