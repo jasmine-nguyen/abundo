@@ -37,12 +37,12 @@ def test_get_pending_accumulates_pendings_across_pages(repo):
 
 
 def test_get_match_pools_keeps_recent_rows_of_every_account_across_pages(repo, pinned_pending_lookback):
-    # today 2026-07-01 → pendings from 2026-06-01, posted rows from 2026-06-24.
+    # today 2026-07-01 → pendings from 2026-05-17, posted rows from 2026-06-24.
     # Pages of 2 force the cursor to be followed.
     for txn_id, status, swiped in [
-        ("old_pend", "pending", "2026-05-22"),     # 40 days old: outside the lookback
-        ("edge_pend", "pending", "2026-06-01"),    # exactly 30 days old: inside (the bound is inclusive)
-        ("recent_pend", "pending", "2026-06-02"),  # 29 days old: inside
+        ("old_pend", "pending", "2026-05-02"),     # 60 days old: outside the lookback
+        ("edge_pend", "pending", "2026-05-17"),    # exactly 45 days old: inside (the bound is inclusive)
+        ("recent_pend", "pending", "2026-05-18"),  # 44 days old: inside
         ("old_posted", "posted", "2026-06-23"),    # 8 days old: BankSync can't send its pending now
         ("posted", "posted", "2026-06-26"),
         ("new_pend", "pending", "2026-06-28"),

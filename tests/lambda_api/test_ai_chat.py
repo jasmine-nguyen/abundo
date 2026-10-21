@@ -373,15 +373,17 @@ def test_worker_marks_any_other_failure_failed(ai_chat, monkeypatch, worker):
 
 
 class RolloverBudgetRepo:
-    """Groceries $100 with rollover on, anchored on the 2026-08-27 cycle; records any write."""
+    """Groceries $100 with rollover on, anchored on a 14-day cycle (2026-08-27 by default);
+    records any write."""
 
-    def __init__(self):
+    def __init__(self, carryover_from="2026-08-27"):
         self.writes = []
+        self.carryover_from = carryover_from
 
     def list_budgets(self):
         return {"groceries": {
             "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
-            "carryover_from": "2026-08-27", "carryover_len": Decimal("14"),
+            "carryover_from": self.carryover_from, "carryover_len": Decimal("14"),
             "carryover_paydate": "2026-09-10",
         }}
 
@@ -441,21 +443,29 @@ def test_rollover_history_older_than_the_chat_floor_still_counts(ai_chat, monkey
 def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_chat, monkeypatch):
     # WHIT-622: the chat shows the same budget rows as /budgets (rollover included) from its one
     # transaction read, and never writes the settlements — only GET /budgets saves those.
-    stored = [_groceries_row("old", "-500", "2025-10-01"), _groceries_row("prior", "-60", "2026-08-30"),
+    # Anchored three cycles back so the oldest is past the settle lag and would seal.
+    stored = [_groceries_row("old", "-500", "2025-10-01"), _groceries_row("prior", "-60", "2026-08-02"),
+              _groceries_row("mid1", "-100", "2026-08-15"), _groceries_row("mid2", "-100", "2026-08-30"),
               _groceries_row("now", "-25", "2026-09-15")]
 
-    budget_repo = RolloverBudgetRepo()
+    budget_repo = RolloverBudgetRepo(carryover_from="2026-07-30")
     data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo(stored), budget_repo)
 
     assert data.budgets == {"groceries": {
         "target": Decimal("100"), "posted": Decimal("25"), "pending": Decimal("0"),
         "rollover": True, "carryover": Decimal("40"),
-        "carryover_cycles": [{"start": "2026-08-27", "end": "2026-09-09", "target": Decimal("100"),
-                              "spent": Decimal("60"), "leftover": Decimal("40"), "settling": False}],
+        "carryover_cycles": [
+            {"start": "2026-08-27", "end": "2026-09-09", "target": Decimal("100"),
+             "spent": Decimal("100"), "leftover": Decimal("0"), "settling": True},
+            {"start": "2026-08-13", "end": "2026-08-26", "target": Decimal("100"),
+             "spent": Decimal("100"), "leftover": Decimal("0"), "settling": True},
+            {"start": "2026-07-30", "end": "2026-08-12", "target": Decimal("100"),
+             "spent": Decimal("60"), "leftover": Decimal("40"), "settling": False},
+        ],
         "carryover_earlier": Decimal("0"), "available": Decimal("140"),
     }}
     assert budget_repo.writes == []
-    assert {t["transaction_id"] for t in data.transactions} == {"old", "prior", "now"}
+    assert {t["transaction_id"] for t in data.transactions} == {"old", "prior", "mid1", "mid2", "now"}
 
 
 def test_load_chat_data_leaves_out_a_transfer_category(ai_chat, monkeypatch):

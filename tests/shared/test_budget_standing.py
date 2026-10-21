@@ -71,10 +71,10 @@ MIXED_TARGETS = {
     **PLAIN_TARGETS,
     # Parent budget: its own charges + every sub-category's, a refund netting before the floor.
     "food": {"target": D("400")},
-    # Rollover, aligned to the current pay cycle: two completed cycles to fold.
+    # Rollover, aligned to the current pay cycle: three completed cycles to fold.
     "fun": {
         "target": D("200"), "rollover": True, "carryover": D("10"),
-        "carryover_from": "2026-08-20", "carryover_len": D("14"), "carryover_paydate": "2026-09-17",
+        "carryover_from": "2026-08-06", "carryover_len": D("14"), "carryover_paydate": "2026-09-17",
     },
     # Rollover with no anchor yet: re-anchored at the current cycle start, keeping its balance.
     "gifts": {"target": D("80"), "rollover": True, "carryover": D("25")},
@@ -88,7 +88,8 @@ MIXED_CHARGES = PLAIN_CHARGES + [
     charge("dining", "2026-09-19", "-15", status="pending"),
     charge("coffee", "2026-09-18", "50"),  # refund
     charge("food", "2026-09-19", "-40"),
-    charge("fun", "2026-08-25", "-150"),  # cycle 08-20..09-02: leftover +50, sealed
+    charge("fun", "2026-08-10", "-150"),  # cycle 08-06..08-19: leftover +50, sealed
+    charge("fun", "2026-08-25", "-200"),  # cycle 08-20..09-02: leftover 0, not sealed yet
     charge("fun", "2026-09-05", "-230"),  # cycle 09-03..09-16: leftover -30, not sealed yet
     charge("fun", "2026-09-18", "-40"),
     charge("holiday", "2026-09-19", "-100"),
@@ -103,7 +104,9 @@ MIXED_ROWS = {
         "carryover_cycles": [
             {"start": "2026-09-03", "end": "2026-09-16", "target": D("200"), "spent": D("230"),
              "leftover": D("-30"), "settling": True},
-            {"start": "2026-08-20", "end": "2026-09-02", "target": D("200"), "spent": D("150"),
+            {"start": "2026-08-20", "end": "2026-09-02", "target": D("200"), "spent": D("200"),
+             "leftover": D("0"), "settling": True},
+            {"start": "2026-08-06", "end": "2026-08-19", "target": D("200"), "spent": D("150"),
              "leftover": D("50"), "settling": False},
         ],
         "carryover_earlier": D("10"), "available": D("230"),
@@ -120,8 +123,8 @@ NO_SETTLEMENTS = {"rollover": {}}
 
 MIXED_SETTLEMENTS = {
     "rollover": {
-        "fun": {"carryover": D("60"), "carryover_from": "2026-09-03", "carryover_history": [
-            {"start": "2026-08-20", "end": "2026-09-02", "target": D("200"), "spent": D("150"),
+        "fun": {"carryover": D("60"), "carryover_from": "2026-08-20", "carryover_history": [
+            {"start": "2026-08-06", "end": "2026-08-19", "target": D("200"), "spent": D("150"),
              "leftover": D("50")},
         ]},
         "gifts": {"carryover": D("25"), "carryover_from": "2026-09-17"},
@@ -132,7 +135,7 @@ MIXED_SETTLEMENTS = {
 @pytest.mark.parametrize("targets, charges, fetch_start, expected_rows, expected_settlements", [
     pytest.param(PLAIN_TARGETS, PLAIN_CHARGES, "2026-09-17", PLAIN_ROWS, NO_SETTLEMENTS,
                  id="plain spend + income budgets read only this cycle"),
-    pytest.param(MIXED_TARGETS, MIXED_CHARGES, "2026-08-20", MIXED_ROWS, MIXED_SETTLEMENTS,
+    pytest.param(MIXED_TARGETS, MIXED_CHARGES, "2026-08-06", MIXED_ROWS, MIXED_SETTLEMENTS,
                  id="rollup, rollover and a stale flag"),
 ])
 def test_each_budget_standing_this_cycle_is_worked_out_from_targets_cycle_categories_and_charges(

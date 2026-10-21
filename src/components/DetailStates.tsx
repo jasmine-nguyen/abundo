@@ -12,7 +12,7 @@ import { ListStates } from './ListStates';
 export function DetailStates({ isLoading, isError, hasCache, idPrefix, errorText, retryLabel, onRetry, children }: {
   isLoading: boolean; isError: boolean; hasCache: boolean;
   idPrefix: string; errorText: string; retryLabel: string;
-  onRetry: () => void; children: React.ReactNode;
+  onRetry: () => unknown; children: React.ReactNode;
 }) {
   const showSpinner = isLoading && !hasCache;
   const showError = isError && !hasCache;

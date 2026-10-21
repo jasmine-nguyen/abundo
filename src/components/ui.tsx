@@ -56,13 +56,20 @@ export function HeroBlobs() {
 // error states — the Goal hero balance error, the Goal repayment error, and the milestone
 // balance error — can't drift apart on a11y (WHIT-121). WHIT-771: it also owns the default
 // accent chip look; a caller's style/textStyle is merged on top (e.g. hero-ink on the light hero).
+// ABU-47: a retry can take seconds (the query layer backs off between attempts), so while the
+// onPress promise is pending the button shows a spinner and ignores taps.
 export function RetryButton({ onPress, label, testID, style, textStyle }: {
-  onPress: () => void; label: string; testID: string;
+  onPress: () => unknown; label: string; testID: string;
   style?: StyleProp<ViewStyle>; textStyle?: StyleProp<TextStyle>;
 }) {
+  const [busy, setBusy] = React.useState(false);
+  const press = async () => {
+    setBusy(true);
+    try { await onPress(); } finally { setBusy(false); }
+  };
   return (
-    <Pressable onPress={onPress} style={[styles.retryBtn, style]} accessibilityRole="button" accessibilityLabel={label} testID={testID}>
-      <Text style={[styles.retryText, textStyle]}>Retry</Text>
+    <Pressable onPress={press} disabled={busy} style={[styles.retryBtn, style]} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ busy }} testID={testID}>
+      {busy ? <ActivityIndicator color={C.accentSoft} testID={`${testID}-busy`} /> : <Text style={[styles.retryText, textStyle]}>Retry</Text>}
     </Pressable>
   );
 }

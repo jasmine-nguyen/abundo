@@ -2,6 +2,7 @@
 // Bearer token and not-OK throw are covered by the shared API contract tests. fetch +
 // getAuthToken mocked; no network.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { saveGoal, deleteGoal } from '../api';
 import type { GoalWriteBody } from '../api';
 
@@ -15,12 +16,11 @@ function okJson(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 }
 
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 
 beforeEach(() => {
   mockGetAuthToken.mockReset().mockResolvedValue('test-token');
-  fetchMock = jest.fn();
-  (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+  fetchMock = stubFetch();
 });
 
 function lastCall(): [string, any] {

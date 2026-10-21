@@ -5,7 +5,18 @@
 // silent refresh with a single-flight guard, the near-expiry skew buffer, sign-out,
 // restoreSession, and the pure gateRedirect decision.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { METHOD_KEY, REFRESH_KEY, invalidGrantError, loadAuth, nowSec } from './support/authModule';
+import {
+  HOSTED_UI_DOMAIN,
+  METHOD_KEY,
+  REFRESH_KEY,
+  SRP_METHOD,
+  clearCognitoEnv,
+  invalidGrantError,
+  loadAuth,
+  nowSec,
+  setCognitoEnv,
+  stubFetch,
+} from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -38,8 +49,6 @@ jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: (...a: unknown[]) => mockOpenAuthSession(...(a as [string, string])),
 }));
 
-const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-
 beforeEach(() => {
   jest.resetModules();
   mockStore.clear();
@@ -47,13 +56,11 @@ beforeEach(() => {
   mockExchange.mockReset();
   mockRefresh.mockReset();
   mockOpenAuthSession.mockClear();
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = DOMAIN;
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
+  setCognitoEnv({ hostedUi: true });
 });
 
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
+  clearCognitoEnv();
 });
 
 // signInWithGoogle is the sole remaining entry into the Hosted UI PKCE flow (the neutral
@@ -71,7 +78,7 @@ describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
     await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: true });
     expect(mockExchange).toHaveBeenCalledWith(
       expect.objectContaining({ clientId: 'client123', code: 'AUTH_CODE', extraParams: { code_verifier: 'test-verifier' } }),
-      expect.objectContaining({ tokenEndpoint: `${DOMAIN}/oauth2/token` }),
+      expect.objectContaining({ tokenEndpoint: `${HOSTED_UI_DOMAIN}/oauth2/token` }),
     );
     expect(mockStore.get(REFRESH_KEY)).toBe('REFRESH_TOKEN');
     expect(auth.getStatus()).toBe('authed');
@@ -138,7 +145,7 @@ describe('getAuthToken', () => {
     await expect(auth.getAuthToken()).resolves.toBe('FRESH_ID');
     expect(mockRefresh).toHaveBeenCalledWith(
       expect.objectContaining({ clientId: 'client123', refreshToken: 'STORED_REFRESH' }),
-      expect.objectContaining({ tokenEndpoint: `${DOMAIN}/oauth2/token` }),
+      expect.objectContaining({ tokenEndpoint: `${HOSTED_UI_DOMAIN}/oauth2/token` }),
     );
   });
 
@@ -339,9 +346,9 @@ describe('token swap outcomes (ABU-84)', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     (require('../apiError') as typeof import('../apiError')).readFailureIsOffline;
   const useSrpRefresh = (response: () => Promise<unknown>) => {
-    mockStore.set(METHOD_KEY, 'srp');
-    process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = 'ap-southeast-2_pool123';
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(response);
+    mockStore.set(METHOD_KEY, SRP_METHOD);
+    setCognitoEnv({ hostedUi: true, userPool: true });
+    stubFetch(response);
   };
 
   function recordStatuses(auth: typeof import('../auth')): string[] {
@@ -365,7 +372,6 @@ describe('token swap outcomes (ABU-84)', () => {
   });
   afterEach(() => {
     jest.useRealTimers();
-    delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
   });
 
   describe('a swap that never answers', () => {

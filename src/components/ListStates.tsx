@@ -28,7 +28,7 @@ export function ListStates({
   idPrefix: string;
   errorText: string;
   retryLabel: string;
-  onRetry: () => void;
+  onRetry: () => unknown;
   error?: unknown;
 }) {
   return (

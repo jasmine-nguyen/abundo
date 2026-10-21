@@ -25,7 +25,7 @@ from _transaction_range_fakes import _QueuedTransactionRepo
 pytestmark = pytest.mark.usefixtures("fixed_window")
 
 # A fixed monthly cycle: current cycle_start 2026-08-06, today 2026-08-10 (4 days in), payday
-# grid anchored at 2026-01-06 (the 6th of each month). The settle lag is 10 days, so the cutoff is 2026-07-31: a
+# grid anchored at 2026-01-06 (the 6th of each month). The settle lag is 30 days, so the cutoff is 2026-07-11: a
 # completed cycle whose end is before that seals; a more recent one stays live.
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -50,7 +50,7 @@ def _entry(target, **extra):
 
 def test_empty_cycles_accumulate_into_the_buffer_and_seal_the_settled_ones(handler):
     # Anchor 3 cycles back (2026-05-06), all empty, target 100/cycle. Two oldest cycles are
-    # older than the 10-day lag -> sealed (200); the most recent completed cycle is still live
+    # older than the 30-day lag -> sealed (200); the most recent completed cycle is still live
     # (+100). Displayed carryover = 300; the seal advances the anchor past the two sealed cycles.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-06")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
@@ -211,12 +211,12 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
 
 
 @pytest.mark.parametrize("today, settle_calls", [
-    # cutoff = today-10 = 2026-08-05: the completed cycle [2026-07-06, 2026-08-05] ends EXACTLY
+    # cutoff = today-30 = 2026-08-05: the completed cycle [2026-07-06, 2026-08-05] ends EXACTLY
     # on it. The seal test is a strict `<`, so it stays live (recomputed each read).
-    ("2026-08-15", []),
+    ("2026-09-04", []),
     # cutoff 2026-08-06: the same cycle now ends strictly before it, so it seals and the anchor
     # advances to the next cycle start. The boundary is exactly one day wide.
-    ("2026-08-16", [("sink", Decimal(100), "2026-08-06", LENGTH, PAYDATE)]),
+    ("2026-09-05", [("sink", Decimal(100), "2026-08-06", LENGTH, PAYDATE)]),
 ])
 def test_the_lag_cutoff_seals_only_cycles_ending_strictly_before_it(handler, monkeypatch, today, settle_calls):
     pin_cycle_window(handler, monkeypatch, "2026-08-06", today)
@@ -236,7 +236,7 @@ def test_a_parents_sealed_leftover_folds_child_spend_across_the_subtree(handler,
     # its own. In a SEALED past cycle the child spent 30. The sealed leftover must be 100-30=70,
     # not 100 — _seal_rollover has to fold the whole subtree per cycle, exactly as the current
     # window does. Fail-on-revert: sealing on {parent} only would read 100 sealed / carryover 200.
-    pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
+    pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-11
     budget_repo = recording_budget_repo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-06")})
     cats = _FakeCategoryRepo(_spend_cat("food", "Lifestyle") + _spend_cat("dining", "Lifestyle", parent="food"))
     # dining spend lands in the sealed cycle [2026-06-06, 2026-07-05]; the live cycle is empty.
@@ -256,7 +256,7 @@ def test_a_refund_in_a_sealed_cycle_cannot_push_leftover_above_target(handler, m
     # A net refund in a past cycle drives that cycle's spend negative, but fold_subtree clamps
     # per-cycle spend at >= 0, so the sealed leftover caps at the target (100), never 150. Pins
     # the aggregate-then-clamp rule for sealing. (A user-visible surprise — see the critique.)
-    pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
+    pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-11
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-06")})
     # +50 amount with the default spend sign is a refund (negative contribution) in the sealed cycle.
     txns = _QueuedTransactionRepo([_txn("sink", 50, "2026-06-20")])
@@ -275,7 +275,7 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
     # windows are end-inclusive to 08-05, and the current slice is [cycle_start, today]. Fail-on-
     # revert: an off-by-one that bucketed 08-06 into the live cycle would drop posted to 0 and
     # shrink that cycle's leftover.
-    pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
+    pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-11
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-06")})
     # A spend in a PAST sealed cycle (25) + a spend dated exactly cycle_start (40). Only the
     # cycle_start one is this cycle's posted spend; the past one belongs to the sealed cycle,

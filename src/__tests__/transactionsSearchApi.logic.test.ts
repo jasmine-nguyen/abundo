@@ -2,6 +2,7 @@
 // reaches the server intact (every reserved URL character encoded), and [A7] the whole-history
 // search gets the long 30s timeout, not the 15s default. fetch is mocked; no network.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { fetchTransactionsSearch } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
@@ -9,12 +10,11 @@ import { getAuthToken } from '../auth';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 
 beforeEach(() => {
   mockGetAuthToken.mockReset().mockResolvedValue('test-token');
-  fetchMock = jest.fn();
-  (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+  fetchMock = stubFetch();
 });
 afterEach(() => { jest.useRealTimers(); });
 

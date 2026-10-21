@@ -1,14 +1,13 @@
 // Card 609 — the Ask Abundo wire contract: checking a chat job, and the drill-in's date-range
 // request. fetch + auth mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 import { fetchCategoryTransactions, getAiChatJob } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 function mockFetch(body: unknown, status = 200) {
-  const mock = jest.fn(async () => ({ ok: status < 400, status, json: async () => body }));
-  (globalThis as unknown as { fetch: unknown }).fetch = mock;
-  return mock;
+  return stubFetch(async () => ({ ok: status < 400, status, json: async () => body }));
 }
 
 function call(mock: ReturnType<typeof mockFetch>) {

@@ -8,7 +8,8 @@
 # the REMOTE state, which already records them as created with matching triggers,
 # so on a fresh runner they DON'T re-run and the build dirs stay absent — plan then
 # errors on a missing source_dir and apply would ship the webhook without its deps
-# (the documented 500). CI runs this script itself; keeping it the one recipe both
+# (the documented 500). The webhook and lambda_api are both staged from their
+# git-tracked *.py only, into terraform/build/<name>. CI runs this script itself; keeping it the one recipe both
 # sides use means the local and CI builds can never drift.
 #
 # Usage: build_terraform_artifacts.sh [webhook|lambda_api|shared_layer|all]  (default: all)
@@ -16,26 +17,32 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+stage_tracked_py() {
+  # Stage ONLY the git-tracked <src_dir>/*.py into a clean <dest>: a new committed
+  # module ships automatically, and untracked cruft (a stray __pycache__, a leftover
+  # stale module, an old pip install) never does.
+  local src_dir="$1" dest="$2" files f
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  files=$(git -C "$ROOT" ls-files -- ":(glob)$src_dir/*.py") || { echo "stage $src_dir: git ls-files failed" >&2; exit 1; }
+  [ -n "$files" ] || { echo "stage $src_dir: no tracked $src_dir/*.py" >&2; exit 1; }
+  while IFS= read -r f; do
+    cp "$ROOT/$f" "$dest/"
+  done <<<"$files"
+}
+
 build_webhook() {
-  # Install the webhook lambda's third-party deps into lambda/ (standardwebhooks).
+  # Stage the webhook lambda like lambda_api, then install its third-party deps
+  # (standardwebhooks) into the staged dir, never into lambda/ itself.
   # --no-deps on purpose: its declared deps (httpx, wrapt's compiled .so) are unused
   # and would ship an architecture-incompatible wheel into the Linux runtime.
-  python3 -m pip install --no-deps --quiet --target "$ROOT/lambda" -r "$ROOT/lambda/requirements.txt"
+  local dest="$ROOT/terraform/build/lambda"
+  stage_tracked_py lambda "$dest"
+  python3 -m pip install --no-deps --quiet --target "$dest" -r "$ROOT/lambda/requirements.txt"
 }
 
 build_lambda_api() {
-  # Stage lambda_api from ONLY its git-tracked *.py files into a clean dir: a new
-  # committed module ships automatically, and untracked cruft (a stray __pycache__,
-  # a leftover stale module) never does.
-  rm -rf "$ROOT/terraform/build/lambda_api"
-  mkdir -p "$ROOT/terraform/build/lambda_api"
-  local files
-  files=$(git -C "$ROOT" ls-files -- ':(glob)lambda_api/*.py') || { echo 'build_lambda_api: git ls-files failed' >&2; exit 1; }
-  [ -n "$files" ] || { echo 'build_lambda_api: no tracked lambda_api/*.py' >&2; exit 1; }
-  local f
-  while IFS= read -r f; do
-    cp "$ROOT/$f" "$ROOT/terraform/build/lambda_api/"
-  done <<<"$files"
+  stage_tracked_py lambda_api "$ROOT/terraform/build/lambda_api"
 }
 
 build_shared_layer() {

@@ -50,15 +50,16 @@ FEED_WINDOW_DAYS = 7
 
 # Settlement window, in days, after which a still-pending transaction is reaped as a
 # ghost that will never settle (WHIT-79). Measured from the bank `date` (the only age
-# signal on a stored row — there is no ingest timestamp). Set safely PAST FEED_WINDOW_DAYS
-# (7): BankSync stops re-sending a transaction after that window, so a pending older than
-# 10 days can no longer receive a settlement push — it is genuinely frozen.
-PENDING_AGE_OUT_DAYS = 10
+# signal on a stored row — there is no ingest timestamp). Sized so slow holds (hotels, car
+# rental, deposits: 10–30 days) are still stored when their posted row arrives, letting the
+# settlement carry the user's filing across (ABU-50). Cost: a cancelled pre-auth counts toward
+# spend until day 30.
+PENDING_AGE_OUT_DAYS = 30
 
 # ABU-41: how far back each bank message reads an account's pendings to match a settlement.
 # Age-out reaps every pending past PENDING_AGE_OUT_DAYS daily, so a live pending is always
 # inside this window unless the sweep stops for a month.
-PENDING_LOOKBACK_DAYS = 30
+PENDING_LOOKBACK_DAYS = 45
 assert PENDING_LOOKBACK_DAYS > PENDING_AGE_OUT_DAYS, "the pending lookback must outlast the age-out window"
 
 # WHIT-511: how far apart a filed pending and its settled twin may be dated and still have the
@@ -69,8 +70,9 @@ assert PENDING_LOOKBACK_DAYS > PENDING_AGE_OUT_DAYS, "the pending lookback must 
 CARRY_DATE_SKEW_DAYS = 3
 
 # How long the "deleted by you" marker for a user-deleted transaction lives (WHIT-654). Must stay
-# well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the deleted charge back.
-DELETED_TRANSACTION_TTL_SECONDS = 30 * 24 * 3600
+# well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the deleted charge back, and past
+# PENDING_AGE_OUT_DAYS so a still-settling pending can't bring it back either.
+DELETED_TRANSACTION_TTL_SECONDS = 45 * 24 * 3600
 
 # How long the "settled" marker for a pending consumed by its posted twin lives (ABU-36). Must stay
 # well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the settled pending back.
@@ -248,7 +250,7 @@ assert HOMELOAN_ACCOUNT_ID not in FEED_STALL_ACCOUNT_IDS, "the home loan must no
 # a spend figure that later changes. Kept equal to PENDING_AGE_OUT_DAYS; a test asserts
 # lockstep. Shared so both the /budgets read (lambda_api) and the budget-alert webhook
 # path can seal/compute the live buffer identically.
-ROLLOVER_SETTLE_LAG_DAYS = 10
+ROLLOVER_SETTLE_LAG_DAYS = 30
 
 # Upper bound on how many completed cycles one read folds. Bounds a first-open-after-a-
 # long-gap read; older leftovers are dropped and the anchor jumps forward.

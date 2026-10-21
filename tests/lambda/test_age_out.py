@@ -1,24 +1,27 @@
 """Tests for the stale-pending age-out sweep (WHIT-79, lambda/age_out.py).
 
 `age_out_stale_pendings(repo, category_repo, today, dry_run)` deletes any pending whose bank `date`
-is strictly older than PENDING_AGE_OUT_DAYS (10) before `today` — a ghost that never
+is strictly older than PENDING_AGE_OUT_DAYS before `today` — a ghost that never
 got a matching posted (reversed pre-auth / unbalanced count). Window-only: a pending
 still in the store is unreconciled, so age alone decides. Dry-run writes nothing.
 Backed by the FakeTable `repo` fixture; `today` is injected for a deterministic cutoff.
 """
 
-from datetime import date
+import pathlib
+from datetime import date, timedelta
 
 import pytest
 from _feed_fakes import FakeCategoryRepo, date_reads
+from _lambda_api_constants import constants_namespace
 
 # BankSync account ids that resolve via ACCOUNT_ID_MAP to two distinct internal ids.
 _ACCOUNT_A = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 _ACCOUNT_B = "3zVQJ8Btz_IRmqp78VrQnQ"                        # -> up-spending
 
-# Fixed "today" so the cutoff is deterministic: 2026-07-01 - 10 days -> cutoff 2026-06-21.
+# Fixed "today", derived from the window so the cutoff is always 2026-06-21.
 # A pending dated < 2026-06-21 is stale; == 2026-06-21 is the boundary (kept); later is young.
-_TODAY = date(2026, 7, 1)
+_SHARED_CONSTANTS = constants_namespace(pathlib.Path(__file__).resolve().parents[2] / "shared" / "constants.py")
+_TODAY = date(2026, 6, 21) + timedelta(days=_SHARED_CONSTANTS["PENDING_AGE_OUT_DAYS"])
 
 
 def _raw_row(txn_id, date_str, pending=True, amount=-5.50, account=_ACCOUNT_A):
@@ -57,7 +60,7 @@ def _sweep(lam, repo, dry_run=False):
 
 
 def test_reaps_pending_older_than_window(lam, repo):
-    # 21 days old (well past the 10-day window) with no posted twin -> a ghost -> reaped.
+    # 11 days before the cutoff with no posted twin -> a ghost -> reaped.
     _store(lam, repo, _raw_row("ghost", "2026-06-10"))
 
     summary = _sweep(lam, repo)
@@ -67,7 +70,7 @@ def test_reaps_pending_older_than_window(lam, repo):
 
 
 def test_boundary_cutoff_date_is_kept_one_day_older_is_reaped(lam, repo):
-    # date == cutoff (exactly 10 days) is NOT stale; one day older IS. Locks the
+    # date == cutoff (exactly PENDING_AGE_OUT_DAYS old) is NOT stale; one day older IS. Locks the
     # strictly-older (`< cutoff`) comparison against an off-by-one.
     _store(lam, repo,
            _raw_row("oncutoff", "2026-06-21"),   # == cutoff -> kept
@@ -277,7 +280,7 @@ def test_rescue_carries_notes_and_tags_when_category_unfiled(lam, repo):
 @pytest.mark.parametrize("twin_date, twin_over", [
     ("2026-06-12", {"amount": -9.99}),                        # a different amount
     ("2026-06-12", {"description": "TOTALLY DIFFERENT SHOP"}),  # a different shop
-    ("2026-06-20", {}),                                       # 10 days > the 3-day window
+    ("2026-06-20", {}),                                       # 10 days after the hold > the 3-day carry window
 ])
 def test_no_confident_twin_reaps_without_a_carry(lam, repo, twin_date, twin_over):
     # Strict: not the same charge -> reaped as today, the twin is untouched.
@@ -632,3 +635,33 @@ def test_a_later_sweep_never_lands_a_category_on_a_charge_an_earlier_sweep_exclu
     assert carried["budget_excluded"] is True
     assert carried.get("category") != "groceries"
     assert not carried.get("notes")
+
+
+# --- ABU-50: a slow hold (hotel / car rental / deposit) settles inside the window ----------
+
+
+# [A1] a 20-day hold settled with the same swipe date. [A2] some ANZ settlements arrive with a blank
+# authorized_date; a slow hold must still carry its filing across then, not sit beside it unfiled.
+@pytest.mark.parametrize("hold_age_days, posted_authorized_date", [
+    (20, "same"),
+    (20, None),
+])
+def test_slow_hold_survives_the_sweep_and_settles_with_its_filing(lam, repo, monkeypatch, hold_age_days,
+                                                                  posted_authorized_date):
+    # A filed hotel hold swiped days ago, its settled charge arriving afterwards. The sweep
+    # must keep the hold so the normal settlement carries the category across. Fail-on-revert:
+    # with a 10-day window the hold is reaped and the settled charge lands unfiled.
+    monkeypatch.setattr(lam.repository, "melbourne_today", lambda: _TODAY)
+    hold = _norm(lam, "hotel_hold", (_TODAY - timedelta(days=hold_age_days)).isoformat(), pending=True,
+                 amount=-320.00, description="HOTEL GRAND", category="groceries")
+    repo.insert_transactions([hold])
+
+    _sweep_tax(lam, repo, ["groceries"])
+    assert "hotel_hold" in _rows(repo), "slow hold was reaped before it could settle"
+
+    posted = _norm(lam, "hotel_settled", (_TODAY - timedelta(days=1)).isoformat(), pending=False, amount=-320.00,
+                   description="HOTEL GRAND", category=None)
+    posted["authorized_date"] = hold["authorized_date"] if posted_authorized_date == "same" else None
+    repo.insert_or_reconcile([posted], pools=repo.get_match_pools([posted]))
+
+    assert [(r["status"], r.get("category")) for r in _rows(repo).values()] == [("posted", "groceries")]

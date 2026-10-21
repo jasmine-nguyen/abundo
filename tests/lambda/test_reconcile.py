@@ -249,11 +249,15 @@ def test_blank_auth_does_not_merge_a_different_merchant(lam, repo):
     assert len(store) == 2
 
 
-def test_blank_auth_does_not_merge_outside_the_date_window(lam, repo):
-    # Same merchant + amount, but the pending is 20 days older than the settlement — well
-    # past the window — so it must not be swept in.
+# [A3] the blank-swipe-date window is PENDING_AGE_OUT_DAYS (30) inclusive: a hold swiped exactly 30
+# days before its settlement merges, 31 days before does not.
+@pytest.mark.parametrize("pending_date, merged", [
+    ("2026-06-21", True),
+    ("2026-06-20", False),
+])
+def test_blank_auth_merges_only_inside_the_date_window(lam, repo, pending_date, merged):
     _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
-                  authorized_date="2026-07-01", date="2026-07-01", pending=True,
+                  authorized_date=pending_date, date=pending_date, pending=True,
                   description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
                   merchant_name="ISAN THAI STREET FOOD")
     posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
@@ -262,8 +266,32 @@ def test_blank_auth_does_not_merge_outside_the_date_window(lam, repo):
 
     repo.insert_or_reconcile([posted])
 
-    assert (_acc(posted), "TXN#PEND") in repo._table.store   # outside window -> not merged
-    assert len(_txn_store(repo)) == 2
+    assert ((_acc(posted), "TXN#PEND") not in repo._table.store) == merged
+    assert len(_txn_store(repo)) == (1 if merged else 2)
+
+
+def test_blank_auth_prefers_the_newest_pending_over_a_lingering_old_hold(lam, repo):
+    # [A4] A cancelled hold from 25 days ago still sits in the pool beside this week's real pending,
+    # same shop and amount. The 30-day window now reaches both, so the settlement must take the
+    # nearest one; taking the old hold would date the charge 25 days back and orphan the real pending.
+    _seed_pending(repo, lam, txn_id="A_OLD", amount=Decimal("-74.46"),
+                  authorized_date="2026-06-26", date="2026-06-26", pending=True,
+                  description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
+                  merchant_name="ISAN THAI STREET FOOD")
+    _seed_pending(repo, lam, txn_id="B_NEW", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-19", date="2026-07-19", pending=True,
+                  description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
+                  merchant_name="ISAN THAI STREET FOOD")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN THAI STREET FOOD MELBOURNE",
+                   merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    store = _txn_store(repo)
+    acc = _acc(posted)
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-19"
+    assert (acc, "TXN#A_OLD") in store and (acc, "TXN#B_NEW") not in store
 
 
 def test_blank_auth_single_word_merchant_does_not_reconcile(lam, repo):

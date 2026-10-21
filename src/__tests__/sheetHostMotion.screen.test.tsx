@@ -83,7 +83,7 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
       .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
     const { UNSAFE_getByType } = await mount(paycycleState());
     expect(UNSAFE_getByType(Modal).props.animationType).toBe('fade'); // NOT the old 'slide'
-    expect(screen.getByText('Fortnightly')).toBeTruthy();             // sheet content mounted
+    expect(await screen.findByText('Fortnightly')).toBeTruthy();      // sheet content mounted
     expect(springSpy).toHaveBeenCalledTimes(1);                       // the open spring fired
   });
 
@@ -92,7 +92,7 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
     const springSpy = jest.spyOn(Animated, 'spring');
     const { UNSAFE_getByType } = await mount(paycycleState());
     expect(UNSAFE_getByType(Modal).props.animationType).toBe('none');
-    expect(screen.getByText('Fortnightly')).toBeTruthy(); // still rendered immediately
+    expect(await screen.findByText('Fortnightly')).toBeTruthy(); // rendered once the pay cycle loads
     expect(springSpy).not.toHaveBeenCalled();
   });
 });

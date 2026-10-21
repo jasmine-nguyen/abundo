@@ -1378,7 +1378,7 @@ def designer_news(state: BuildState, continuing: bool) -> list[str]:
     if feedback and previous_plan:
         resend = not continuing or previous_plan != state.get("plan")
         parts.append(
-            "--- REWORK ---\nYour previous plan was sent back. Do NOT start from scratch: "
+            "--- REWORK ---\nYour previous plan was sent back. Don't start from scratch: "
             "apply the feedback and keep everything else intact.\n\n"
             f"## Feedback\n{feedback}" + (f"\n\n## Previous plan\n{previous_plan}" if resend else "")
         )

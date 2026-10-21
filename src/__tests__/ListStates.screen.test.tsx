@@ -4,7 +4,7 @@
 // computes (mutually exclusive on the real screens).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { ListStates, StaleDataLine } from '../components/ListStates';
 import { pinToday } from './support/clock';
 
@@ -25,6 +25,20 @@ it('renders the error + retry with the prefixed testIDs and copy, and Retry fire
   expect(screen.getByText("Couldn't load your accounts.")).toBeTruthy();
   fireEvent.press(screen.getByTestId('accounts-retry'));
   expect(onRetry).toHaveBeenCalledTimes(1);
+});
+
+// ABU-47: a retry backs off for seconds, so the button must show it's working and ignore taps.
+it('shows a spinner on Retry and ignores taps until the retry settles', async () => {
+  let settle = () => {};
+  const onRetry = jest.fn(() => new Promise<void>((resolve) => { settle = resolve; }));
+  render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="x" retryLabel="y" onRetry={onRetry} />);
+  fireEvent.press(screen.getByTestId('accounts-retry'));
+  expect(screen.getByTestId('accounts-retry-busy')).toBeTruthy();
+  fireEvent.press(screen.getByTestId('accounts-retry'));
+  expect(onRetry).toHaveBeenCalledTimes(1);
+  await act(async () => { settle(); });
+  expect(screen.queryByTestId('accounts-retry-busy')).toBeNull();
+  expect(screen.getByText('Retry')).toBeTruthy();
 });
 
 it('renders nothing when neither state is active', () => {

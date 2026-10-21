@@ -81,7 +81,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Terraform init
-        run: terraform -chdir=terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+        run: terraform -chdir=terraform init -input=false -lockfile=readonly -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
       - name: Terraform fmt
         run: terraform -chdir=terraform fmt -check -recursive
       - name: Terraform validate
@@ -132,6 +132,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Terraform init
-        run: terraform -chdir=terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+        run: terraform -chdir=terraform init -input=false -lockfile=readonly -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
       - name: Terraform apply
         run: terraform -chdir=terraform apply -auto-approve -input=false -lock-timeout=5m

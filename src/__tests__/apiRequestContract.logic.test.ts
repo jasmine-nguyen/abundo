@@ -2,6 +2,7 @@
 // endpoint, the method / path / time limit / body the old hand-written fetches sent, so a change to
 // `request()` or to one endpoint's declaration can't quietly move them.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { stubFetch } from './support/fetchStub';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
@@ -11,16 +12,15 @@ import { REASON_ENDPOINTS, WIRE } from './support/apiWire';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 const BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
-let fetchMock: jest.Mock;
+let fetchMock: ReturnType<typeof stubFetch>;
 let timers: number[];
 const realSetTimeout = global.setTimeout;
 
 beforeEach(() => {
   mockGetAuthToken.mockReset();
   mockGetAuthToken.mockResolvedValue('tok');
-  fetchMock = jest.fn(() =>
+  fetchMock = stubFetch(() =>
     Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ count: 0 }) }));
-  (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
   timers = [];
   // Record every timer's delay (the fetch abort timer, then the body-read timer) without firing it.
   (global as unknown as { setTimeout: unknown }).setTimeout = ((_fn: () => void, ms: number) => {
