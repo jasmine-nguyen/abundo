@@ -60,8 +60,8 @@ variable "github_repo_id" {
 }
 
 # The GitHub Environment the deploy job declares. The apply role's trust is pinned
-# to "...:environment:<this>", so ONLY a job that declares this environment can
-# assume the apply role. (Required-reviewer protection is Enterprise-only for private
+# to "...:environment:<this>:ref:refs/heads/main", so ONLY a job that declares this
+# environment AND runs from main can assume the apply role. (Required-reviewer protection is Enterprise-only for private
 # repos, so the actual deploy gate is deploy.yml's manual workflow_dispatch trigger,
 # not this environment.) This exact name must match the environment created in the
 # repo settings AND the `environment:` in deploy.yml.

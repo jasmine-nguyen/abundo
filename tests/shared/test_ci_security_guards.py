@@ -81,3 +81,47 @@ def test_workflow_token_is_read_only(workflow):
     assert match, f"{workflow} has no top-level permissions: block"
     assert re.search(r"^\s+contents:\s*read\b", match.group(1), re.M), f"{workflow} lacks contents: read"
     assert "write" not in re.sub(r"#.*", "", match.group(1)), f"{workflow} grants a write permission"
+
+
+SUB_KEY = '"token.actions.githubusercontent.com:sub"'
+
+
+def _trust_conditions(role):
+    """ABU-96: {operator: body} for each condition block in the role's trust policy."""
+    block = tf_block(BOOTSTRAP_MAIN_TF.read_text(), "aws_iam_role", role)
+    return dict(re.findall(r"(String\w+)\s*=\s*\{(.*?)\n\s*\}", block, re.S))
+
+
+def _sub_entries(condition_body):
+    match = re.search(rf"{re.escape(SUB_KEY)}\s*=\s*\[(.*?)\]", condition_body, re.S)
+    assert match, "no login-ID (sub) list in this condition block"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def test_apply_role_trusts_only_main():
+    # ABU-96: the release login must name the main branch, exactly, or any branch can deploy.
+    conditions = _trust_conditions("github_apply")
+    assert "StringLike" not in conditions, "the release login must not use wildcard matching"
+    entries = _sub_entries(conditions["StringEquals"])
+    assert len(entries) == 2
+    for entry in entries:
+        assert "*" not in entry
+        assert entry.endswith(":environment:${var.environment_name}:ref:${local.deploy_ref}"), \
+            f"release login trusts a login ID without the main branch: {entry}"
+    assert tf_attr(BOOTSTRAP_MAIN_TF.read_text(), "deploy_ref") == '"refs/heads/main"'
+
+
+def test_plan_role_trusts_only_pull_requests():
+    conditions = _trust_conditions("github_plan")
+    assert SUB_KEY not in conditions.get("StringEquals", ""), \
+        "the preview login's sub must sit only under StringLike (both blocks would be ANDed)"
+    entries = _sub_entries(conditions["StringLike"])
+    assert len(entries) == 2
+    for entry in entries:
+        assert entry.endswith(":pull_request:ref:refs/pull/*"), f"preview login trusts a non-PR login ID: {entry}"
+
+
+@pytest.mark.parametrize("role", ["github_apply", "github_plan"])
+def test_trust_pins_the_audience(role):
+    # [A3] moving sub into StringLike must not drag aud along or drop it.
+    assert '"token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"' in _trust_conditions(role)["StringEquals"]

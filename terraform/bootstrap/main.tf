@@ -11,6 +11,9 @@ locals {
   github_repo_parts    = split("/", var.github_repo)
   sub_prefix_legacy    = "repo:${var.github_repo}"
   sub_prefix_immutable = "repo:${local.github_repo_parts[0]}@${var.github_owner_id}/${local.github_repo_parts[1]}@${var.github_repo_id}"
+
+  # The only branch the apply role trusts. The repo's login-ID template includes `ref` (see DEPLOY.md).
+  deploy_ref = "refs/heads/main"
 }
 
 # --- Remote state backend infra ----------------------------------------------
@@ -159,10 +162,11 @@ resource "aws_iam_policy" "tfstate_apply" {
 
 # --- Plan role: assumed by PR (pull_request) runs, read-only + state ----------
 
-# Trust is pinned to the `pull_request` subject only, so this role can be assumed
-# from a PR run but never from a push to a branch. Both the legacy and immutable
-# subject forms are accepted (a list under StringEquals is an OR) so the login
-# works whichever form GitHub mints for this repo.
+# Trust is pinned to the `pull_request:ref:refs/pull/*` subject only, so this role
+# can be assumed from a PR run but never from a push to a branch. The subject
+# carries the PR's ref (the repo's login-ID template includes `ref`), hence
+# StringLike. Both the legacy and immutable subject forms are accepted (a list is
+# an OR) so the login works whichever form GitHub mints for this repo.
 resource "aws_iam_role" "github_plan" {
   name = "${var.project_name}-github-plan"
   assume_role_policy = jsonencode({
@@ -174,9 +178,11 @@ resource "aws_iam_role" "github_plan" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
           "token.actions.githubusercontent.com:sub" = [
-            "${local.sub_prefix_legacy}:pull_request",
-            "${local.sub_prefix_immutable}:pull_request",
+            "${local.sub_prefix_legacy}:pull_request:ref:refs/pull/*",
+            "${local.sub_prefix_immutable}:pull_request:ref:refs/pull/*",
           ]
         }
       }
@@ -264,9 +270,10 @@ resource "aws_iam_role_policy" "plan_deny_data_reads" {
 
 # --- Apply role: assumed only by the gated `production` deploy job -------------
 
-# Trust is pinned to the `environment:<environment_name>` subject, so this role
-# can ONLY be assumed by a job that declares that environment. A PR run (subject
-# `pull_request`) can never assume it. The deploy gate is deploy.yml's manual
+# Trust is pinned to the `environment:<environment_name>:ref:refs/heads/main`
+# subject, so this role can ONLY be assumed by a job that declares that environment
+# AND runs from main (ABU-96). A PR run (subject `pull_request:...`) or a run from
+# any other branch can never assume it. The deploy gate is deploy.yml's manual
 # workflow_dispatch trigger (required-reviewer protection is Enterprise-only for
 # private repos). Both the legacy and immutable subject forms are accepted (a list
 # under StringEquals is an OR).
@@ -282,8 +289,8 @@ resource "aws_iam_role" "github_apply" {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           "token.actions.githubusercontent.com:sub" = [
-            "${local.sub_prefix_legacy}:environment:${var.environment_name}",
-            "${local.sub_prefix_immutable}:environment:${var.environment_name}",
+            "${local.sub_prefix_legacy}:environment:${var.environment_name}:ref:${local.deploy_ref}",
+            "${local.sub_prefix_immutable}:environment:${var.environment_name}:ref:${local.deploy_ref}",
           ]
         }
       }
