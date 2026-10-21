@@ -210,6 +210,53 @@ def test_pending_pool_read_failure_fails_the_message_without_writing(lam, monkey
     assert repo.has_event("evt_pool") is False
 
 
+# --- ABU-60: the same row twice in one bank message ---------------------------
+
+_UP_SPENDING = "3zVQJ8Btz_IRmqp78VrQnQ"
+
+
+def test_a_row_sent_twice_in_one_message_is_stored_once_and_acked(lam, monkeypatch):
+    # DynamoDB rejects a batch write holding one key twice, so an un-deduped repeat 500s the
+    # message and BankSync re-sends it forever.
+    repo = _ingest_repo(lam, monkeypatch)
+    pending = {**_delivery_row("p1", _UP_SPENDING), "pending": True}
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_repeat", "data": [pending, pending]})
+
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+    stored = [key for key in repo._table.store if key[1] == "TXN#p1"]
+    assert stored == [("ACCOUNT#up-spending", "TXN#p1")]
+    assert repo.has_event("evt_repeat") is True
+
+
+def test_a_repeated_posted_row_settles_one_pending_and_leaves_the_other(lam, monkeypatch):
+    # Posted P is the exact twin of pending A; pending B only matches P through the looser tip
+    # tier. A second copy of P must not claim (and delete) B as well.
+    repo = _ingest_repo(lam, monkeypatch)
+    row = {**_delivery_row("P", _UP_SPENDING), "merchantName": "WOOLWORTHS METRO",
+           "description": "WOOLWORTHS METRO"}
+    repo.insert_transactions([
+        lam.banksync.normalise({**row, "id": "A", "pending": True}),
+        lam.banksync.normalise({**row, "id": "B", "pending": True, "amount": "-5.00"}),
+    ])
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_repeat_posted", "data": [row, row]})
+
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+    store = repo._table.store
+    assert ("ACCOUNT#up-spending", "TXN#A") not in store
+    assert ("ACCOUNT#up-spending", "TXN#P") in store
+    assert ("ACCOUNT#up-spending", "TXN#B") in store
+
+
+def test_a_repeated_row_keeps_the_last_copy(lam, monkeypatch):
+    repo = _ingest_repo(lam, monkeypatch)
+    first = {**_delivery_row("p1", _UP_SPENDING), "pending": True, "amount": "-5.50"}
+    last = {**first, "amount": "-7.25"}
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_repeat_last", "data": [first, last]})
+
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+    assert repo._table.store[("ACCOUNT#up-spending", "TXN#p1")]["amount"] == Decimal("-7.25")
+
+
 # --- observability: per-delivery log line ------------------------------------
 
 

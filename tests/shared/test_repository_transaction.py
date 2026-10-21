@@ -47,6 +47,17 @@ def test_insert_transactions_writes_prefixed_keys_and_strips_none(repo):
     assert "category" not in item  # None stripped by sanitise_transaction
 
 
+def test_insert_transactions_with_one_row_twice_stores_the_last_copy(repo):
+    # [A4] ABU-60: DynamoDB rejects a batch holding one key twice; the writer must drop repeats
+    # itself, for callers (reprocess, age-out, the pending mirror) that don't de-dupe first.
+    row = {"account_id": "acct", "transaction_id": "t1", "amount": Decimal("-1.00")}
+    repo.insert_transactions([row, {**row, "amount": Decimal("-2.00")}])
+    assert repo._table.store == {
+        ("ACCOUNT#acct", "TXN#t1"): {"pk": "ACCOUNT#acct", "sk": "TXN#t1", **row,
+                                     "amount": Decimal("-2.00")},
+    }
+
+
 # --------------------------------------------------------------------------- #
 # save_failed_transactions                                                     #
 # --------------------------------------------------------------------------- #

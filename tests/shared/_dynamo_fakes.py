@@ -17,7 +17,8 @@ pass with its guard dead.
 It also enforces four of DynamoDB's validation rules: an UpdateExpression over the 4KB ceiling,
 a declared ExpressionAttributeName/Value that no expression uses, an ADD/DELETE that mixes set
 types (a number into a String Set), and an empty set anywhere in a written value (SET/ADD/DELETE
-values, put_item, batch put; nested ones included) raise ValidationException. So does (an app rule, stricter than DynamoDB) a set holding numbers: the app stores only String Sets.
+values, put_item, batch put; nested ones included) raise ValidationException. So does a
+batch_writer flush (25 puts) that writes one key twice without ``overwrite_by_pkeys``. So does (an app rule, stricter than DynamoDB) a set holding numbers: the app stores only String Sets.
 Reads and writes are deep copies.
 
 Test hooks: ``fail`` (make a call raise), ``before_write`` / ``before_next_write`` (simulate a
@@ -35,6 +36,10 @@ import sys
 # DynamoDB's documented UpdateExpression ceiling. Enforced so an expression the real service would
 # reject cannot pass in tests — without it, WHIT-405's chunk cap could go and every test stay green.
 _MAX_UPDATE_EXPRESSION_BYTES = 4096
+
+# boto3's batch_writer sends at most 25 puts per BatchWriteItem request; DynamoDB rejects a
+# request that writes one key twice, unless overwrite_by_pkeys de-dupes the buffer first.
+_BATCH_FLUSH_SIZE = 25
 
 # The index keys a query page's LastEvaluatedKey carries, besides the table's own pk/sk.
 _INDEX_KEYS = {
@@ -395,10 +400,14 @@ class FakeTable:
 
     # --- DynamoDB surface ------------------------------------------------------------------
 
-    def batch_writer(self):
+    def batch_writer(self, overwrite_by_pkeys=None):
         table = self
 
         class _Batch:
+            def __init__(self_):
+                self_._flush_keys = set()
+                self_._puts = 0
+
             def __enter__(self_):
                 return self_
 
@@ -408,7 +417,15 @@ class FakeTable:
             def put_item(self_, Item):
                 table._check_failure("batch_writer", Item)
                 _check_no_empty_set(Item)
-                table.store[_store_key(Item)] = copy.deepcopy(Item)
+                key = _store_key(Item)
+                if key in self_._flush_keys and not overwrite_by_pkeys:
+                    raise _client_error("ValidationException",
+                                        "Provided list of item keys contains duplicates")
+                table.store[key] = copy.deepcopy(Item)
+                self_._flush_keys.add(key)
+                self_._puts += 1
+                if self_._puts % _BATCH_FLUSH_SIZE == 0:
+                    self_._flush_keys = set()
 
         return _Batch()
 
