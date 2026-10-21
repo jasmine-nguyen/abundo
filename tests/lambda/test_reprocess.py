@@ -201,17 +201,21 @@ def test_a_charge_the_user_deleted_stays_deleted_after_a_recovery_run(lam, repo)
     assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 1, "dropped_settled": 0}
 
 
-def test_a_parked_pending_that_has_since_settled_is_cleared_not_stored(lam, repo):
+# [A3] the settled marker only ever drops a pending: a posted row under the same id is stored.
+@pytest.mark.parametrize("pending, reprocessed, dropped_settled", [(True, 0, 1), (False, 1, 0)])
+def test_a_parked_pending_that_has_since_settled_is_cleared_not_stored(lam, repo, pending,
+                                                                         reprocessed, dropped_settled):
     # ABU-36: its posted twin already used the pending up, so storing it would count it twice.
-    pending = lam.banksync.normalise(_raw_row(txn_id="r1", pending=True))
-    repo.mark_settled(f"ACCOUNT#{pending['account_id']}", "TXN#r1")
-    repo.save_failed_transactions([_raw_row(txn_id="r1", pending=True)])
+    normalised = lam.banksync.normalise(_raw_row(txn_id="r1", pending=pending))
+    repo.mark_settled(f"ACCOUNT#{normalised['account_id']}", "TXN#r1")
+    repo.save_failed_transactions([_raw_row(txn_id="r1", pending=pending)])
 
     summary = reprocess_failed(lam.reprocess, repo)
 
-    assert "TXN#r1" not in _txn_rows(repo)
+    assert ("TXN#r1" in _txn_rows(repo)) == (not pending)
     assert _failed_keys(repo) == []
-    assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0, "dropped_deleted": 0, "dropped_settled": 1}
+    assert summary == {"reprocessed": reprocessed, "skipped": 0, "errors": 0, "dropped_zero": 0,
+                       "dropped_deleted": 0, "dropped_settled": dropped_settled}
 
 
 def test_a_failed_deleted_by_you_check_leaves_the_row_parked_and_stores_nothing(lam, repo):

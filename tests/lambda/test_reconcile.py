@@ -8,6 +8,7 @@ lose the user's category. These tests build rows through `banksync.normalise`
 so the stored shapes match production, and inject a FakeTable via `repo._table`.
 """
 
+import time
 from decimal import Decimal
 
 import pytest
@@ -83,7 +84,9 @@ def test_settling_a_pending_leaves_a_settled_marker_for_it(lam, repo):
 
     marker = repo._table.store.get(("SETTLED#" + _acc(posted), "TXN#A"))
     assert marker is not None
-    assert "expires_at" in marker
+    # [A2] it must outlive every BankSync re-send of the pending
+    from constants import FEED_WINDOW_DAYS
+    assert marker["expires_at"] > time.time() + FEED_WINDOW_DAYS * 24 * 3600
 
 
 def test_a_pending_resent_while_its_settlement_lands_is_not_brought_back(lam, repo):
@@ -97,6 +100,19 @@ def test_a_pending_resent_while_its_settlement_lands_is_not_brought_back(lam, re
     repo.insert_or_reconcile([resent_pending])
 
     assert list(_txn_store(repo)) == [(_acc(posted), "TXN#B")]
+
+
+def test_a_pending_whose_update_misses_its_row_reads_both_markers_consistently(lam, repo):
+    # [A1] the marker was written moments ago by a parallel settlement: an eventually consistent
+    # read could miss it and re-create the pending beside its posted twin.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True)
+
+    repo.insert_or_reconcile([pending])
+
+    reads = dict(zip((k["pk"].split("#")[0] for k in repo._table.get_item_keys),
+                     repo._table.consistent_reads))
+    assert reads["SETTLED"] is True
+    assert reads["DELETED"] is True
 
 
 def test_a_pending_resent_while_the_user_deletes_it_is_not_brought_back(lam, repo):
