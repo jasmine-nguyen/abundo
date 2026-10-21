@@ -72,6 +72,7 @@ locals {
     "GET /homeloan",
     "GET /accounts/balances",
     "POST /accounts/balances/refresh",
+    "POST /transactions/sync",
     "GET /repayment",
     "GET /loanfacts",
     "PUT /loanfacts",

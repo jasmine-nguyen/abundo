@@ -8,6 +8,7 @@ import { useTransactionsScreenData, useHomeLoanProgress } from '../../src/querie
 import { isHomeLoanAccount } from '../../src/homeLoanAccount';
 import { orderAccounts, accountAccent, accountKind, accountSubtitle, balanceDisplay, ACCOUNT_KIND_ICON } from '../../src/accountDisplay';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { syncBankTransactions } from '../../src/api';
 import { LARGE_TEXT_MAX_SCALE, useLargeText } from '../../src/hooks/useLargeText';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
@@ -41,7 +42,7 @@ export default function Accounts() {
   // A successful pull confirms itself with "Balances up to date" — a live refresh often returns
   // the same number (unchanged balance, or the server's 60s throttle), so without this feedback
   // an intact pull looks like it did nothing.
-  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date');
+  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date', syncBankTransactions);
 
   return (
     <ScrollChromeHeader

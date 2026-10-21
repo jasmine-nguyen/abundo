@@ -1,4 +1,13 @@
 import { useCallback, useState } from 'react';
+import type { BankSyncStatus } from '../api';
+
+const BALANCES_FAILED_TOAST = 'Could not refresh balances. Showing last saved.';
+const SYNC_FAILED_TOAST = "Couldn't get new transactions from your bank. Showing what we have.";
+const SYNC_TOASTS: Partial<Record<BankSyncStatus | 'error', string>> = {
+  syncing: 'Still syncing with your bank. Pull again in a minute.',
+  failed: SYNC_FAILED_TOAST,
+  error: SYNC_FAILED_TOAST,
+};
 
 // WHIT-363 / WHIT-489: the shared pull-to-refresh handler for the list tabs (Transactions,
 // Accounts). Pull refreshes the visible list AND fetches fresh account balances live from the
@@ -18,22 +27,39 @@ import { useCallback, useState } from 'react';
 //
 // WHIT-713: the live-balance call and the toast are optional. Budgets passes only its refetch,
 // so a pull refreshes the screen's data alone; the spinner invariant is the same.
+//
+// ABU-106: `syncBank` (optional) asks the bank for new transactions first; the list reloads
+// once it settles, whatever the outcome, while the balances refresh alongside. One toast at the
+// end of the pull: a bank sync still running or failed wins over the balance message.
 export function usePullToRefresh(
   refetchList: () => Promise<unknown>,
   refreshLiveBalances?: () => Promise<unknown>,
   showToast?: (message: string) => void,
   successMessage?: string,
+  syncBank?: () => Promise<{ status: BankSyncStatus }>,
 ): { pulling: boolean; onRefresh: () => void } {
   const [pulling, setPulling] = useState(false);
   const onRefresh = useCallback(() => {
     setPulling(true);
-    const pulls = [refetchList()];
+    let syncOutcome: BankSyncStatus | 'error' | undefined;
+    let balanceToast: string | undefined;
+    const list = syncBank
+      ? syncBank()
+        .then((reply) => reply.status, () => 'error' as const)
+        .then((status) => { syncOutcome = status; return refetchList(); })
+      : refetchList();
+    const pulls = [list];
     if (refreshLiveBalances) {
-      pulls.push(refreshLiveBalances()
-        .then(() => { if (successMessage) showToast?.(successMessage); })
-        .catch(() => showToast?.('Could not refresh balances. Showing last saved.')));
+      pulls.push(refreshLiveBalances().then(
+        () => { balanceToast = successMessage; },
+        () => { balanceToast = BALANCES_FAILED_TOAST; },
+      ));
     }
-    Promise.allSettled(pulls).finally(() => setPulling(false));
-  }, [refetchList, refreshLiveBalances, showToast, successMessage]);
+    Promise.allSettled(pulls).finally(() => {
+      const toast = (syncOutcome && SYNC_TOASTS[syncOutcome]) ?? balanceToast;
+      if (toast) showToast?.(toast);
+      setPulling(false);
+    });
+  }, [refetchList, refreshLiveBalances, showToast, successMessage, syncBank]);
   return { pulling, onRefresh };
 }

@@ -18,12 +18,12 @@ def _account_balance_key(account_id: str) -> dict:
     return {"pk": f"ACCTBAL#{account_id}", "sk": "BALANCE"}
 
 
-# The on-demand refresh throttle marker: a single row holding the epoch of the last live
-# BankSync fetch. Its sk is "MARKER" (not "BALANCE") and "REFRESH" is never an account id,
-# so it can never be mistaken for a balance row by list_balances; it carries no
-# `account_id`/`date`, so it stays out of the date-index GSI.
-def _refresh_marker_key() -> dict:
-    return {"pk": "ACCTBAL#REFRESH", "sk": "MARKER"}
+# A throttle marker: a single row holding the epoch of the last live BankSync attempt — "REFRESH"
+# (balance refresh) or "BANKSYNC" (the pull's transaction-sync cooldown, ABU-106). Its sk is
+# "MARKER" (not "BALANCE") and the name is never an account id, so it can never be mistaken for a
+# balance row by list_balances; it carries no `account_id`/`date`, so it stays out of the GSI.
+def _marker_key(name: str) -> dict:
+    return {"pk": f"ACCTBAL#{name}", "sk": "MARKER"}
 
 
 class AccountBalanceRepository(RepositoryBase):
@@ -91,23 +91,38 @@ class AccountBalanceRepository(RepositoryBase):
             })
         return out
 
+    def _get_marker(self, name: str) -> Optional[int]:
+        with db_errors(f"read {name} marker"):
+            item = self._get_table().get_item(Key=_marker_key(name)).get("Item")
+        if item is None:
+            return None
+        return int(item["last_fetch_at"])
+
+    def _set_marker(self, name: str, now: int) -> None:
+        with db_errors(f"write {name} marker"):
+            self._get_table().put_item(Item={**_marker_key(name), "last_fetch_at": now})
+
     def get_last_refresh_at(self) -> Optional[int]:
         """Epoch seconds of the last on-demand live refresh, or None if never refreshed.
 
         Backs the 60s throttle on POST /accounts/balances/refresh.
         """
-        with db_errors("read balance refresh marker"):
-            item = self._get_table().get_item(Key=_refresh_marker_key()).get("Item")
-        if item is None:
-            return None
-        return int(item["last_fetch_at"])
+        return self._get_marker("REFRESH")
 
     def set_last_refresh_at(self, now: int) -> None:
         """Record that a live refresh was attempted at epoch `now` (plain put)."""
-        with db_errors("write balance refresh marker"):
-            self._get_table().put_item(
-                Item={**_refresh_marker_key(), "last_fetch_at": now}
-            )
+        self._set_marker("REFRESH", now)
+
+    def get_last_bank_sync_at(self) -> Optional[int]:
+        """Epoch seconds of the last pull's BankSync sync attempt, or None if never.
+
+        Backs the 2-minute cooldown on POST /transactions/sync (ABU-106).
+        """
+        return self._get_marker("BANKSYNC")
+
+    def set_last_bank_sync_at(self, now: int) -> None:
+        """Record that a pull's BankSync sync was attempted at epoch `now` (plain put)."""
+        self._set_marker("BANKSYNC", now)
 
 
 def _feed_watch_key(account_id: str) -> dict:

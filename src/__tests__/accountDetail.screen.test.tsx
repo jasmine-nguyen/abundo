@@ -166,10 +166,17 @@ it('pull refreshes the list and live balances, headings show the day total, bala
 // -$100.00 or the toast never fires.
 it('a pull whose live balance call succeeds shows the live balance and confirms it', async () => {
   server.seed('/accounts/balances', [bal({ amount: -100, available_balance: 0 })]);
-  server.once('POST', '/accounts/balances/refresh', { body: [bal({ amount: -250, available_balance: 0 })] });
   await renderWithQueries(<AccountDetail />);
   expect(screen.getByText('$100.00')).toBeTruthy();
+  // The live refresh saves the fresh balance (as the real server does); ABU-106's bank sync is
+  // held so the stored balances aren't re-read until the live value has shown.
+  const fresh = [bal({ amount: -250, available_balance: 0 })];
+  server.seed('/accounts/balances', fresh);
+  server.once('POST', '/accounts/balances/refresh', { body: fresh });
+  const bankSync = server.hold('/transactions/sync');
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  expect(await screen.findByText('$250.00')).toBeTruthy();
+  bankSync.release();
   await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
   expect(await screen.findByText('$250.00')).toBeTruthy();
   expect(mockShowToast).toHaveBeenCalledTimes(1);
