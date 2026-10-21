@@ -7,7 +7,7 @@
 // the defensive unsupported-challenge + synchronous-throw handling, and the un-hit
 // mapCognitoError branches. SDK / SecureStore / fetch mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, METHOD_KEY, fakeSession, loadAuth, nowSec } from './support/authModule';
+import { REFRESH_KEY, METHOD_KEY, clearCognitoEnv, fakeSession, loadAuth, nowSec, setCognitoEnv, stubFetch } from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, callbacks: Record<string, (arg?: unknown) => void>) => void>();
@@ -28,9 +28,7 @@ jest.mock('expo-auth-session', () =>
   require('./support/authModule').authSessionMock({ refresh: mockRefreshAsync }),
 );
 
-const POOL_ID = 'ap-southeast-2_abc123';
-
-let mockFetch: jest.Mock<(url: string, init?: { body: string }) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>;
+let mockFetch: ReturnType<typeof stubFetch>;
 
 const freshClaims = () => ({ iat: nowSec(), exp: nowSec() + 3600 });
 const expiredClaims = () => ({ iat: nowSec() - 4000, exp: nowSec() - 400 });
@@ -43,16 +41,11 @@ beforeEach(() => {
   mockSetItem.mockReset().mockResolvedValue(undefined);
   mockDeleteItem.mockReset().mockResolvedValue(undefined);
   mockRefreshAsync.mockReset();
-  mockFetch = jest.fn<(url: string, init?: { body: string }) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>();
-  (globalThis as unknown as { fetch: unknown }).fetch = mockFetch;
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
-  process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = POOL_ID;
+  mockFetch = stubFetch();
+  setCognitoEnv({ hostedUi: true, userPool: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  clearCognitoEnv();
 });
 
 describe('single-flight (double-tap)', () => {

@@ -4,7 +4,7 @@
 // written/read in lockstep; unlock success/cancel/invalidated; the ONE-TIME unlock
 // (no re-read on the next refresh); lock(); canBiometricLock; unlockOrRestore routing.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, SENTINEL_KEY, loadAuth, nowSec } from './support/authModule';
+import { REFRESH_KEY, SENTINEL_KEY, clearCognitoEnv, loadAuth, nowSec, setCognitoEnv } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -21,8 +21,6 @@ jest.mock('expo-secure-store', () =>
   require('./support/authModule').secureStoreMock({ getItem: mockGetItem, setItem: mockSetItem, deleteItem: mockDeleteItem, canUseBiometric: mockCanUseBiometric }),
 );
 
-const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-
 /** getItemAsync calls made against the guarded refresh-token key. */
 function refreshReads() {
   return mockGetItem.mock.calls.filter((c) => c[0] === REFRESH_KEY);
@@ -37,12 +35,10 @@ beforeEach(() => {
   mockSetItem.mockClear();
   mockDeleteItem.mockClear();
   mockCanUseBiometric.mockReset().mockReturnValue(false);
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = DOMAIN;
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
+  setCognitoEnv({ hostedUi: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
+  clearCognitoEnv();
 });
 
 async function signInOk(auth: typeof import('../auth')) {

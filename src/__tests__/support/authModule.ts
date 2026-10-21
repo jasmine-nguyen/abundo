@@ -1,6 +1,7 @@
 // WHIT-786 — shared setup for the suites that test src/auth.ts itself: the saved-login key names,
 // the clock, a fresh-module loader, a fake Cognito session, and builders for the native-module
-// mocks (keychain, Hosted UI, Cognito SDK). Usage in a suite:
+// mocks (keychain, Hosted UI, Cognito SDK), plus the Cognito env vars and a fake global fetch
+// (setCognitoEnv / clearCognitoEnv / stubFetch). Usage in a suite:
 //
 //   const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
 //   jest.mock('expo-secure-store', () => require('./support/authModule').secureStoreMock({ getItem: mockGetItem }));
@@ -13,6 +14,31 @@ import { jest } from '@jest/globals';
 export const REFRESH_KEY = 'abundo.cognito.refreshToken';
 export const SENTINEL_KEY = 'abundo.cognito.hasSession';
 export const METHOD_KEY = 'abundo.cognito.authMethod';
+export const SRP_METHOD = 'srp';
+export const HOSTED_UI_DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
+export const USER_POOL_ID = 'ap-southeast-2_pool123';
+
+/** Always sets the app client id; the Hosted UI domain and user pool are opt-in per suite. */
+export function setCognitoEnv({ hostedUi = false, userPool = false } = {}) {
+  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
+  if (hostedUi) process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = HOSTED_UI_DOMAIN;
+  if (userPool) process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = USER_POOL_ID;
+}
+
+export function clearCognitoEnv() {
+  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
+  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
+  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+}
+
+type FetchFake = (url: string, init?: { body: string }) => Promise<unknown>;
+
+/** Swaps global fetch for a jest.fn and returns it. */
+export function stubFetch(impl?: FetchFake) {
+  const fetch = jest.fn<FetchFake>(impl);
+  (globalThis as unknown as { fetch: unknown }).fetch = fetch;
+  return fetch;
+}
 
 export const nowSec = (): number => Math.floor(Date.now() / 1000);
 

@@ -5,7 +5,7 @@
 // seats an OAuth session (so it refreshes via /oauth2/token, not InitiateAuth).
 // expo-auth-session + expo-secure-store mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, loadAuth, nowSec } from './support/authModule';
+import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, clearCognitoEnv, loadAuth, nowSec, setCognitoEnv } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -36,12 +36,10 @@ beforeEach(() => {
   mockGetItem.mockReset().mockResolvedValue(null);
   mockSetItem.mockReset().mockResolvedValue(undefined);
   mockDeleteItem.mockReset().mockResolvedValue(undefined);
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
+  setCognitoEnv({ hostedUi: true });
 });
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
+  clearCognitoEnv();
 });
 
 describe('signInWithGoogle', () => {

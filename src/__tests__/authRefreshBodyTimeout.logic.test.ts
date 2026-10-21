@@ -4,7 +4,7 @@
 // refreshViaInitiateAuth is internal, so we drive it through the public getAuthToken; the storage
 // method key routes to the SRP (fetch) refresh path. Harness mirrors authRestoreSeedGaps.logic.test.ts.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { REFRESH_KEY, METHOD_KEY, loadAuth } from './support/authModule';
+import { REFRESH_KEY, METHOD_KEY, SRP_METHOD, clearCognitoEnv, loadAuth, setCognitoEnv, stubFetch } from './support/authModule';
 
 jest.mock('expo-auth-session', () => require('./support/authModule').authSessionMock());
 
@@ -18,23 +18,21 @@ beforeEach(() => {
   jest.useFakeTimers();
   mockGetItem.mockReset().mockImplementation(async (k) => {
     if (k === REFRESH_KEY) return 'R';
-    if (k === METHOD_KEY) return 'srp';   // cold-launch provenance → the InitiateAuth (fetch) refresh
+    if (k === METHOD_KEY) return SRP_METHOD;   // cold-launch provenance → the InitiateAuth (fetch) refresh
     return null;
   });
-  process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
-  process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = 'ap-southeast-2_pool123';
+  setCognitoEnv({ userPool: true });
 });
 afterEach(() => {
   jest.useRealTimers();
-  delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
+  clearCognitoEnv();
 });
 
 describe('InitiateAuth refresh body-read timeout (WHIT-448)', () => {
   // Fail-on-revert: drop the swap's withBodyTimeout → the stalled body never settles →
   // getAuthToken never settles → the explicit 3s test cap trips it red instead of hanging the runner.
   it('rejects as offline when the refresh body stalls forever, on the 15s budget', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
+    stubFetch(async () => ({
       ok: true,
       json: () => new Promise(() => {}),   // headers arrived; the body never settles
     }));
