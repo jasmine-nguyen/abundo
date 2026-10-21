@@ -30,6 +30,7 @@ from decimal import Decimal
 
 import pytest
 
+from _deadletter_fakes import _txn_store
 from _dynamo_fakes import FakeTable
 from standardwebhooks.webhooks import Webhook as _RealWebhook
 
@@ -262,8 +263,7 @@ def test_a_pending_resent_after_its_settlement_is_not_brought_back(lam, monkeypa
     handler = _wire(lam, monkeypatch, repo, {"id": "evt_resend", "data": [pending]})
     assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
 
-    transaction_keys = [key for key in repo._table.store if key[0].startswith("ACCOUNT#")]
-    assert transaction_keys == [("ACCOUNT#up-spending", "TXN#P")]
+    assert list(_txn_store(repo)) == [("ACCOUNT#up-spending", "TXN#P")]
 
 
 def test_a_repeated_row_keeps_the_last_copy(lam, monkeypatch):
