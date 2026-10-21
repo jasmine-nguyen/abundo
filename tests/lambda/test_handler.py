@@ -233,7 +233,7 @@ def test_settlement_reads_the_pending_pool_once_bounded_to_recent_dates(lam, mon
     assert ("ACCOUNT#up-spending", "TXN#p1") not in store
     assert store[("ACCOUNT#up-spending", "TXN#s1")]["category"] == "groceries"
 
-    lookback_start = (today - timedelta(days=30)).isoformat()
+    lookback_start = (today - timedelta(days=45)).isoformat()
     conditions = [query["KeyConditionExpression"].conditions for query in repo._table.queries]
     assert not [c for c in conditions if ("pk", "eq", "ACCOUNT#up-spending") in c]
     pending_reads = [query for query in repo._table.queries

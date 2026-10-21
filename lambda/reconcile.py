@@ -15,7 +15,7 @@ from merchant import _merchant_gate, _words, clean_merchant, merchant_matches_pe
 from models import Transaction
 from constants import (
     AUTH_DATE_SKEW_DAYS,
-    FEED_WINDOW_DAYS,
+    PENDING_AGE_OUT_DAYS,
     PENDING_STATUS,
     SKEW_FEE_HEADROOM,
     TIP_HEADROOM,
@@ -62,12 +62,13 @@ def _is_larger_within(auth_amount: Decimal, settled_amount: Decimal, headroom: D
 
 def _settles_after(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
     """Whether `pending_date` could be the swipe day of a charge that settled on
-    `posted_date`: same day or up to FEED_WINDOW_DAYS earlier. Used only by the
-    blank-authorized_date twin tier, where there is no exact date key to match on, so
-    a bounded window keeps a coincidental same-amount pending from being swept in. An
-    unparseable/missing value is treated as out-of-window."""
+    `posted_date`: same day or up to PENDING_AGE_OUT_DAYS earlier, so a slow hold (hotel,
+    car rental: 10-30 days) still links to its blank-swipe-date settlement (ABU-50). Used
+    only by the blank-authorized_date twin tier, where there is no exact date key to match
+    on, so a bounded window keeps a coincidental same-amount pending from being swept in.
+    An unparseable/missing value is treated as out-of-window."""
     gap = day_gap(pending_date, posted_date)
-    return gap is not None and 0 <= gap <= FEED_WINDOW_DAYS
+    return gap is not None and 0 <= gap <= PENDING_AGE_OUT_DAYS
 
 
 def _pop_lowest_id(pool: list[dict], indices: list[int]) -> dict:
@@ -83,8 +84,8 @@ def _pop_lowest_id(pool: list[dict], indices: list[int]) -> dict:
 def _select_twin(pool: list[dict], predicate: Callable[[dict], bool]) -> Optional[dict]:
     """Return AND consume the one pending row `predicate` accepts, or None. The shared
     tail of every tier whose whole candidate set is a single predicate (exact, tip,
-    skewed-fee, blank-auth). The skewed tier pre-filters for its own reject logging, so it calls
-    _pop_lowest_id directly rather than going through here."""
+    skewed-fee). The skewed tier (reject logging) and the blank-auth tier (nearest date)
+    pre-filter, so they call _pop_lowest_id directly rather than going through here."""
     candidates = [i for i, item in enumerate(pool) if predicate(item)]
     if not candidates:
         return None
@@ -329,9 +330,10 @@ def _find_blank_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optional
     the swipe date. Runs LAST (after every exact/tip twin is claimed), and ONLY for a
     posted row that itself has no authorized_date. Match: EXACT amount + the posted
     merchant appearing (word-for-word, >=2 words) in the pending's raw description +
-    the pending dated within FEED_WINDOW_DAYS on-or-before the posted. The exact-amount
+    the pending dated within PENDING_AGE_OUT_DAYS on-or-before the posted. The exact-amount
     + strong-merchant + date-window gates mirror the tip tier's caution — this DELETES a
-    pending, so it must not merge a coincidental same-amount charge."""
+    pending, so it must not merge a coincidental same-amount charge. Among several
+    matches the one dated nearest the posted wins, then the lowest transaction_id."""
     if posted_txn.get("authorized_date"):
         return None  # has its own swipe date -> the exact/tip tiers handle it
     amount = posted_txn.get("amount")
@@ -341,13 +343,19 @@ def _find_blank_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optional
     if len(_words(merchant)) < 2:
         return None
     posted_date = posted_txn.get("date")
-    return _select_twin(
-        pool,
-        lambda item: item.get("amount") == amount
+    candidates = [
+        i for i, item in enumerate(pool)
+        if item.get("amount") == amount
         and _settles_after(item.get("date"), posted_date)
         and merchant_matches_pending(merchant, item.get("merchant_name") or "",
-                                     item.get("description") or ""),
-    )
+                                     item.get("description") or "")
+    ]
+    if not candidates:
+        return None
+    # The 30-day window can reach a lingering cancelled hold beside this week's real
+    # pending: take the one dated nearest the settlement so the old hold isn't merged.
+    nearest = max(pool[i]["date"] for i in candidates)
+    return _pop_lowest_id(pool, [i for i in candidates if pool[i]["date"] == nearest])
 
 
 def match_all(
@@ -370,7 +378,7 @@ def match_all(
     # Tightest gate first: exact date+amount at the same shop, then exact date+amount
     # at any shop, then a tip on the same day, then a date split one day by the
     # Melbourne/UTC clocks, then that same split with a small fee folded in, then the
-    # loosest (no swipe date at all, matched within a FEED_WINDOW_DAYS window).
+    # loosest (no swipe date at all, matched within a PENDING_AGE_OUT_DAYS window).
     for find_twin in (_find_exact_same_shop_twin, _find_exact_twin, _find_tip_twin,
                       _find_skewed_auth_twin, _find_skewed_fee_twin,
                       _find_blank_auth_twin):

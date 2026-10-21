@@ -1,6 +1,6 @@
 """WHIT-663 slice 1 — the ONE shared copy of "did the user edit this pending?", the settled-twin
 matching and the carry-across (shared/pending_carry.py), used by both the hourly pending mirror
-and the 10-day age-out. Pure input → output: plain dict rows and a taxonomy stand-in.
+and the age-out. Pure input → output: plain dict rows and a taxonomy stand-in.
 """
 
 import pathlib

@@ -50,7 +50,7 @@ variable "push_receipts_schedule_expression" {
 }
 
 # Cadence for the stale-pending age-out sweep (WHIT-79). Daily is plenty — a pending
-# only becomes reapable once it's >10 days old, so nothing is gained by sweeping more
+# only becomes reapable once it's older than PENDING_AGE_OUT_DAYS (30), so nothing is gained by sweeping more
 # often. Accepts any EventBridge Scheduler expression.
 variable "age_out_schedule_expression" {
   description = "EventBridge Scheduler expression controlling how often stale pending transactions are aged out"
