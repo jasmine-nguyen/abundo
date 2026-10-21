@@ -253,12 +253,6 @@ ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 # first. Bounds the size of the single BUDGETS item; anything older stays folded into the total.
 ROLLOVER_HISTORY_MAX_CYCLES = 26
 
-# Retention window for FAILED# dead-letter items (WHIT-54). Written as a DynamoDB
-# TTL (epoch-seconds `expires_at`), so a stuck row auto-expires instead of
-# accumulating forever — long enough to notice + reprocess (see the recovery
-# lambda, WHIT-55), short enough not to pile up. 30 days.
-DEAD_LETTER_TTL_SECONDS = 30 * 24 * 60 * 60
-
 # --- Rules -------------------------------------------------------------------
 # The (field, operator) pairs a rule may use — the one home for the rule vocabulary (WHIT-608).
 # The rule engine evaluates them and the API validates requests against them, so the two can't

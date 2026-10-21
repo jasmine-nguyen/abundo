@@ -13,7 +13,6 @@ from constants import (
     ACCOUNT_ID_MAP,
     BATCH_CATEGORY_WORKERS,
     DATE_RANGE_MAX_PAGES,
-    DEAD_LETTER_TTL_SECONDS,
     DELETED_TRANSACTION_TTL_SECONDS,
     MAX_PAGE_SIZE,
     PENDING_STATUS,
@@ -114,10 +113,9 @@ class TransactionRepository(RepositoryBase):
                 "pk": "FAILED",
                 "sk": f"{now.isoformat()}#{uuid.uuid4()}",
                 "raw": json.dumps(transaction),
-                # failed_at: readable "how long stuck". expires_at: DynamoDB TTL
-                # (epoch seconds) so old dead-letter rows auto-expire (WHIT-54).
+                # failed_at: readable "how long stuck". No expires_at: rows stay until the
+                # reprocess lambda clears them; the dead-letter alarm flags them (ABU-32).
                 "failed_at": now.isoformat(),
-                "expires_at": int(now.timestamp()) + DEAD_LETTER_TTL_SECONDS,
             }
             items.append(item)
         self._batch_put(items, "save_failed_transactions")
