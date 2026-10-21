@@ -4,7 +4,7 @@
 // read (success and failure) gets its own budget via withBodyTimeout. request() and failed() are
 // internal, so we drive them through public readers. fetch + auth mocked; fake timers advance the clock.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { fetchCategories, createCategory } from '../api';
+import { fetchCategories, updateCategory } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
@@ -43,11 +43,11 @@ describe('request timeout', () => {
   });
 
   // Fail-on-revert (both below): swap the timed body read for a bare `response.json()` → the read
-  // never settles → createCategory never rejects → this hits the explicit 3s test timeout.
+  // never settles → updateCategory never rejects → this hits the explicit 3s test timeout.
   it('rejects when a 2xx body stalls forever, on the default read budget', async () => {
     (globalThis as unknown as { fetch: unknown }).fetch = stalledBody(true, 200);
 
-    const pending = createCategory(input);
+    const pending = updateCategory('coffee', input);
     const rejects = expect(pending).rejects.toThrow('body read timed out');
     await jest.advanceTimersByTimeAsync(0);        // flush the awaited auth token + the header-resolve
     await jest.advanceTimersByTimeAsync(15_000);   // trip the body-read timeout
@@ -57,7 +57,7 @@ describe('request timeout', () => {
   it('rejects with a status-only ApiError when the error body stalls forever', async () => {
     (globalThis as unknown as { fetch: unknown }).fetch = stalledBody(false, 400);
 
-    const pending = createCategory(input);
+    const pending = updateCategory('coffee', input);
     const rejects = expect(pending).rejects.toMatchObject({
       name: 'ApiError',
       status: 400,

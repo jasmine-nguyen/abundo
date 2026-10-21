@@ -212,7 +212,8 @@ _EXACT_ROUTES = {
     ("GET", CATEGORY_PATH): lambda event: _json_response(
         200, CategoryRepository().list_categories()),
     ("POST", CATEGORY_PATH): lambda event: create_category(
-        event, CategoryRepository(), BudgetRepository()),
+        event, CategoryRepository(), BudgetRepository(), RuleRepository(),
+        TransactionRepository()),
     # Window is derived server-side from the stored pay cycle; a stale client's ?days= is
     # simply not read (ignored, never a 400).
     ("GET", BUDGET_PATH): lambda event: _json_response(
@@ -269,7 +270,8 @@ _PREFIX_ROUTES = [
     ("PATCH", _under(CATEGORY_PATH), lambda event: update_category(
         event, CategoryRepository(), BudgetRepository())),
     ("DELETE", _under(CATEGORY_PATH), lambda event: delete_category(
-        event, CategoryRepository(), BudgetRepository())),
+        event, CategoryRepository(), BudgetRepository(), RuleRepository(),
+        TransactionRepository())),
     # The transactions behind one budget's total, so the detail list reconciles with the header.
     ("GET", _under(BUDGET_PATH, "/transactions"), lambda event: get_budget_transactions(
         event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
@@ -819,19 +821,60 @@ def _parse_transfer(body: dict) -> tuple[dict, dict | None]:
     return {"transfer": body["transfer"]}, None
 
 
+def _clear_leftovers(cat_id: str, repo: CategoryRepository, rule_repo: RuleRepository,
+                     transaction_repo: TransactionRepository, started: float) -> int:
+    """Delete the rules filing into `cat_id` and unfile the charges still filed to it (ABU-33), so
+    a category deleted or recreated under the same slug never inherits old rules or rows. Returns
+    how many charges it did NOT clear (past the time budget, or a failed write).
+
+    A no-op for a live id or the `income` sentinel. Rules go first, so an incoming charge can't be
+    filed into the id mid-clear. A DatabaseError from the rule or history read reaches the caller."""
+    taxonomy_ids = {category["id"] for category in repo.list_categories()}
+    if not is_unfiled_category(cat_id, taxonomy_ids):
+        return 0
+
+    for rule in rule_repo.list_rules():
+        if rule.get("category_id") == cat_id:
+            rule_repo.delete_rule(rule["id"])
+
+    # shortcut: reads the whole history on every create and delete, fine for one person's few
+    # thousand rows; add a by-category lookup once history passes ~10k rows.
+    filed = [transaction for transaction in read_window(transaction_repo, None, None)
+             if transaction.get("category") == cat_id]
+    limit = WriteLimit(None, APPLY_RULES_TIME_BUDGET_SECONDS, started, clock=time.monotonic)
+    attempted = 0
+    failed = 0
+    for transaction in filed:
+        if limit.reached(attempted):
+            break
+        attempted += 1
+        try:
+            transaction_repo.clear_category_if_unchanged(
+                transaction["pk"], transaction["sk"], cat_id)
+        except DatabaseError:
+            failed += 1
+    return len(filed) - attempted + failed
+
+
 def create_category(
-    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository
+    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository,
+    rule_repo: RuleRepository, transaction_repo: TransactionRepository,
 ) -> dict:
     """POST /categories — create a category from name/bucket/icon.
 
     The id is a slug of the name (the shared BankSync/category vocabulary), color
     is server-assigned, and icon is optional (defaults when omitted).
 
+    ABU-33: the slug may name a deleted category whose rules or filed charges are still stored.
+    Those are cleared first; if some can't be (time ran out), the create is refused with a
+    "try again" 409 rather than letting the new category inherit them.
+
     WHIT-202: creating a Savings category ONTO an existing orphan budget target (a
     back-door PUT /budgets/<slug> before the category exists) is rejected — otherwise
     it resurrects the same un-renderable phantom the set_budget/update_category guards
     block. This is the third and final write-path guard for a Savings-bucket target.
     """
+    started = time.monotonic()
     body, error = _parse_json_body(event)
     if error:
         return error
@@ -863,6 +906,15 @@ def create_category(
     transfer, transfer_error = _parse_transfer(body)
     if transfer_error:
         return transfer_error
+
+    try:
+        left = _clear_leftovers(cat_id, repo, rule_repo, transaction_repo, started)
+    except DatabaseError as e:
+        logger.warning("leftover clean-up failed before creating category %s: %s", cat_id, e)
+        return _json_response(500, {"error": "could not create category"})
+    if left:
+        return _json_response(
+            409, {"error": "still clearing the old category with this name, try again"})
 
     try:
         created = repo.create_category(cat_id, name.strip(), bucket, icon, parent=parent, **transfer)
@@ -950,13 +1002,15 @@ def update_category(
 
 
 def delete_category(
-    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository
+    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository,
+    rule_repo: RuleRepository, transaction_repo: TransactionRepository,
 ) -> dict:
     """DELETE /categories/{id} — hard-delete a category, then cascade-delete its
-    budget target so a stale target can't linger (and silently reappear if a
-    same-slug category is later re-created). Transactions still referencing the id
-    render as Uncategorized client-side (intended — they need re-filing).
+    budget target, its rules and its charges' labels (ABU-33) so none of them can
+    linger (and silently reappear if a same-slug category is later re-created).
+    The unfiled charges then need re-filing.
     """
+    started = time.monotonic()
     cat_id = (event.get("pathParameters") or {}).get("id")
     if not cat_id:
         return _json_response(404, {"error": "category not found"})
@@ -979,6 +1033,16 @@ def delete_category(
         budget_repo.delete_budget(cat_id)
     except (VersionConflictError, DatabaseError) as e:
         logger.warning("budget cascade failed for deleted category %s: %s", cat_id, e)
+
+    # Same best-effort rule for the rules and labels: a tail left here is cleared by the
+    # create gate before the slug can be reused.
+    try:
+        left = _clear_leftovers(cat_id, repo, rule_repo, transaction_repo, started)
+    except DatabaseError as e:
+        logger.warning("leftover clean-up failed for deleted category %s: %s", cat_id, e)
+        return _json_response(200, {"id": cat_id})
+    if left:
+        logger.warning("%d charges still filed to deleted category %s", left, cat_id)
 
     return _json_response(200, {"id": cat_id})
 

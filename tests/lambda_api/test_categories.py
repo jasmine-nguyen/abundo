@@ -21,9 +21,13 @@ import pytest
 from _api_event import api_event
 from _category_fakes import (
     _CFG, _SLOT, _before_next_update, _cat, _categories_event,
-    _repo_with_fake_table, budget_repo, stored_budgets,
+    _repo_with_fake_table, budget_repo, empty_stores, inject_empty_stores, stored_budgets,
 )
 from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES
+from _feed_fakes import (
+    ANZ, HOMELOAN, SPENDING, _row, _rule, charge_writes, fail_writes, on_write, real_repos, set_category, stored,
+    vanish_on_write,
+)
 
 
 # --- handler-level fake ------------------------------------------------------
@@ -102,7 +106,7 @@ def _category_item_event(method, cat_id="coffee",
 def test_create_success(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event(), repo, budget_repo())
+    resp = handler.create_category(_categories_event(), repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 201
     body = json.loads(resp["body"])
@@ -114,7 +118,7 @@ def test_create_slugifies_multiword_name(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.create_category(
-        _categories_event('{"name": "Gym Membership!", "bucket": "Living", "icon": "dumbbell"}'), repo, budget_repo())
+        _categories_event('{"name": "Gym Membership!", "bucket": "Living", "icon": "dumbbell"}'), repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls[0][0] == "gymmembership"
@@ -136,7 +140,7 @@ def test_create_slugifies_multiword_name(handler):
 def test_create_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event(body), repo, budget_repo())
+    resp = handler.create_category(_categories_event(body), repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -145,7 +149,7 @@ def test_create_bad_body_400(handler, body):
 def test_create_duplicate_409(handler):
     repo = FakeCategoryRepo(duplicate_exc=handler.DuplicateCategoryError)
 
-    resp = handler.create_category(_categories_event(), repo, budget_repo())
+    resp = handler.create_category(_categories_event(), repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 409
 
@@ -159,7 +163,7 @@ def test_create_savings_over_orphan_budget_rejected_400(handler):
     budget = budget_repo({"gym": {"target": 58}})
 
     resp = handler.create_category(
-        _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget)
+        _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []       # the Savings category was NOT created
@@ -172,7 +176,7 @@ def test_create_savings_without_orphan_budget_allowed(handler):
     budget = budget_repo({})
 
     resp = handler.create_category(
-        _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget)
+        _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls == [("gym", "Gym", "Savings", "dumbbell")]
@@ -182,6 +186,7 @@ def test_post_categories_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
+    inject_empty_stores(handler, monkeypatch)
 
     resp = handler.lambda_handler(_categories_event(), None)
 
@@ -345,7 +350,7 @@ def test_delete_success(handler):
     repo = FakeCategoryRepo()
     budget = budget_repo({"coffee": {"target": 58}})
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "coffee"}
@@ -359,7 +364,7 @@ def test_delete_missing_id_returns_404(handler):
     event = _category_item_event("DELETE", body=None)
     event["pathParameters"] = {}
 
-    resp = handler.delete_category(event, repo, budget)
+    resp = handler.delete_category(event, repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 404
     assert repo.delete_calls == []
@@ -370,7 +375,7 @@ def test_delete_unknown_id_returns_404(handler):
     repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
     budget = budget_repo({"coffee": {"target": 58}})
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 404
     # Category delete failed -> the cascade must NOT run (never touch the budget of a
@@ -385,7 +390,7 @@ def test_delete_cascade_conflict_is_best_effort(handler):
     budget = budget_repo({"coffee": {"target": 58}})
     budget._table.always_race()          # every write loses → VersionConflictError
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 200
     assert budget._table.update_calls != []                       # the cascade was attempted
@@ -399,7 +404,7 @@ def test_delete_cascade_db_error_is_best_effort(handler):
     budget = budget_repo({"coffee": {"target": 58}})
     budget._table.fail("update_item")    # a throttle → the repository raises DatabaseError
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 200
     assert budget._table.update_calls != []                       # the cascade was attempted
@@ -415,20 +420,25 @@ def test_delete_cascade_non_db_runtimeerror_is_not_swallowed(handler):
     budget._table.fail("update_item", error=RuntimeError("bug: not a DB error"))
 
     with pytest.raises(RuntimeError, match="bug"):
-        handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+        handler.delete_category(_category_item_event("DELETE", body=None), repo, budget, *empty_stores())
 
 
 def test_delete_dispatch(handler, monkeypatch):
-    repo = FakeCategoryRepo()
-    budget = budget_repo({"coffee": {"target": 58}})
+    table, transaction_repo, rule_repo = _leftover_stores()
+    repo = FakeCategoryRepo(categories=[_cat("petrol")])
+    budget = budget_repo({"groceries": {"target": 58}})
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget)
+    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
 
-    resp = handler.lambda_handler(_category_item_event("DELETE", body=None), None)
+    resp = handler.lambda_handler(
+        _category_item_event("DELETE", cat_id="groceries", body=None), None)
 
     assert resp["statusCode"] == 200
-    assert repo.delete_calls == ["coffee"]
+    assert repo.delete_calls == ["groceries"]
     assert stored_budgets(budget) == {}                # route wires the cascade
+    _assert_groceries_leftovers_cleared(table, rule_repo)  # ...and the rule/label clean-up
 
 
 def test_repo_create_on_empty_table_preserves_seeds(handler):
@@ -739,7 +749,7 @@ def test_create_passes_parent_through(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "transport"}'),
-        repo, budget_repo())
+        repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 201
     assert repo.create_parents == ["transport"]
@@ -751,7 +761,7 @@ def test_create_parent_rejected_by_repo_400(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "transport"}'),
-        repo, budget_repo())
+        repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 400
 
@@ -932,7 +942,7 @@ def test_delete_parent_promotes_children_and_cascades_only_parent_budget(handler
     budget = budget_repo({"transport": {"target": 100}, "groceries": {"target": 50}})
 
     resp = handler.delete_category(
-        _category_item_event("DELETE", cat_id="transport", body=None), repo, budget)
+        _category_item_event("DELETE", cat_id="transport", body=None), repo, budget, *empty_stores())
 
     assert resp["statusCode"] == 200
     items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
@@ -966,7 +976,7 @@ def test_handler_create_depth_breach_surfaces_plain_message_400(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "L6", "bucket": "Living", "icon": "car", "parent": "l5"}'),
-        repo, budget_repo())
+        repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 400
     assert "5 levels" in json.loads(resp["body"])["error"]
@@ -1084,7 +1094,7 @@ def test_deleting_an_over_wide_parent_returns_400_not_a_crash(handler):
     _parent_with_children(repo, repository, 123)
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None),
-                                   repo, budget_repo())
+                                   repo, budget_repo(), *empty_stores())
 
     assert resp["statusCode"] == 400
     assert "move some out" in json.loads(resp["body"])["error"]
@@ -1243,7 +1253,7 @@ def test_a_refused_delete_does_not_cascade_delete_the_budget(handler):
     _parent_with_children(repo, repository, 400)   # comfortably past any plausible expression frontier
     budgets = budget_repo({"coffee": {"target": Decimal(100)}})
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budgets)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budgets, *empty_stores())
 
     assert resp["statusCode"] == 400
     assert stored_budgets(budgets) == {"coffee": {"target": Decimal(100)}}
@@ -1261,7 +1271,7 @@ def test_the_create_and_reparent_refusals_reach_the_client_as_400s(handler):
     posted = handler.create_category(
         _categories_event(json.dumps({"name": "Wine", "bucket": "Lifestyle",
                                       "icon": "glass", "parent": "coffee"})),
-        repo, budget_repo())
+        repo, budget_repo(), *empty_stores())
     assert posted["statusCode"] == 400
     assert "sub-categories" in json.loads(posted["body"])["error"]
 
@@ -1298,7 +1308,7 @@ def test_transfer_flag_defaults_off_saves_and_survives_an_edit_that_leaves_it_ou
 
     created = handler.create_category(
         _categories_event('{"name": "Card Payment", "bucket": "Living", "icon": "card", "transfer": true}'),
-        repo, budget_repo())
+        repo, budget_repo(), *empty_stores())
     assert json.loads(created["body"])["transfer"] is True
 
     def card():
@@ -1315,3 +1325,211 @@ def test_transfer_flag_defaults_off_saves_and_survives_an_edit_that_leaves_it_ou
                              body='{"name": "Card Repayment", "bucket": "Living", "transfer": false}'),
         repo, budget_repo())
     assert card()["transfer"] is False
+
+
+# --- ABU-33: a deleted category's rules and transaction labels go with it -----
+
+
+def _leftover_stores():
+    """Real rule + transaction stores holding two groceries rules, one petrol rule, and rows
+    filed to groceries (hand-filed and rule-stamped), to petrol, and to nothing."""
+    return real_repos(
+        {SPENDING: [
+            _row(SPENDING, "2026-10-01", "hand", category="groceries"),
+            _row(SPENDING, "2026-10-02", "stamped", category="groceries",
+                 filed_by_rule="r-old", counts_to_budget=True),
+            _row(SPENDING, "2026-10-03", "fuel", category="petrol"),
+            _row(SPENDING, "2026-10-04", "blank"),
+        ]},
+        rules=[_rule("WOOLWORTHS"), _rule("COLES"), _rule("BP", category_id="petrol")],
+    )
+
+
+def _assert_groceries_leftovers_cleared(table, rule_repo):
+    assert sorted(rule["category_id"] for rule in rule_repo.list_rules()) == ["petrol"]
+    for transaction_id in ("hand", "stamped"):
+        row = stored(table, transaction_id)
+        assert "category" not in row
+        assert "filed_by_rule" not in row
+        assert row["counts_to_budget"] is True
+    assert stored(table, "fuel")["category"] == "petrol"
+    assert {sk for _, sk in charge_writes(table)} == {"TXN#hand", "TXN#stamped"}
+
+
+def test_recreating_a_category_name_does_not_inherit_old_rules_or_rows(handler, monkeypatch):
+    # Leftovers from a delete made before ABU-33 (or one cut short): recreating "Groceries"
+    # through the POST route must clear them before the category exists again.
+    table, transaction_repo, rule_repo = _leftover_stores()
+    repo = FakeCategoryRepo(categories=[_cat("petrol")])
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
+    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
+
+    resp = handler.lambda_handler(
+        _categories_event('{"name": "Groceries", "bucket": "Living", "icon": "cart"}'), None)
+
+    assert resp["statusCode"] == 201
+    assert repo.create_calls == [("groceries", "Groceries", "Living", "cart")]
+    _assert_groceries_leftovers_cleared(table, rule_repo)
+
+
+def _delete_groceries(handler, rule_repo, transaction_repo, repo=None):
+    return handler.delete_category(
+        _category_item_event("DELETE", cat_id="groceries", body=None),
+        repo or FakeCategoryRepo(categories=[_cat("petrol")]), budget_repo(),
+        rule_repo, transaction_repo)
+
+
+def _create_groceries(handler, repo, rule_repo, transaction_repo):
+    return handler.create_category(
+        _categories_event('{"name": "Groceries", "bucket": "Living", "icon": "cart"}'),
+        repo, budget_repo(), rule_repo, transaction_repo)
+
+
+def _slow_clock(handler, monkeypatch):
+    """The handler's clock: 0 at the start, then past the time budget until `done["slow"]` is
+    False — so a clean-up gets exactly one write in."""
+    done = {"slow": True, "calls": 0}
+
+    def tick():
+        done["calls"] += 1
+        return 1000 if done["slow"] and done["calls"] > 1 else 0
+
+    monkeypatch.setattr(handler.time, "monotonic", tick)
+    return done
+
+
+def test_delete_clean_up_lets_a_refile_in_the_gap_win(handler):
+    # Fail-on-revert: drop the "still groceries" condition and the petrol re-file is wiped.
+    table, transaction_repo, rule_repo = _leftover_stores()
+    on_write(table, "hand", lambda tbl: set_category(tbl, "hand", "petrol"))
+
+    assert _delete_groceries(handler, rule_repo, transaction_repo)["statusCode"] == 200
+    assert stored(table, "hand")["category"] == "petrol"
+    assert "category" not in stored(table, "stamped")
+
+
+@pytest.mark.parametrize("break_store", [
+    lambda table: vanish_on_write(table, "hand"),
+    lambda table: fail_writes(table, "hand"),
+    lambda table: table.fail("delete_item"),
+])
+def test_delete_clean_up_is_best_effort(handler, break_store):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    break_store(table)
+
+    resp = _delete_groceries(handler, rule_repo, transaction_repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"id": "groceries"}
+
+
+def test_delete_clean_up_clears_rules_before_reading_history(handler):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    table.fail("query", when=lambda query: query.get("IndexName") == "date-index")
+
+    resp = _delete_groceries(handler, rule_repo, transaction_repo)
+
+    assert resp["statusCode"] == 200
+    assert [rule["category_id"] for rule in rule_repo.list_rules()] == ["petrol"]
+
+
+def test_delete_clean_up_does_not_swallow_a_non_database_error(handler):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    table.fail("update_item", error=RuntimeError("bug: not a DB error"))
+
+    with pytest.raises(RuntimeError, match="bug"):
+        _delete_groceries(handler, rule_repo, transaction_repo)
+
+
+def test_a_failed_delete_clears_nothing(handler):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
+
+    assert _delete_groceries(handler, rule_repo, transaction_repo, repo)["statusCode"] == 404
+    assert len(rule_repo.list_rules()) == 3
+    assert charge_writes(table) == []
+
+
+def test_delete_cut_short_logs_what_it_left(handler, monkeypatch, caplog):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    _slow_clock(handler, monkeypatch)
+
+    assert _delete_groceries(handler, rule_repo, transaction_repo)["statusCode"] == 200
+    assert len(charge_writes(table)) == 1
+    assert "1 charges still filed to deleted category groceries" in caplog.text
+
+
+def test_create_refuses_while_old_rows_remain_then_a_retry_succeeds(handler, monkeypatch):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    clock = _slow_clock(handler, monkeypatch)
+    repo = FakeCategoryRepo(categories=[_cat("petrol")])
+
+    refused = _create_groceries(handler, repo, rule_repo, transaction_repo)
+
+    assert refused["statusCode"] == 409
+    assert "try again" in json.loads(refused["body"])["error"]
+    assert repo.create_calls == []
+    clock["slow"] = False
+    assert _create_groceries(handler, repo, rule_repo, transaction_repo)["statusCode"] == 201
+    _assert_groceries_leftovers_cleared(table, rule_repo)
+
+
+def test_create_fails_without_creating_when_the_history_read_fails(handler):
+    table, transaction_repo, rule_repo = _leftover_stores()
+    table.fail("query", when=lambda query: query.get("IndexName") == "date-index")
+    repo = FakeCategoryRepo(categories=[_cat("petrol")])
+
+    resp = _create_groceries(handler, repo, rule_repo, transaction_repo)
+
+    assert resp["statusCode"] == 500
+    assert repo.create_calls == []
+
+
+@pytest.mark.parametrize("act", [
+    # Creating "Income" over the income sentinel: those rows are filed, not leftovers.
+    lambda handler, rule_repo, transaction_repo: handler.create_category(
+        _categories_event('{"name": "Income", "bucket": "Income"}'),
+        FakeCategoryRepo(), budget_repo(), rule_repo, transaction_repo),
+    # Deleting a user category slugged "income" leaves the sentinel's rows AND its rules alone
+    # (accepted: the guard skips the whole clean-up).
+    lambda handler, rule_repo, transaction_repo: handler.delete_category(
+        _category_item_event("DELETE", cat_id="income", body=None),
+        FakeCategoryRepo(), budget_repo(), rule_repo, transaction_repo),
+    # Creating over a live slug is still the duplicate 409 — nothing of the live category's goes.
+    lambda handler, rule_repo, transaction_repo: handler.create_category(
+        _categories_event('{"name": "Groceries", "bucket": "Living"}'),
+        FakeCategoryRepo(categories=[_cat("groceries"), _cat("income")],
+                         duplicate_exc=handler.DuplicateCategoryError),
+        budget_repo(), rule_repo, transaction_repo),
+])
+def test_clean_up_skips_income_and_live_categories(handler, act):
+    table, transaction_repo, rule_repo = real_repos(
+        {SPENDING: [_row(SPENDING, "2026-10-01", "pay", category="income"),
+                    _row(SPENDING, "2026-10-02", "food", category="groceries")]},
+        rules=[_rule("SALARY", category_id="income"), _rule("COLES")])
+
+    act(handler, rule_repo, transaction_repo)
+
+    assert len(rule_repo.list_rules()) == 2
+    assert charge_writes(table) == []
+
+
+def test_delete_clean_up_reaches_every_account_and_keeps_user_flags(handler):
+    # [A1] The history read spans every account, the budget flag is recomputed per account (the
+    # home loan never counts), and a user's budget_excluded survives the unfile.
+    table, transaction_repo, rule_repo = real_repos({
+        ANZ: [_row(ANZ, "2026-10-01", "card", category="groceries", budget_excluded=True)],
+        HOMELOAN: [_row(HOMELOAN, "2026-10-02", "loan", category="groceries",
+                        counts_to_budget=False)],
+    })
+
+    assert _delete_groceries(handler, rule_repo, transaction_repo)["statusCode"] == 200
+
+    card = stored(table, "card", ANZ)
+    loan = stored(table, "loan", HOMELOAN)
+    assert "category" not in card and "category" not in loan
+    assert card["budget_excluded"] is True
+    assert card["counts_to_budget"] is True
+    assert loan["counts_to_budget"] is False

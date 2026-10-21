@@ -49,6 +49,22 @@ def budget_repo(budgets=None):
     return repo
 
 
+def empty_stores():
+    """``(rule_repo, transaction_repo)``: the real stores the category create/delete clean up
+    (ABU-33), over an empty table — for tests that aren't about that clean-up."""
+    from _feed_fakes import real_repos
+
+    _table, transaction_repo, rule_repo = real_repos()
+    return rule_repo, transaction_repo
+
+
+def inject_empty_stores(handler, monkeypatch):
+    """Point the handler's routes at ``empty_stores()``."""
+    rule_repo, transaction_repo = empty_stores()
+    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
+
+
 def stored_budgets(repo):
     """The budget entries the table holds now ({id: entry})."""
     return repo._table.store[_BUDGETS]["items"]

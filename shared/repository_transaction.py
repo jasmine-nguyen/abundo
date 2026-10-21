@@ -364,6 +364,20 @@ class TransactionRepository(RepositoryBase):
             ConditionExpression="attribute_exists(pk) AND #p = :rule_id",
         ))
 
+    def clear_category_if_unchanged(self, pk: str, sk: str, category: str) -> bool:
+        """Unfile ONE charge from a deleted category (ABU-33): REMOVE its category and rule stamp
+        and recompute counts_to_budget, but ONLY while it still holds `category` — a re-file in the
+        gap wins. Returns False on that mismatch and on a vanished row, True when cleared."""
+        return conditional_write("write", lambda: self._get_table().update_item(
+            Key={"pk": pk, "sk": sk},
+            UpdateExpression="REMOVE #c, #p SET #b = :counts",
+            ExpressionAttributeNames={
+                "#c": "category", "#p": "filed_by_rule", "#b": "counts_to_budget"},
+            ExpressionAttributeValues={
+                ":category": category, ":counts": _counts_to_budget(pk, None)},
+            ConditionExpression="attribute_exists(pk) AND #c = :category",
+        ))
+
     def refile_rule_fill(
         self, pk: str, sk: str, category: str, old_rule_id: str, new_rule_id: str
     ) -> bool:

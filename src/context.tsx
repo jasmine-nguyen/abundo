@@ -1296,8 +1296,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     apply: () => {
       // Client-side cascade into the query caches the migrated screens read (category
       // list, budget screens, tab badge, pickers), for instant feedback. Categories and rules
-      // are patched in place. Transactions keep the dangling id on the server, so they show
-      // as Uncategorized via isUncategorized. Budgets are dropped here, then reloaded by
+      // are patched in place, mirroring the server, which deletes the rules and clears the
+      // transactions' labels too (ABU-33). Budgets are dropped here, then reloaded by
       // refreshAfter (the server deletes the budget too). The ['budgets'] cache holds the RAW
       // Record<categoryId, BudgetRollup> (not the select'd Budget[]), so drop the deleted
       // id's KEY from the Record — filtering it as an array would throw `.filter is not a
