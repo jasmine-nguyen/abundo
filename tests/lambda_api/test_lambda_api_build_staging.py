@@ -1,10 +1,12 @@
-"""WHIT-626 — run the REAL build script's `lambda_api` target in a sandbox git repo.
+"""WHIT-626 / ABU-39 — run the REAL build script's `lambda_api` and `webhook` targets in a sandbox
+git repo.
 
 scripts/tests/build_artifacts_test.sh only runs in the deploy workflow; these run with pytest on
 every build, and cover the edges it doesn't:
   [A1] nested files  [A3] an empty index
   [A4] a rebuild after a module stops being tracked  [A5] a tracked module missing from disk
   [A6] a build started from outside the repo (terraform's local-exec cwd)
+  [W1] the webhook ships only tracked lambda/*.py plus its deps, installed into a clean dir
 """
 
 import os
@@ -27,11 +29,11 @@ def _env(sandbox: pathlib.Path) -> dict:
     return env
 
 
-def _sandbox(tmp_path: pathlib.Path, init_git: bool = True) -> pathlib.Path:
+def _sandbox(tmp_path: pathlib.Path, init_git: bool = True, src_dir: str = "lambda_api") -> pathlib.Path:
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(_SCRIPT, root / "scripts" / _SCRIPT.name)
-    (root / "lambda_api").mkdir()
+    (root / src_dir).mkdir()
     if init_git:
         _git(root, "init", "-q")
     return root
@@ -47,15 +49,32 @@ def _write(root: pathlib.Path, relative: str, body: str) -> None:
     path.write_text(body)
 
 
-def _build(root: pathlib.Path, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
+def _stub_python3_env(root: pathlib.Path) -> dict:
+    """An env whose `python3` only appends its arguments to <root>/python3.log, so the pip step
+    runs offline."""
+    stub = root / "bin" / "python3"
+    if not stub.exists():
+        _write(root, "bin/python3", f'#!/usr/bin/env bash\necho "$*" >> "{root / "python3.log"}"\n')
+        stub.chmod(0o755)
+    env = _env(root)
+    env["PATH"] = f"{stub.parent}{os.pathsep}{env['PATH']}"
+    return env
+
+
+def _build(
+    root: pathlib.Path, target: str = "lambda_api", cwd: pathlib.Path | None = None
+) -> subprocess.CompletedProcess:
+    env = _env(root)
+    if target == "webhook":
+        env = _stub_python3_env(root)
     return subprocess.run(
-        ["bash", str(root / "scripts" / _SCRIPT.name), "lambda_api"],
-        cwd=cwd or root, env=_env(root), capture_output=True, text=True,
+        ["bash", str(root / "scripts" / _SCRIPT.name), target],
+        cwd=cwd or root, env=env, capture_output=True, text=True,
     )
 
 
-def _staged(root: pathlib.Path) -> set[str]:
-    return {path.name for path in (root / "terraform" / "build" / "lambda_api").iterdir()}
+def _staged(root: pathlib.Path, build_dir: str = "lambda_api") -> set[str]:
+    return {path.name for path in (root / "terraform" / "build" / build_dir).iterdir()}
 
 
 def test_stages_only_top_level_tracked_py_with_their_disk_content(tmp_path):
@@ -129,3 +148,28 @@ def test_the_build_works_when_started_from_outside_the_repo(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert _staged(root) == {"handler.py", "ai_chat.py"}
+
+
+def test_the_webhook_ships_only_tracked_lambda_py_and_installs_deps_into_a_clean_dir(tmp_path):
+    # [W1] untracked modules, caches and an old in-tree pip install never ship; leftovers from the
+    # last build are wiped; standardwebhooks is installed into the staged dir, not into lambda/.
+    root = _sandbox(tmp_path, src_dir="lambda")
+    _write(root, "lambda/handler.py", "HANDLER = 1\n")
+    _write(root, "lambda/webhook_repository.py", "REPO = 1\n")
+    _write(root, "lambda/requirements.txt", "standardwebhooks==1.0.1\n")
+    _git(root, "add", "lambda")
+    _write(root, "lambda/stray.py", "STRAY = 1\n")
+    _write(root, "lambda/__pycache__/handler.cpython-312.pyc", "bytecode")
+    _write(root, "lambda/standardwebhooks/__init__.py", "OLD_INSTALL = 1\n")
+    _write(root, "terraform/build/lambda/leftover.py", "LEFTOVER = 1\n")
+
+    result = _build(root, target="webhook")
+
+    assert result.returncode == 0, result.stderr
+    assert _staged(root, build_dir="lambda") == {"handler.py", "webhook_repository.py"}
+    staged_dir = root / "terraform" / "build" / "lambda"
+    assert (staged_dir / "webhook_repository.py").read_text() == "REPO = 1\n"
+    pip_call = (root / "python3.log").read_text().split()
+    assert pip_call[:3] == ["-m", "pip", "install"]
+    assert pip_call[pip_call.index("--target") + 1] == str(staged_dir)
+    assert pip_call[pip_call.index("-r") + 1] == str(root / "lambda" / "requirements.txt")
