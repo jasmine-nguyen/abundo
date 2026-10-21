@@ -1,11 +1,12 @@
 """ABU-93: the PR preview login can't read secrets, rows or logs; secrets stay out of Terraform
-state; the test workflows get a read-only token; the public API is throttled."""
+state; the test workflows get a read-only token; the public API is throttled.
+ABU-42: every app route requires a Cognito login."""
 
 import re
 
 import pytest
 
-from _terraform import BOOTSTRAP_MAIN_TF, TERRAFORM_DIR, policy_statements, tf_attr, tf_block
+from _terraform import APIGATEWAY_TF, BOOTSTRAP_MAIN_TF, TERRAFORM_DIR, policy_statements, tf_attr, tf_block
 
 WORKFLOWS_DIR = TERRAFORM_DIR.parent / ".github" / "workflows"
 
@@ -65,10 +66,45 @@ def test_iam_references_ssm_by_arn_locals_with_the_old_names():
 
 
 def test_api_stage_is_throttled():
-    block = tf_block((TERRAFORM_DIR / "apigateway.tf").read_text(), "aws_apigatewayv2_stage", "default")
+    block = tf_block(APIGATEWAY_TF.read_text(), "aws_apigatewayv2_stage", "default")
     assert "default_route_settings" in block, "the API stage has no rate limit"
     assert tf_attr(block, "throttling_rate_limit") == "20"
     assert tf_attr(block, "throttling_burst_limit") == "40"
+
+
+def test_every_app_route_requires_a_cognito_login():
+    # The server code never checks the caller, so this gateway setting is the whole login wall.
+    block = tf_block(APIGATEWAY_TF.read_text(), "aws_apigatewayv2_route", "app")
+    assert tf_attr(block, "for_each") == "local.app_route_keys"
+    assert tf_attr(block, "authorization_type") == '"JWT"'
+    assert tf_attr(block, "authorizer_id") == "aws_apigatewayv2_authorizer.jwt.id"
+
+
+def test_jwt_authorizer_only_trusts_the_apps_cognito_id_tokens():
+    block = tf_block(APIGATEWAY_TF.read_text(), "aws_apigatewayv2_authorizer", "jwt")
+    assert tf_attr(block, "authorizer_type") == '"JWT"'
+    assert tf_attr(block, "identity_sources") == '["$request.header.Authorization"]'
+    assert tf_attr(block, "audience") == "[aws_cognito_user_pool_client.app.id]"
+    assert tf_attr(block, "issuer") == "local.cognito_issuer_url"
+    assert tf_attr((TERRAFORM_DIR / "cognito.tf").read_text(), "cognito_issuer_url") == (
+        '"https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.pool.id}"')
+
+
+def test_only_the_bank_webhooks_skip_login():
+    routes = {
+        name
+        for path in TERRAFORM_DIR.glob("*.tf")
+        for name in re.findall(r'^resource "aws_apigatewayv2_route" "([^"]+)"', path.read_text(), re.M)
+    }
+    assert routes == {"app", "banksync_webhook_route", "up_webhook_route"}, \
+        "add the new route to app_route_keys, or, if it's truly public, add it here with a reason"
+    text = APIGATEWAY_TF.read_text()
+    assert tf_attr(tf_block(text, "aws_apigatewayv2_route", "banksync_webhook_route"), "route_key") == \
+        '"POST /webhook/banksync"'
+    assert tf_attr(tf_block(text, "aws_apigatewayv2_route", "up_webhook_route"), "route_key") == '"POST /webhook/up"'
+    api = tf_block(text, "aws_apigatewayv2_api", "api")
+    assert not re.search(r"^\s*(target|route_key)\s*=", api, re.M), \
+        "quick-create target/route_key on the API makes a public $default route with no authorizer"
 
 
 TEST_WORKFLOWS = sorted(path.name for path in WORKFLOWS_DIR.glob("*.yml") if path.name != "deploy.yml")
