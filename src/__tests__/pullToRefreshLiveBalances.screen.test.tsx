@@ -83,6 +83,18 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     expect(mockShowToast).not.toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
   });
 
+  // [A7] ABU-106: a pull on Accounts asks the bank for new transactions; when the server says the
+  // sync is still running, the gentle "still syncing" toast shows instead of "Balances up to date".
+  it('[A7] an Accounts pull whose bank sync is still running shows only the still-syncing toast', async () => {
+    server.once('POST', '/transactions/sync', { body: { status: 'syncing' } });
+    renderScreen();
+    expect(await screen.findByText('$100.00')).toBeTruthy();
+    await pull();
+    await waitFor(() => expect(rc().props.refreshing).toBe(false));
+    expect(server.sent('POST', '/transactions/sync')).toHaveLength(1);
+    expect(mockShowToast.mock.calls).toEqual([['Still syncing with your bank. Pull again in a couple of minutes.']]);
+  });
+
   // [G3] OFFLINE / failed live pull: the card must keep the EXACT prior number (-$100.00), never blank
   // to the pending "—" or change — and it toasts. Locks the WHIT-212 "never blank the cards" promise at
   // the pixel the user reads, past "isError is false". Fail-on-revert: swallow the throw and

@@ -7,6 +7,7 @@ import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { syncBankTransactions } from '../../src/api';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -146,7 +147,7 @@ export default function Transactions() {
   // balances live from the bank, with the WHIT-363 stuck-spinner invariant owned in one place.
   // The other screens (budgets, loan, rules, pay-cycle) refresh themselves on focus via their
   // own queries — pull doesn't reload the whole app.
-  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast);
+  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast, undefined, syncBankTransactions);
 
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
   // wrapper (WHIT-199). This screen passes its own refreshing/onRefresh; the wrapper builds the

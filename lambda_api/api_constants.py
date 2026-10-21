@@ -252,6 +252,25 @@ REFRESH_FETCH_TIMEOUT_SECONDS = 10
 # with no bank call (protects against cost + BankSync rate-limits on repeated pulls).
 REFRESH_THROTTLE_SECONDS = 60
 
+# --- Pull-to-refresh bank sync (ABU-106) ------------------------------------
+# API Gateway route path (POST): a pull asks BankSync to sync every feed, then waits for the jobs.
+BANK_SYNC_PATH = "/transactions/sync"
+# A pull within this many seconds of the last attempt skips BankSync (its 10-requests-a-minute plan).
+BANK_SYNC_COOLDOWN_SECONDS = 120
+# Total wait from the start of the request, well under the ~29s API Gateway cap.
+BANK_SYNC_WAIT_SECONDS = 20
+# Per-request BankSync timeout for the triggers and the job checks.
+BANK_SYNC_REQUEST_TIMEOUT_SECONDS = 5
+# When, in seconds from the start, each round of job checks runs. Round one checks every job;
+# later rounds spend what is left of the cap on the unfinished ones, spending feed first.
+BANK_SYNC_CHECK_ROUNDS_SECONDS = (8, 16)
+# At most this many job checks per pull: 3 triggers + 3 balance reads + 4 = BankSync's 10 a minute.
+BANK_SYNC_MAX_STATUS_CHECKS = 4
+# Extra wait after a job reports new transactions, so their webhook can save them first.
+BANK_SYNC_WEBHOOK_GRACE_SECONDS = 2
+# A BankSync sync job in one of these statuses is finished (created/in_progress/paused are not).
+TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+
 # --- Last repayment (WHIT-115) ---------------------------------------------
 # API Gateway route path for the latest home-loan repayment (GET only). Reads
 # the full up-homeloan history (not the 7-day feed) since repayments are ~monthly.

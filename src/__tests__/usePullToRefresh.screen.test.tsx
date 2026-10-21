@@ -99,6 +99,57 @@ describe('usePullToRefresh', () => {
     expect(result.current.pulling).toBe(false);
   });
 
+  // ABU-106: a pull first asks the bank for new transactions, then always reloads the list.
+  it.each([
+    ['done', 'Balances up to date'],
+    ['cooldown', 'Balances up to date'],
+    ['syncing', 'Still syncing with your bank. Pull again in a couple of minutes.'],
+    ['failed', "Couldn't get new transactions from your bank. Showing what we have."],
+    ['rejected', "Couldn't get new transactions from your bank. Showing what we have."],
+  ] as const)('a bank sync that ends %s reloads the list after it and shows one toast', async (outcome, toast) => {
+    const sync = deferred<{ status: 'done' | 'syncing' | 'failed' | 'cooldown' }>();
+    const syncBank = jest.fn(() => sync.promise);
+    const { result } = renderHook(() =>
+      usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date', syncBank));
+
+    act(() => { result.current.onRefresh(); });
+    expect(syncBank).toHaveBeenCalledTimes(1);
+    expect(refetchList).not.toHaveBeenCalled();
+    expect(result.current.pulling).toBe(true);
+
+    await act(async () => {
+      if (outcome === 'rejected') sync.reject(new Error('API error: 504'));
+      else sync.resolve({ status: outcome });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(refetchList).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls).toEqual([[toast]]);
+    expect(result.current.pulling).toBe(false);
+  });
+
+  // [A5] ABU-106: the one end-of-pull toast. A failed balance call still says so when the sync is
+  // done; a sync still running wins over it; the Transactions tab (no success message) stays silent
+  // on a finished sync. Nothing toasts while the sync is still in flight.
+  it.each([
+    [true, 'Balances up to date', 'done', 'Could not refresh balances. Showing last saved.'],
+    [true, 'Balances up to date', 'syncing', 'Still syncing with your bank. Pull again in a couple of minutes.'],
+    [false, undefined, 'done', undefined],
+    [false, undefined, 'syncing', 'Still syncing with your bank. Pull again in a couple of minutes.'],
+  ] as const)('balances fail=%s, success message %s, sync %s → toast %s', async (balancesFail, successMessage, status, toast) => {
+    if (balancesFail) refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
+    const sync = deferred<{ status: 'done' | 'syncing' }>();
+    const { result } = renderHook(() =>
+      usePullToRefresh(refetchList, refreshLiveBalances, showToast, successMessage, () => sync.promise));
+
+    await act(async () => { result.current.onRefresh(); for (let i = 0; i < 5; i++) await Promise.resolve(); });
+    expect(showToast).not.toHaveBeenCalled();
+    expect(result.current.pulling).toBe(true);
+
+    await act(async () => { sync.resolve({ status }); for (let i = 0; i < 5; i++) await Promise.resolve(); });
+    expect(showToast.mock.calls).toEqual(toast ? [[toast]] : []);
+    expect(result.current.pulling).toBe(false);
+  });
+
   // WHIT-713 QA
   it('[A10] a list-only pull whose refetch REJECTS still clears the spinner and is not latched', async () => {
     refetchList.mockReturnValueOnce(Promise.reject(new Error('API error: 503')));

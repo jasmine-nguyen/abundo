@@ -22,7 +22,6 @@ shared lambda layer.
 """
 
 import logging
-import urllib.error
 import urllib.request  # noqa: F401 — test seam: tests patch `urllib.request.urlopen` here
 
 from constants import (
@@ -30,8 +29,8 @@ from constants import (
     SYNC_FEED_IDS,
     SYNC_TIMEOUT_SECONDS,
 )
-from api_key import forget_api_key, get_api_key as _fetch_api_key
-from balance_fetch import banksync_request
+from api_key import get_api_key as _fetch_api_key
+import feed_sync
 import pending_mirror
 
 logger = logging.getLogger(__name__)
@@ -44,29 +43,9 @@ def get_api_key() -> str:
 
 
 def trigger_sync(feed_id: str, api_key: str) -> None:
-    """POST /v1/feeds/{id}/sync — a normal incremental sync.
-
-    We deliberately send no body: an empty request means incremental
-    (cursor-based) sync. We never pass ``resetCursors`` here — that is for
-    backfills/recovery only, not the scheduled cadence.
-    """
-    try:
-        # empty body -> incremental sync; a body (even empty) makes it a POST
-        body = banksync_request(
-            f"/v1/feeds/{feed_id}/sync",
-            api_key,
-            user_agent="abundo-transaction-trigger",
-            timeout=SYNC_TIMEOUT_SECONDS,
-            data=b"",
-        )
-        logger.info("feed %s: sync job %s created", feed_id, body["data"]["id"])
-    except urllib.error.HTTPError as e:
-        # 409 = a sync is already running for this feed. Harmless on a schedule;
-        # skip this tick rather than force-cancelling the in-flight job.
-        if e.code == 409:
-            logger.warning("feed %s: sync already in progress, skipping", feed_id)
-            return
-        raise
+    """Start an incremental sync for one feed (shared/feed_sync.py; a 409 is skipped and a 401 forgets the key there)."""
+    feed_sync.trigger_sync(
+        feed_id, api_key, user_agent="abundo-transaction-trigger", timeout=SYNC_TIMEOUT_SECONDS)
 
 
 def lambda_handler(event, context):
@@ -83,8 +62,6 @@ def lambda_handler(event, context):
             trigger_sync(feed_id, api_key)
         except Exception as e:
             logger.error("feed %s (%s): sync trigger failed: %s", feed_id, label, e)
-            if isinstance(e, urllib.error.HTTPError) and e.code == 401:
-                forget_api_key(BANKSYNC_API_KEY_PATH)
             failed.append(feed_id)
 
     # Guarded so a mirror fault never fails the run: `failed` feeds the WHIT-644 alarm.

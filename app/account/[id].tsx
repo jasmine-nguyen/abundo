@@ -8,6 +8,7 @@ import { Glyph } from '../../src/icons';
 import { accountDetail, accountNameFromId, useAppContext } from '../../src/context';
 import { useAccountTransactionsScreenData, useRefreshLiveBalances } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { syncBankTransactions } from '../../src/api';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
 import { Header } from '../../src/components/Header';
@@ -36,7 +37,7 @@ export default function AccountDetail() {
   const { showToast } = useAppContext();
   const refreshLiveBalances = useRefreshLiveBalances();
   // ABU-66: the same pull as Accounts — re-read the list and fetch live balances.
-  const { pulling, onRefresh } = usePullToRefresh(refetch, refreshLiveBalances, showToast, 'Balances up to date');
+  const { pulling, onRefresh } = usePullToRefresh(refetch, refreshLiveBalances, showToast, 'Balances up to date', syncBankTransactions);
   const detail = useMemo(() => accountDetail({ transactions, category }, id), [transactions, category, id]);
   const sections = useMemo(
     () => detail?.groups.map((g) => ({ key: g.label, dayTotal: g.dayTotal, data: g.items })) ?? [],

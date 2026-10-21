@@ -37,6 +37,7 @@ export const WIRE: Record<string, [() => Promise<unknown>, Wire]> = {
   fetchHomeLoan: [() => api.fetchHomeLoan(), [null, '/homeloan', 15000, undefined]],
   fetchAccountBalances: [() => api.fetchAccountBalances(), [null, '/accounts/balances', 15000, undefined]],
   refreshAccountBalances: [() => api.refreshAccountBalances(), ['POST', '/accounts/balances/refresh', 30000, undefined]],
+  syncBankTransactions: [() => api.syncBankTransactions(), ['POST', '/transactions/sync', 30000, undefined]],
   fetchGoals: [() => api.fetchGoals(), [null, '/goals', 15000, undefined]],
   fetchMilestones: [() => api.fetchMilestones(), [null, '/milestones', 15000, undefined]],
   setMilestones: [() => api.setMilestones([]), ['PUT', '/milestones', 15000, '{"milestones":[]}']],

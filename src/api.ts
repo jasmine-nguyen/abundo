@@ -31,6 +31,12 @@ const AI_GENERATE_TIMEOUT_MS = 60_000;
 const BALANCE_REFRESH_TIMEOUT_MS = 30_000;
 
 /**
+ * The pull's bank sync (ABU-106) waits on the server up to 20s for BankSync's jobs, plus a 2s
+ * grace for the webhook, so this must stay longer than that. 30s is the API-Gateway ceiling.
+ */
+const BANK_SYNC_TIMEOUT_MS = 30_000;
+
+/**
  * Applying rules to history walks the WHOLE stored history, reads the live rule list from
  * BankSync, then writes up to 300 charges — seconds of work, so the default 15s read budget
  * would abort a run that is actually succeeding. Its own constant rather than a reuse of
@@ -946,6 +952,19 @@ export const fetchAccountBalances = endpoint((send): Promise<AccountBalance[]> =
  */
 export const refreshAccountBalances = endpoint((send): Promise<AccountBalance[]> =>
   send({ path: "/accounts/balances/refresh", method: "POST", timeoutMs: BALANCE_REFRESH_TIMEOUT_MS }));
+
+/** How a pull's bank sync ended: finished, still running, failed, or skipped (2-minute cooldown). */
+export type BankSyncStatus = 'done' | 'syncing' | 'failed' | 'cooldown';
+
+/**
+ * Ask the server to have BankSync fetch new transactions now (pull-to-refresh, ABU-106). The
+ * server starts a sync on every bank feed and waits up to ~20s for it, so the list reloaded
+ * afterwards shows the new transactions.
+ *
+ * @throws If the response status is not OK (the caller still reloads the list + toasts).
+ */
+export const syncBankTransactions = endpoint((send): Promise<{ status: BankSyncStatus }> =>
+  send({ path: "/transactions/sync", method: "POST", timeoutMs: BANK_SYNC_TIMEOUT_MS }));
 
 /**
  * One step on the way to a goal's target (WHIT-476) — a labelled amount the balance passes

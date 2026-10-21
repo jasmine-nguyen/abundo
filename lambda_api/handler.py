@@ -6,6 +6,13 @@ from api_constants import (
     ACCOUNT_BALANCES_PATH,
     ACCOUNT_BALANCES_REFRESH_PATH,
     BANKSYNC_USER_AGENT,
+    BANK_SYNC_CHECK_ROUNDS_SECONDS,
+    BANK_SYNC_COOLDOWN_SECONDS,
+    BANK_SYNC_MAX_STATUS_CHECKS,
+    BANK_SYNC_PATH,
+    BANK_SYNC_REQUEST_TIMEOUT_SECONDS,
+    BANK_SYNC_WAIT_SECONDS,
+    BANK_SYNC_WEBHOOK_GRACE_SECONDS,
     REFRESH_FETCH_TIMEOUT_SECONDS,
     REFRESH_THROTTLE_SECONDS,
     BREAKDOWN_MAX_LOOKBACK,
@@ -38,6 +45,7 @@ from api_constants import (
     PAYCYCLE_PATH,
     REPAYMENT_PATH,
     SPEND_BUCKETS,
+    TERMINAL_JOB_STATUSES,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
@@ -65,6 +73,7 @@ from constants import (
     RULE_LOGIC,
     RULE_OPERATORS,
     SAVINGS_BUCKET,
+    SYNC_FEED_IDS,
 )
 from collections import deque
 from collections.abc import Callable
@@ -96,6 +105,7 @@ from rule_book import RuleBook, WriteLimit, rule_from_row
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
+import feed_sync
 from event_body import raw_body
 # The pay-cycle window + spend summariser live in the shared layer (WHIT-22) so the
 # webhook's budget-alert detection computes spend identically to this read API.
@@ -224,6 +234,7 @@ _EXACT_ROUTES = {
         200, get_account_balances(AccountBalanceRepository())),
     ("POST", ACCOUNT_BALANCES_REFRESH_PATH): lambda event: refresh_account_balances(
         AccountBalanceRepository()),
+    ("POST", BANK_SYNC_PATH): lambda event: sync_bank_transactions(AccountBalanceRepository()),
     ("GET", REPAYMENT_PATH): lambda event: _json_response(
         200, get_repayment(TransactionRepository())),
     ("GET", LOANFACTS_PATH): lambda event: _json_response(
@@ -2789,6 +2800,117 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
     except Exception as e:
         logger.error("goal checkpoint push on refresh failed (balances still stored): %s", e)
     return _json_response(200, get_account_balances(repo))
+
+
+def _trigger_all_feeds(api_key: str) -> tuple[dict, int, int]:
+    """Start an incremental sync on every feed at once. Returns ({feed_id: job_id}, feeds already
+    syncing (409), feeds whose trigger failed). A failed trigger is logged and skipped."""
+    with ThreadPoolExecutor(max_workers=len(SYNC_FEED_IDS)) as executor:
+        futures = {
+            feed_id: executor.submit(
+                feed_sync.trigger_sync, feed_id, api_key,
+                user_agent=BANKSYNC_USER_AGENT, timeout=BANK_SYNC_REQUEST_TIMEOUT_SECONDS)
+            for feed_id in SYNC_FEED_IDS
+        }
+    jobs = {}
+    already_running = 0
+    failed = 0
+    for feed_id, future in futures.items():
+        try:
+            job_id = future.result()
+        except Exception as e:
+            logger.warning("feed %s: pull sync trigger failed: %s", feed_id, e)
+            failed += 1
+            continue
+        if job_id is None:
+            already_running += 1
+            continue
+        jobs[feed_id] = job_id
+    return jobs, already_running, failed
+
+
+def _wait_for_jobs(jobs: dict, api_key: str, start: float, deadline: float) -> tuple[dict, list]:
+    """Check the sync jobs at each of BANK_SYNC_CHECK_ROUNDS_SECONDS until all are finished, the
+    BANK_SYNC_MAX_STATUS_CHECKS cap is spent or the deadline nears. Each round's checks run side
+    by side; a check error (a 429, a timeout) ends the wait. Returns (unfinished jobs, finished
+    job payloads)."""
+    unfinished = dict(jobs)
+    finished = []
+    checks_left = BANK_SYNC_MAX_STATUS_CHECKS
+    for offset in BANK_SYNC_CHECK_ROUNDS_SECONDS:
+        if not unfinished or not checks_left:
+            break
+        pause = start + offset - time.monotonic()
+        if pause > 0:
+            time.sleep(pause)
+        timeout = min(BANK_SYNC_REQUEST_TIMEOUT_SECONDS, deadline - time.monotonic())
+        if timeout <= 0:
+            break
+        # SYNC_FEED_IDS lists the spending feed first, so it gets first pick of the last checks.
+        picked = [feed_id for feed_id in SYNC_FEED_IDS if feed_id in unfinished][:checks_left]
+        checks_left -= len(picked)
+        with ThreadPoolExecutor(max_workers=len(picked)) as executor:
+            futures = {
+                feed_id: executor.submit(
+                    feed_sync.get_job, feed_id, unfinished[feed_id], api_key,
+                    user_agent=BANKSYNC_USER_AGENT, timeout=timeout)
+                for feed_id in picked
+            }
+        check_failed = False
+        for feed_id, future in futures.items():
+            try:
+                job = future.result()
+                is_finished = job["status"] in TERMINAL_JOB_STATUSES
+            except Exception as e:
+                logger.warning("feed %s: sync job check failed: %s", feed_id, e)
+                check_failed = True
+                continue
+            if is_finished:
+                finished.append(job)
+                del unfinished[feed_id]
+        if check_failed:
+            break
+    return unfinished, finished
+
+
+def sync_bank_transactions(repo: AccountBalanceRepository) -> dict:
+    """POST /transactions/sync — a pull asks BankSync for new transactions now (ABU-106).
+
+    Starts an incremental sync on every feed in SYNC_FEED_IDS (a 409 = already syncing, never
+    force-cancelled), then waits up to BANK_SYNC_WAIT_SECONDS from the start for the jobs to
+    finish; new transactions arrive through the webhook. Answers 200 {"status": ...}:
+    "cooldown" (a pull within BANK_SYNC_COOLDOWN_SECONDS, no bank call), "failed" (a job failed
+    or was cancelled), "syncing" (not finished in time, or already running) or "done". A 502
+    comes back only when every trigger failed.
+    """
+    start = time.monotonic()
+    deadline = start + BANK_SYNC_WAIT_SECONDS
+    now = int(time.time())
+    last = repo.get_last_bank_sync_at()
+    if last is not None and now - last < BANK_SYNC_COOLDOWN_SECONDS:
+        return _json_response(200, {"status": "cooldown"})
+    # Arm the cooldown on any attempt, so pulls during a bank hiccup still back off.
+    repo.set_last_bank_sync_at(now)
+
+    api_key = get_api_key()
+    jobs, already_running, failed_triggers = _trigger_all_feeds(api_key)
+    if failed_triggers == len(SYNC_FEED_IDS):
+        return _json_response(502, {"error": "could not start bank sync"})
+
+    unfinished, finished = _wait_for_jobs(jobs, api_key, start, deadline)
+
+    # The webhook may land a moment after the job reports completed: give it a beat when there's
+    # something to save, but never past the deadline plus the grace.
+    if any((job.get("deliverySummary") or {}).get("created", 0) > 0 for job in finished):
+        grace = min(BANK_SYNC_WEBHOOK_GRACE_SECONDS, deadline + BANK_SYNC_WEBHOOK_GRACE_SECONDS - time.monotonic())
+        if grace > 0:
+            time.sleep(grace)
+
+    if any(job["status"] != "completed" for job in finished):
+        return _json_response(200, {"status": "failed"})
+    if unfinished or already_running:
+        return _json_response(200, {"status": "syncing"})
+    return _json_response(200, {"status": "done"})
 
 
 def _stored_amounts(repo: AccountBalanceRepository) -> dict:

@@ -72,6 +72,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   fetchHomeLoan: () => api.fetchHomeLoan(),
   fetchAccountBalances: () => api.fetchAccountBalances(),
   refreshAccountBalances: () => api.refreshAccountBalances(),
+  syncBankTransactions: () => api.syncBankTransactions(), // ABU-106: the pull toasts its own message, NOT the server's reason
   fetchGoals: () => api.fetchGoals(),
   fetchMilestones: () => api.fetchMilestones(),
   setMilestones: () => api.setMilestones([]),

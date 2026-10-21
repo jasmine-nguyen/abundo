@@ -120,6 +120,7 @@ const ROUTES: [Method, string, (call: Call) => unknown][] = [
   ['GET', '/homeloan', readSeeded({ balance: null, as_of: null, currency: null })],
   ['GET', '/accounts/balances', readSeeded([])],
   ['POST', '/accounts/balances/refresh', ({ store }) => read(store, '/accounts/balances', [])],
+  ['POST', '/transactions/sync', () => ({ status: 'done' })],
   ['GET', '/goals', readSeeded([])],
   ['PUT', '/goals/:id', ({ store, params, body }) => upsert(store, '/goals', { ...body, id: params.id })],
   ['DELETE', '/goals/:id', ({ store, params }) => remove(store, '/goals', params.id)],
