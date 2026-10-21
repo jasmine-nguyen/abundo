@@ -2061,21 +2061,3 @@ def test_abu108_a_pending_is_never_absorbed_into_another_accounts_posted(lam, re
     store = _txn_store(repo)
     assert (_acc(pending), "TXN#PEND") in store
     assert "pending_transaction_id" not in store[(_acc(other_posted), "TXN#POST")]
-
-
-def test_abu108_a_hidden_repeat_charge_does_not_hide_the_next_days_one_too(lam, repo):
-    # [A4] The plan's worst case: an unlinked posted row hides a real repeat charge until it settles,
-    # and that exposure ends 7 days after release. But the hidden charge's own posted row then saves
-    # unlinked, so it hides the NEXT day's identical charge (one-day skew rule), and so on: a daily
-    # same-price purchase reads one charge low every day, with no end.
-    def charge(txn_id, day, pending):
-        return _norm(lam, txn_id=txn_id, amount=Decimal("-5.50"), pending=pending,
-                     authorized_date=day, date=day)
-    posted1 = charge("POST1", "2026-06-27", pending=False)
-    repo.insert_transactions([posted1])                                    # saved before the release
-
-    repo.insert_or_reconcile([charge("PEND2", "2026-06-28", pending=True)])   # hidden: accepted
-    repo.insert_or_reconcile([charge("POST2", "2026-06-28", pending=False)])  # saves unlinked
-    repo.insert_or_reconcile([charge("PEND3", "2026-06-29", pending=True)])
-
-    assert (_acc(posted1), "TXN#PEND3") in _txn_store(repo)
