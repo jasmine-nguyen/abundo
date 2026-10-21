@@ -256,6 +256,23 @@ it('pull-to-refresh refreshes the visible list AND the live balances — not the
   await waitFor(() => expect(isSpinning()).toBe(false));
 });
 
+// [A6] ABU-106: the pull asks the bank for new transactions first and only re-reads the list once
+// that answers, so a transaction the bank delivered during the sync shows when the pull ends.
+it('[A6] a pull asks the bank for new transactions, then shows one that arrived during the sync', async () => {
+  seedFeedPage(server, FEED, [ROW]);
+  await draw();
+  const feedBefore = gets(FEED);
+  const bankSync = server.hold('/transactions/sync');
+  await pull();
+  expect(server.sent('POST', '/transactions/sync')).toHaveLength(1);
+  seedFeedPage(server, FEED, [{ ...ROW, transaction_id: 't2', description: 'ALDI', merchant_name: 'Aldi', amount: -9 }, ROW]);
+  await settle();
+  expect(gets(FEED)).toBe(feedBefore); // the list waits for the sync
+  bankSync.release();
+  expect(await screen.findByText('Aldi')).toBeTruthy();
+  await waitFor(() => expect(isSpinning()).toBe(false));
+});
+
 // A background/focus refetch runs with NO user pull. The spinner is owned by the local `pulling`
 // flag (never isFetching, WHIT-363), so it stays DOWN when the user hasn't pulled.
 it('a background/focus refetch (non-empty list, NO pull) does NOT raise the spinner', async () => {
