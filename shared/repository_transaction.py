@@ -127,7 +127,7 @@ class TransactionRepository(RepositoryBase):
             return
         with db_errors(action):
             table = self._get_table()
-            with table.batch_writer() as batch:
+            with table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as batch:
                 for item in items:
                     batch.put_item(Item=item)
 

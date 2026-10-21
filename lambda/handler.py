@@ -101,6 +101,12 @@ def log_summary_delivery(payload: dict) -> None:
     )
 
 
+def drop_repeats(transactions: list[Transaction]) -> list[Transaction]:
+    # Keeps each row's first position but its last copy: DynamoDB rejects a batch that
+    # writes one key twice, and each copy would claim its own pending twin (ABU-60).
+    return list({(t["account_id"], t["transaction_id"]): t for t in transactions}.values())
+
+
 def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     normalised_transactions: list[Transaction] = []
     unmapped_transactions: list[dict] = []
@@ -114,6 +120,14 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
             unmapped_transactions.append(row)
 
     repo.save_failed_transactions(unmapped_transactions)
+
+    unique_transactions = drop_repeats(normalised_transactions)
+    if len(unique_transactions) < len(normalised_transactions):
+        logger.warning(
+            "webhook %s: dropped %d repeated rows",
+            payload["id"], len(normalised_transactions) - len(unique_transactions),
+        )
+    normalised_transactions = unique_transactions
 
     # Taken before the deleted/$0 drops: those rows still prove the bank delivered (WHIT-858).
     synced_account_ids = {transaction["account_id"] for transaction in normalised_transactions}
