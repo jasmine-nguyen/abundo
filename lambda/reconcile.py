@@ -84,8 +84,8 @@ def _pop_lowest_id(pool: list[dict], indices: list[int]) -> dict:
 def _select_twin(pool: list[dict], predicate: Callable[[dict], bool]) -> Optional[dict]:
     """Return AND consume the one pending row `predicate` accepts, or None. The shared
     tail of every tier whose whole candidate set is a single predicate (exact, tip,
-    skewed-fee, blank-auth). The skewed tier pre-filters for its own reject logging, so it calls
-    _pop_lowest_id directly rather than going through here."""
+    skewed-fee). The skewed tier (reject logging) and the blank-auth tier (nearest date)
+    pre-filter, so they call _pop_lowest_id directly rather than going through here."""
     candidates = [i for i, item in enumerate(pool) if predicate(item)]
     if not candidates:
         return None
@@ -332,7 +332,8 @@ def _find_blank_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optional
     merchant appearing (word-for-word, >=2 words) in the pending's raw description +
     the pending dated within PENDING_AGE_OUT_DAYS on-or-before the posted. The exact-amount
     + strong-merchant + date-window gates mirror the tip tier's caution — this DELETES a
-    pending, so it must not merge a coincidental same-amount charge."""
+    pending, so it must not merge a coincidental same-amount charge. Among several
+    matches the one dated nearest the posted wins, then the lowest transaction_id."""
     if posted_txn.get("authorized_date"):
         return None  # has its own swipe date -> the exact/tip tiers handle it
     amount = posted_txn.get("amount")
@@ -342,13 +343,19 @@ def _find_blank_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optional
     if len(_words(merchant)) < 2:
         return None
     posted_date = posted_txn.get("date")
-    return _select_twin(
-        pool,
-        lambda item: item.get("amount") == amount
+    candidates = [
+        i for i, item in enumerate(pool)
+        if item.get("amount") == amount
         and _settles_after(item.get("date"), posted_date)
         and merchant_matches_pending(merchant, item.get("merchant_name") or "",
-                                     item.get("description") or ""),
-    )
+                                     item.get("description") or "")
+    ]
+    if not candidates:
+        return None
+    # The 30-day window can reach a lingering cancelled hold beside this week's real
+    # pending: take the one dated nearest the settlement so the old hold isn't merged.
+    nearest = max(pool[i]["date"] for i in candidates)
+    return _pop_lowest_id(pool, [i for i in candidates if pool[i]["date"] == nearest])
 
 
 def match_all(
