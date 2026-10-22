@@ -17,15 +17,15 @@ const props = (over: Record<string, unknown> = {}) => ({
 
 const child = <Text testID="thing-content">loaded</Text>;
 
-it('loading with nothing cached shows the spinner and hides the children', () => {
-  render(<DetailStates {...props({ isLoading: true })}>{child}</DetailStates>);
+it('loading with nothing cached shows the spinner and hides the children', async () => {
+  await render(<DetailStates {...props({ isLoading: true })}>{child}</DetailStates>);
   expect(screen.getByTestId('thing-loading')).toBeTruthy();
   expect(screen.queryByTestId('thing-content')).toBeNull();
 });
 
-it('error with nothing cached shows an accessible Retry that re-issues the read, children hidden', () => {
+it('error with nothing cached shows an accessible Retry that re-issues the read, children hidden', async () => {
   const onRetry = jest.fn();
-  render(<DetailStates {...props({ isError: true, onRetry })}>{child}</DetailStates>);
+  await render(<DetailStates {...props({ isError: true, onRetry })}>{child}</DetailStates>);
 
   expect(screen.getByTestId('thing-error')).toBeTruthy();
   expect(screen.getByText("Couldn't load it.")).toBeTruthy(); // the passed errorText actually renders
@@ -34,19 +34,19 @@ it('error with nothing cached shows an accessible Retry that re-issues the read,
   expect(retry.props.accessibilityLabel).toBe('Retry loading it');
   expect(screen.queryByTestId('thing-content')).toBeNull();
 
-  fireEvent.press(retry);
+  await fireEvent.press(retry);
   expect(onRetry).toHaveBeenCalledTimes(1);
 });
 
-it('settled (not loading, not error) renders the children and no scaffold', () => {
-  render(<DetailStates {...props()}>{child}</DetailStates>);
+it('settled (not loading, not error) renders the children and no scaffold', async () => {
+  await render(<DetailStates {...props()}>{child}</DetailStates>);
   expect(screen.getByTestId('thing-content')).toBeTruthy();
   expect(screen.queryByTestId('thing-loading')).toBeNull();
   expect(screen.queryByTestId('thing-error')).toBeNull();
 });
 
-it('a failure OVER cached rows stays cache-first: children shown, no error', () => {
-  render(<DetailStates {...props({ isError: true, hasCache: true })}>{child}</DetailStates>);
+it('a failure OVER cached rows stays cache-first: children shown, no error', async () => {
+  await render(<DetailStates {...props({ isError: true, hasCache: true })}>{child}</DetailStates>);
   expect(screen.getByTestId('thing-content')).toBeTruthy();
   expect(screen.queryByTestId('thing-error')).toBeNull();
 });

@@ -49,7 +49,7 @@ it('mortgage Sprint summary reflects the saved plan (count + next target), not t
 it('the no-plan invite taps straight into the editor (not the read-only detail)', async () => {
   seedGoal(server, { milestones: [], homeLoan: { balance: 596642.43, asOf: null } });
   await renderWithQueries(<Mortgage />);
-  fireEvent.press(screen.getByTestId('milestone-link'));
+  await fireEvent.press(screen.getByTestId('milestone-link'));
   expect(routerSpies.push).toHaveBeenCalledWith('/milestone/edit');
 });
 
@@ -144,7 +144,7 @@ it('user can pull down on Home loan to reload the balance', async () => {
 
   seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 430000, asOf: '2026-07-05T00:00:00Z' } });
   const held = server.hold('/homeloan');
-  act(() => { pullControl().props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(pullControl().props.refreshing).toBe(true));
 
   held.release();

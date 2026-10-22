@@ -104,7 +104,7 @@ describe('Goals celebrations that stick (WHIT-747 / WHIT-811)', () => {
 
   it('[A2] remembers across a full relaunch: a crossing made while the app was closed celebrates on the next open', async () => {
     const firstLaunch = await renderWithQueries(<Goals />); // first-ever launch at $4,000 → saves g1: 1
-    firstLaunch.unmount();
+    await firstLaunch.unmount();
     queryClient.clear();                                     // the app is closed: nothing in memory survives
     seedHub([HOLIDAY], { 'up-spending': 6000 });             // the bank syncs past $5,000 meanwhile
     await renderWithQueries(<Goals />);
@@ -170,7 +170,7 @@ describe('Goals celebrations that stick (WHIT-747 / WHIT-811)', () => {
     expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000 });
 
     setFocused(true);
-    await act(async () => { view.rerender(<WithQueries><Goals /></WithQueries>); });
+    await act(async () => { await view.rerender(<WithQueries><Goals /></WithQueries>); });
     expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · B reached/);
   });
 
@@ -178,7 +178,7 @@ describe('Goals celebrations that stick (WHIT-747 / WHIT-811)', () => {
     await savedFromEarlierLaunch({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(false, false) });
     server.seed('/milestones', MILESTONES);
     const held = server.hold('/milestones');
-    render(<WithQueries><Goals /></WithQueries>);
+    await render(<WithQueries><Goals /></WithQueries>);
     await screen.findByText('Holiday');               // the goals are on screen; the milestones still loading
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
     expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(false, false) });

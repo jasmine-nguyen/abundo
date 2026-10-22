@@ -42,7 +42,7 @@ const SHOP: FilingTarget = { kind: 'shop', group: GROUP, categoryId: 'groceries'
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const FAILED: FilingResult = { status: 'failed', background: false };
 
-function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
+async function mount() { return (await renderHook(() => useAppContext(), { wrapper })).result; }
 
 /** Read a named list cache back as a flat list of rows. */
 function rowsIn(key: 'transactions' | 'uncategorizedFeed'): Transaction[] {
@@ -63,7 +63,7 @@ describe('now or background job', () => {
   });
 
   it('sends a shop run over 300 charges to a background job and says so', async () => {
-    const r = mount();
+    const r = await mount();
     let result: FilingResult | null = null;
     await act(async () => { result = await r.current.fileCharges(SHOP, { matched: 999 }); });
 
@@ -76,7 +76,7 @@ describe('now or background job', () => {
   it('files the first 300 now, even over the cap, when the user picks "file up to 300"', async () => {
     server.seed(APPLY_RULES, report());
 
-    const r = mount();
+    const r = await mount();
     let result: FilingResult | null = null;
     await act(async () => { result = await r.current.fileCharges(SWEEP, { matched: 999, now: true }); });
 
@@ -91,7 +91,7 @@ describe('now or background job', () => {
     server.fail(APPLY_RULES, 409);
     server.fail(JOBS, 409);
 
-    const r = mount();
+    const r = await mount();
     let now: FilingResult | null = null;
     let background: FilingResult | null = null;
     await act(async () => { now = await r.current.fileCharges(SHOP, { matched: 5 }); });
@@ -126,7 +126,7 @@ describe('edges of one filing run', () => {
   it('[A1] turns a sweep 409 into a plain failure on preview, file now and start job', async () => {
     server.fail(APPLY_RULES, 409);
     server.fail(JOBS, 409);
-    const r = mount();
+    const r = await mount();
 
     let preview: FilingResult | null = null;
     let now: FilingResult | null = null;
@@ -142,7 +142,7 @@ describe('edges of one filing run', () => {
 
   // [A2] (P0) A shop 409 on preview is a clash (the sheet shows the clash screen, not "couldn't load").
   it('[A2] keeps a shop preview 409 as a clash, and any other preview error as a failure', async () => {
-    const r = mount();
+    const r = await mount();
     let clash: FilingResult | null = null;
     let failed: FilingResult | null = null;
     server.once('POST', APPLY_RULES, { status: 409 });
@@ -156,7 +156,7 @@ describe('edges of one filing run', () => {
 
   // [A3] (P0) A direct clash wrote nothing, so it refreshes nothing; any other direct failure refreshes.
   it('[A3] refreshes after a direct failure but not after a direct clash', async () => {
-    const r = mount();
+    const r = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
     server.once('POST', APPLY_RULES, { status: 409 });
@@ -174,7 +174,7 @@ describe('edges of one filing run', () => {
   it('[A4] files a new rule now with the trimmed pattern and shows the minted rule as NEW', async () => {
     seedRules();
     server.seed(APPLY_RULES, report({ createdRule: MINTED }));
-    const r = mount();
+    const r = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
     await act(async () => { await r.current.fileCharges(NEW_RULE, { matched: 5 }); });
@@ -190,7 +190,7 @@ describe('edges of one filing run', () => {
   it('[A5] does not prepend the rule a shop run mints, and refetches rules', async () => {
     seedRules();
     server.seed(APPLY_RULES, report({ createdRule: MINTED }));
-    const r = mount();
+    const r = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
     await act(async () => { await r.current.fileCharges(SHOP, { matched: 5 }); });
@@ -204,10 +204,10 @@ describe('edges of one filing run', () => {
   it('[A9] refuses to start a background job while a direct run is in flight', async () => {
     server.once('POST', APPLY_RULES, { body: report() });
     const pending = server.hold(APPLY_RULES);
-    const r = mount();
+    const r = await mount();
 
     let first!: Promise<FilingResult>;
-    act(() => { first = r.current.fileCharges(SWEEP, { now: true }); });
+    await act(() => { first = r.current.fileCharges(SWEEP, { now: true }); });
     let second: FilingResult | null = null;
     await act(async () => { second = await r.current.fileCharges(SHOP, { matched: 999 }); });
     expect(second).toEqual({ status: 'failed', background: true });
@@ -219,11 +219,11 @@ describe('edges of one filing run', () => {
   // [A13] (P0) The sheets' preview effect and the lock subscription hold on to these callbacks, so
   // they must keep their identity across a toast, a sheet change and job progress.
   it('[A13] keeps previewFiling, fileCharges and retryApplyRulesJob stable across redraws', async () => {
-    const r = mount();
+    const r = await mount();
     const first = { preview: r.current.previewFiling, file: r.current.fileCharges, retry: r.current.retryApplyRulesJob };
 
-    act(() => { r.current.showToast('hi'); });
-    act(() => { r.current.setSheet({ mode: 'applyRules' }); });
+    await act(() => { r.current.showToast('hi'); });
+    await act(() => { r.current.setSheet({ mode: 'applyRules' }); });
     await act(async () => { await r.current.fileCharges(SWEEP, { matched: 999 }); });
     server.seed(`${JOBS}/job-1`, applyRulesJob({ matched: 10, attempted: 5 }));
     await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
@@ -240,13 +240,13 @@ describe('edges of one filing run', () => {
     server.once('POST', APPLY_RULES, { body: report({ dryRun: true }) });
     server.once('POST', APPLY_RULES, { body: report({ createdRule: MINTED }) });
     const pending = server.hold(APPLY_RULES);   // the preview and the commit both stay in flight
-    const r = mount();
+    const r = await mount();
 
     let previewing!: Promise<FilingResult>;
     let filing!: Promise<FilingResult>;
-    act(() => { previewing = r.current.previewFiling(SHOP); });
-    act(() => { filing = r.current.fileCharges(NEW_RULE, { now: true }); });
-    act(() => { setAuthStatus('anon'); });
+    await act(() => { previewing = r.current.previewFiling(SHOP); });
+    await act(() => { filing = r.current.fileCharges(NEW_RULE, { now: true }); });
+    await act(() => { setAuthStatus('anon'); });
     seedRules();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -280,7 +280,7 @@ describe('reconciling the caches with the report', () => {
       filed: [{ id: 't1', category: 'groceries' }, { id: 'deep', category: 'fuel' }, { id: 'recent', category: 'coffee' }],
     }));
 
-    const result = mount();
+    const result = await mount();
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
     const byId = new Map([...rowsIn('transactions'), ...rowsIn('uncategorizedFeed'),
@@ -299,7 +299,7 @@ describe('reconciling the caches with the report', () => {
     queryClient.setQueryData(['transactionsRecent'], [txn({ transaction_id: 'gone' })]);
     server.seed(APPLY_RULES, filedReport({ filed: [], vanished: ['gone'] }));
 
-    const result = mount();
+    const result = await mount();
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
     expect(rowsIn('transactions').map((r) => r.transaction_id)).toEqual(['t1']);
@@ -309,7 +309,7 @@ describe('reconciling the caches with the report', () => {
   it('invalidates the server-derived reads but never the transactions feed', async () => {
     seedTransactionsCache(queryClient, [txn()]);
     server.seed(APPLY_RULES, filedReport());
-    const result = mount();
+    const result = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
@@ -343,7 +343,7 @@ describe('reconciling the caches with the report', () => {
     });
     server.seed(APPLY_RULES, filedReport({ filed: [] }));
 
-    const result = mount();
+    const result = await mount();
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
     const data = queryClient.getQueryData<{ pages: unknown[]; pageParams: unknown[] }>(['uncategorizedFeed']);
@@ -365,7 +365,7 @@ describe('reconciling the caches with the report', () => {
     });
     server.fail(APPLY_RULES, 502);
 
-    const result = mount();
+    const result = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
     let returned: FilingResult | null = null;
     await act(async () => { returned = await result.current.fileCharges(SWEEP, { now: true }); });
@@ -380,7 +380,7 @@ describe('reconciling the caches with the report', () => {
     seedTransactionsCache(queryClient, [txn()]);
     server.seed(APPLY_RULES, filedReport({ dryRun: true, filed: [] }));
 
-    const result = mount();
+    const result = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
     let returned: FilingResult | null = null;
     await act(async () => { returned = await result.current.previewFiling(SWEEP); });
@@ -396,26 +396,26 @@ describe('reconciling the caches with the report', () => {
   // sheet's local state — but the context-held `sheet` survives, so on unlock it would remount and
   // fire a SECOND whole-history scan with no memory of the run behind it. Drop it instead.
   // Fail-on-revert: remove the setSheet line from the auth subscriber and the sheet is still open.
-  it('closes the apply-rules sheet on a Face ID lock', () => {
-    const result = mount();
-    act(() => { result.current.setSheet({ mode: 'applyRules' }); });
+  it('closes the apply-rules sheet on a Face ID lock', async () => {
+    const result = await mount();
+    await act(() => { result.current.setSheet({ mode: 'applyRules' }); });
 
-    act(() => { setAuthStatus('locked'); });
+    await act(() => { setAuthStatus('locked'); });
 
     expect(result.current.sheet).toBeNull();
   });
 
   // The counterpart: a lock must not close the sheets WHIT-277 exists to preserve, and a plain
   // re-broadcast of 'authed' must not close anything at all.
-  it('leaves other sheets alone on a lock, and every sheet alone on an authed re-broadcast', () => {
-    const result = mount();
-    act(() => { result.current.setSheet({ mode: 'addrule' }); });
-    act(() => { setAuthStatus('locked'); });
+  it('leaves other sheets alone on a lock, and every sheet alone on an authed re-broadcast', async () => {
+    const result = await mount();
+    await act(() => { result.current.setSheet({ mode: 'addrule' }); });
+    await act(() => { setAuthStatus('locked'); });
     expect(result.current.sheet).toEqual({ mode: 'addrule' });
 
     setAuthStatusQuietly('authed');
-    act(() => { result.current.setSheet({ mode: 'applyRules' }); });
-    act(() => { setAuthStatus('authed') });
+    await act(() => { result.current.setSheet({ mode: 'applyRules' }); });
+    await act(() => { setAuthStatus('authed') });
     expect(result.current.sheet).toEqual({ mode: 'applyRules' });
   });
 
@@ -434,7 +434,7 @@ describe('reconciling the caches with the report', () => {
       filed: [], vanished: ['gone'], alreadyFiled: ['kept'],
     }));
 
-    const result = mount();
+    const result = await mount();
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
     const rows = rowsIn('transactions');
@@ -458,7 +458,7 @@ describe('runs and refreshes happening at the same time', () => {
     seedTransactionsCache(queryClient, [txn({ transaction_id: 't1' })]);
     server.once('POST', APPLY_RULES, { body: filedReport({ filed: [{ id: 't1', category: 'groceries' }] }) });
     const pending = server.hold(APPLY_RULES);   // the run stays in flight until release()
-    const result = mount();
+    const result = await mount();
 
     await act(async () => {
       const inFlight = result.current.fileCharges(SWEEP, { now: true });
@@ -487,7 +487,7 @@ describe('runs and refreshes happening at the same time', () => {
     seedTransactionsCache(queryClient, [
       txn({ transaction_id: 't1' }), txn({ transaction_id: 't2' }), txn({ transaction_id: 't3' }),
     ]);
-    const result = mount();
+    const result = await mount();
 
     server.once('POST', APPLY_RULES, { body: filedReport({ filed: [{ id: 't1', category: 'groceries' }], remaining: 2 }) });
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
@@ -517,7 +517,7 @@ describe('runs and refreshes happening at the same time', () => {
       pageParams: [undefined, 'c1', 'c2'],
     });
     server.seed(APPLY_RULES, filedReport({ dryRun: true, filed: [] }));
-    const result = mount();
+    const result = await mount();
 
     await act(async () => { await result.current.previewFiling(SWEEP); });
 
@@ -534,7 +534,7 @@ describe('runs and refreshes happening at the same time', () => {
     seedTransactionsCache(queryClient, [txn()]);
     server.once('POST', APPLY_RULES, { status: 401 });
     const pending = server.hold(APPLY_RULES);
-    const result = mount();
+    const result = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
     let returned: FilingResult | null = null;
@@ -558,7 +558,7 @@ describe('runs and refreshes happening at the same time', () => {
     seedTransactionsCache(queryClient, [txn()]);
     server.once('POST', APPLY_RULES, { body: filedReport() });
     const pending = server.hold(APPLY_RULES);
-    const result = mount();
+    const result = await mount();
 
     let second: FilingResult | null = null;
     await act(async () => {
@@ -576,7 +576,7 @@ describe('runs and refreshes happening at the same time', () => {
   it('releases the latch after a failed run', async () => {
     seedTransactionsCache(queryClient, [txn()]);
     server.once('POST', APPLY_RULES, { status: 502 });
-    const result = mount();
+    const result = await mount();
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
     server.once('POST', APPLY_RULES, { body: filedReport() });
@@ -595,7 +595,7 @@ describe('a new rule filed now', () => {
     seedTransactionsCache(queryClient, [txn()]);
     server.seed(APPLY_RULES, filedReport({ rulesConsidered: 1, createdRule: null }));
 
-    const result = mount();
+    const result = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
     await act(async () => { await result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true }); });
 
@@ -618,7 +618,7 @@ describe('the shared save runner', () => {
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
     server.seed(APPLY_RULES, filedReport());
 
-    const { result } = renderHook(() => useFilingRun({
+    const { result } = await renderHook(() => useFilingRun({
       sessionEpoch, runSave, prependMintedRule: jest.fn(), sheetOpen: true,
     } as Parameters<typeof useFilingRun>[0]));
 
@@ -654,7 +654,7 @@ describe('search results', () => {
 
   it('[A10] apply-rules patches + invalidates the search result', async () => {
     server.seed(APPLY_RULES, filedReport({ filed: [{ id: 'deep1', category: 'groceries' }], vanished: ['deep2'] }));
-    const result = mount();
+    const result = await mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
     await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });

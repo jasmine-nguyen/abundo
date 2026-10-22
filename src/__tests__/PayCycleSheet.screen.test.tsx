@@ -21,6 +21,7 @@ import { queryClient } from '../queryClient';
 import { payCycleKey } from '../queryKeys';
 import { openOverlays } from './support/openOverlays';
 import { renderedPickerProps } from './support/mockDatePicker';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -61,16 +62,16 @@ it('[A1] ticks the cycle length the server returns', async () => {
 
 it('tapping a length calls setPayCycleLength with its day count', async () => {
   await openPayCycle(14);
-  fireEvent.press(screen.getByText('Monthly'));
+  await fireEvent.press(screen.getByText('Monthly'));
   expect(fns.setPayCycleLength).toHaveBeenCalledWith(30);
-  fireEvent.press(screen.getByText('Weekly'));
+  await fireEvent.press(screen.getByText('Weekly'));
   expect(fns.setPayCycleLength).toHaveBeenCalledWith(7);
 });
 
 it('picking a date calls setPayday with the ISO date (via the onChange event,date extraction)', async () => {
   await openPayCycle(14);
   // The mocked picker fires the real onChange({type:'set'}, Date(2026-06-20)).
-  fireEvent.press(screen.getByTestId('mock-datepicker'));
+  await fireEvent.press(screen.getByTestId('mock-datepicker'));
   expect(fns.setPayday).toHaveBeenCalledWith('2026-06-20');
 });
 
@@ -110,7 +111,7 @@ describe('first load', () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-06-06' });
     await open();
     await screen.findByTestId('paycycle-error');
-    await act(async () => { fireEvent.press(screen.getByTestId('paycycle-retry')); });
+    await startTaps(screen.getByTestId('paycycle-retry'));
     await waitFor(() => expect(isTicked('Monthly')).toBe(true));
   });
 

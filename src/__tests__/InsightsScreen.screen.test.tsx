@@ -7,7 +7,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { routerSpies, fireFocus, resetRouter } from './support/routerMock';
 import { AccessibilityInfo } from 'react-native';
 import { screen, fireEvent, within, waitFor } from '@testing-library/react-native';
-import type { ReactTestInstance } from 'react-test-renderer';
+import type { TestInstance } from 'test-renderer';
 import { UNCATEGORIZED_KEY } from '../model';
 import { CATEGORY_COLORS } from '../chartColors';
 import { queryClient } from '../queryClient';
@@ -58,7 +58,7 @@ function seedBreakdown(wire: Parameters<typeof breakdownWire>[0], categories: un
 const breakdownReads = () => server.sentUnder('GET', '/breakdown').length;
 
 async function showLastCycle() {
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   await loaded([...breakdownKey, 1]);
   await settle();
 }
@@ -163,7 +163,7 @@ describe('the earned-vs-spent chart is never drawn over an empty/loading/error s
     // The breakdown (with earned) lands; the categories are still loading, so the spinner shows.
     seedBreakdown({ earned: 3000 });
     const held = server.hold('/categories');
-    drawInsights();
+    await drawInsights();
     expect(await screen.findByTestId('insights-loading')).toBeTruthy();
     await loaded([...breakdownKey, 0]);
     await refreshInAct(() => Promise.resolve());
@@ -262,7 +262,7 @@ describe('hero states (no false $0)', () => {
 
   it('loading (nothing cached) → hero reads "—" / "Loading…", never $0', async () => {
     const held = server.hold('/breakdown');
-    drawInsights();
+    await drawInsights();
     expect(await screen.findByText('Loading…')).toBeTruthy();
     expect(screen.getByText('—')).toBeTruthy();
     expect(screen.queryByText('$0')).toBeNull();
@@ -286,7 +286,7 @@ describe('hero states (no false $0)', () => {
   it('[A5] categories held → hero reads Loading…, then the real total once they land', async () => {
     seedBreakdown({ spend: { coffee: posted(40) } });
     const held = server.hold('/categories');
-    drawInsights();
+    await drawInsights();
     try {
       // Only categories are outstanding: the breakdown and pay cycle have both landed.
       await waitFor(() => expect(queryClient.isFetching()).toBe(1));
@@ -367,7 +367,7 @@ describe('breakdown and AI fail independently', () => {
 
 it('tapping "Analyse my spending" calls generateAiInsights', async () => {
   await renderInsights();
-  fireEvent.press(screen.getByRole('button', { name: 'Analyse my spending' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Analyse my spending' }));
   expect(generateAiInsights).toHaveBeenCalled();
 });
 
@@ -380,7 +380,7 @@ describe('with the loan goal ready', () => {
   it('names home-loan figures in the note + sends a goal once the loan is ready (WHIT-134)', async () => {
     await renderInsights();
     expect(screen.getByText(/home-loan figures \(balance, rate, repayments\)/)).toBeTruthy();
-    fireEvent.press(screen.getByText('Analyse my spending'));
+    await fireEvent.press(screen.getByText('Analyse my spending'));
     expect(generateAiInsights).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
   });
 
@@ -388,7 +388,7 @@ describe('with the loan goal ready', () => {
     setAi({ insights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
     await renderInsights();
     expect(screen.getByText(/Re-analysing sends your category spend totals and home-loan figures/)).toBeTruthy();
-    fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
+    await fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
     expect(generateAiInsights).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
   });
 
@@ -397,7 +397,7 @@ describe('with the loan goal ready', () => {
     await renderInsights();
     expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
     expect(screen.queryByText(/home-loan figures/)).toBeNull();
-    fireEvent.press(screen.getByText('Analyse my spending'));
+    await fireEvent.press(screen.getByText('Analyse my spending'));
     expect(generateAiInsights).toHaveBeenCalledWith(null);
   });
 });
@@ -464,7 +464,7 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
     expect(announce).not.toHaveBeenCalled(); // still analysing → nothing yet
 
     setAi({ insights: AI, isLoading: false, isError: false });
-    redrawInsights(view);
+    await redrawInsights(view);
     expect(announce).toHaveBeenCalledTimes(1);
     expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
   });
@@ -479,7 +479,7 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
 
     await showLastCycle(); // move to Last cycle → coach hidden
     setAi({ insights: AI, isLoading: false, isError: false });
-    redrawInsights(view);
+    await redrawInsights(view);
 
     expect(announce).not.toHaveBeenCalled(); // withheld while the coach is off-screen
   });
@@ -514,15 +514,15 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
     const view = await renderInsights();
 
     setAi({ insights: AI, isLoading: false, isError: false });
-    redrawInsights(view); // 1st completion → announce #1
+    await redrawInsights(view); // 1st completion → announce #1
     expect(announce).toHaveBeenCalledTimes(1);
 
     setAi({ insights: AI, isLoading: true });
-    redrawInsights(view); // re-analyse starts again → no announce, re-arm
+    await redrawInsights(view); // re-analyse starts again → no announce, re-arm
     expect(announce).toHaveBeenCalledTimes(1);
 
     setAi({ insights: AI, isLoading: false, isError: false });
-    redrawInsights(view); // 2nd completion → announce #2
+    await redrawInsights(view); // 2nd completion → announce #2
     expect(announce).toHaveBeenCalledTimes(2);
     expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
   });
@@ -539,7 +539,7 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
     expect(announce).not.toHaveBeenCalled();
 
     setAi({ insights: null, isLoading: false, isError: true });
-    redrawInsights(view);
+    await redrawInsights(view);
     expect(announce).toHaveBeenCalledTimes(1);
     expect(announce).toHaveBeenLastCalledWith("Couldn't analyse your spending. Please try again.");
   });
@@ -554,10 +554,10 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
     const view = await renderInsights();
 
     setAi({ insights: AI, isLoading: false, isError: false });
-    redrawInsights(view); // completion → announce once
+    await redrawInsights(view); // completion → announce once
     expect(announce).toHaveBeenCalledTimes(1);
 
-    redrawInsights(view); // same at-rest state → must stay at 1
+    await redrawInsights(view); // same at-rest state → must stay at 1
     expect(announce).toHaveBeenCalledTimes(1);
   });
 });
@@ -635,13 +635,13 @@ describe('Insights refund line (WHIT-349)', () => {
     expect(screen.queryByText(/refund/)).toBeNull();
 
     // Expand Car -> the refund line appears, reconciling petrol 60 - 30 = 30.
-    fireEvent.press(screen.getByText('Car'));
+    await fireEvent.press(screen.getByText('Car'));
     expect(screen.getByText('Petrol')).toBeTruthy();
     expect(screen.getByText('Tolls')).toBeTruthy();
     expect(screen.getByText(/refund/)).toBeTruthy();
 
     // A tap on the refund line drills into the refunded sub's transactions.
-    fireEvent.press(screen.getByText('Tolls'));
+    await fireEvent.press(screen.getByText('Tolls'));
     expect(routerSpies.push).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
   });
 });
@@ -651,8 +651,8 @@ describe('Insights refund line (WHIT-349)', () => {
 describe('Insights parent row arrow', () => {
   beforeEach(seedCarRefund);
 
-  const xmlsIn = (node: ReactTestInstance) =>
-    node.findAll((n) => typeof n.props.xml === 'string').map((n) => n.props.xml as string);
+  const xmlsIn = (node: TestInstance) =>
+    node.queryAll((n) => typeof n.props.xml === 'string').map((n) => n.props.xml as string);
   const parentRow = () => screen.getByRole('button', { name: /Car/ });
   const drawn = (inner: string) => `<svg viewBox="0 0 24 24">${inner.replace(/currentColor/g, C.textDim)}</svg>`;
 
@@ -662,7 +662,7 @@ describe('Insights parent row arrow', () => {
     expect(xmls).toContain(drawn(GLYPH.chevron));
     expect(xmls).not.toContain(drawn(ICON.q));
 
-    fireEvent.press(screen.getByText('Car'));
+    await fireEvent.press(screen.getByText('Car'));
     xmls = xmlsIn(parentRow());
     expect(xmls).toContain(drawn(GLYPH.chevronDown));
     expect(xmls).not.toContain(drawn(ICON.q));
@@ -672,7 +672,7 @@ describe('Insights parent row arrow', () => {
   // to sit beside the amount rather than above it.
   it('puts the arrow beside the amount, not above it', async () => {
     await renderInsights();
-    const arrow = parentRow().find((n) => n.props.xml === drawn(GLYPH.chevron));
+    const arrow = parentRow().queryAll((n) => n.props.xml === drawn(GLYPH.chevron))[0];
     const amount = within(parentRow()).getByText('$30');
     expect(styleOf(sharedHost(arrow, amount)).flexDirection).toBe('row');
   });
@@ -700,8 +700,8 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
   });
 
   // Climb to the enclosing row card (styles.row is the only node with borderRadius 20).
-  function rowCard(node: ReactTestInstance): ReactTestInstance {
-    let n: ReactTestInstance | null = node;
+  function rowCard(node: TestInstance): TestInstance {
+    let n: TestInstance | null = node;
     while (n) {
       if (styleOf(n).borderRadius === 20) return n;
       n = n.parent;
@@ -709,7 +709,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     throw new Error('no enclosing row card');
   }
   // A category-bar track (styles.track: height 8) — present on a real spend row, absent on a plug/refund.
-  const tracksIn = (card: ReactTestInstance) => card.findAll((n) => styleOf(n).height === 8);
+  const tracksIn = (card: TestInstance) => card.queryAll((n) => styleOf(n).height === 8);
 
   it('hides the "Other" plug until the parent is expanded, then shows it un-barred and un-tappable', async () => {
     await renderInsights();
@@ -717,7 +717,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     expect(screen.queryByText('Pending/refund adjustment')).toBeNull();
 
     // Expand Car -> children + the refund line + the adjustment plug appear.
-    fireEvent.press(screen.getByText('Car'));
+    await fireEvent.press(screen.getByText('Car'));
     expect(screen.getByText('Petrol')).toBeTruthy();
     const other = screen.getByText('Pending/refund adjustment');
     expect(other).toBeTruthy();
@@ -728,7 +728,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     expect(tracksIn(rowCard(screen.getByText('Petrol')))).not.toHaveLength(0);
     // NOT tappable — no button in the row, and pressing it drills nowhere.
     expect(within(card).queryByRole('button')).toBeNull();
-    fireEvent.press(other);
+    await fireEvent.press(other);
     expect(routerSpies.push).not.toHaveBeenCalled();
   });
 
@@ -738,7 +738,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
   // historical drift the card guards). Fail-on-revert: sign the helper's amount and this flips to "-$30".
   it('renders the refund line amount UNSIGNED ("$30", never "-$30")', async () => {
     await renderInsights();
-    fireEvent.press(screen.getByText('Car'));
+    await fireEvent.press(screen.getByText('Car'));
 
     const refundCard = rowCard(screen.getByText('Tolls'));
     expect(within(refundCard).getByText('$30')).toBeTruthy();   // unsigned credit
@@ -757,7 +757,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
       rollup: { nodes: { car: posted(60) } },   // node 60 < own 100 -> -40 plug
     }, CAR_CATS);
     await renderInsights();
-    fireEvent.press(screen.getByText('Car'));
+    await fireEvent.press(screen.getByText('Car'));
 
     const other = screen.getByText('Pending/refund adjustment');
     const card = rowCard(other);
@@ -803,7 +803,7 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
     it('switching to Earning shows income sources and hides the category rows', async () => {
       seedSides(BOTH);
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('Salary')).toBeTruthy();
       expect(screen.getByText('$3,000')).toBeTruthy();
       expect(screen.getByText('Dividends')).toBeTruthy();
@@ -815,8 +815,8 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
     it('taps an income source into its transactions for the selected cycle', async () => {
       seedSides(BOTH);
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
-      fireEvent.press(screen.getByText('Salary'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByText('Salary'));
       expect(routerSpies.push).toHaveBeenCalledWith('/category/salary?cycle=0');
     });
 
@@ -825,7 +825,7 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
       // shows because spend is present; the Earning side is an honest empty, not a dead end.
       seedSides({ spend: { coffee: posted(40) }, earned: 3000 });
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('No income yet this pay cycle.')).toBeTruthy();
       expect(screen.queryByText('Cafes & Coffee')).toBeNull();
     });
@@ -837,7 +837,7 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
         income: { salary: { posted: 3000, pending: 250 }, dividends: posted(-100) },
       });
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('$250 pending')).toBeTruthy();      // positive pending sub-line
       expect(screen.getByText('-$100')).toBeTruthy();             // clawback renders signed
     });
@@ -847,7 +847,7 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
       await renderInsights();
       expect(screen.getByTestId('insights-side-earning')).toBeTruthy();           // toggle shows (income present)
       expect(screen.getByText('No spending yet this pay cycle.')).toBeTruthy();    // default Spending is honest-empty
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('Salary')).toBeTruthy();
     });
 
@@ -887,7 +887,7 @@ describe('Insights earning share bars (WHIT-373)', () => {
     it('[B1] draws a proportional green bar per positive source, biggest widest', async () => {
       seedSides({ spend: { coffee: posted(20) }, earned: 3500, income: { salary: posted(3000), dividends: posted(500) } });
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       const widths = incomeBarWidths(screen.toJSON());
       expect(widths).toHaveLength(2);
       // salary 3000/3500 ≈ 85.7% ; dividends 500/3500 ≈ 14.3%
@@ -903,15 +903,15 @@ describe('Insights earning share bars (WHIT-373)', () => {
     it('[B2] the muted reconcile plug gets no bar and does not drill', async () => {
       seedSides({ spend: { coffee: posted(40) }, earned: 3120, income: { salary: posted(3000) } });
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('Pending/refund adjustment')).toBeTruthy();
       // only the real source (salary) gets a green bar — the plug does not
       expect(incomeBarWidths(screen.toJSON())).toHaveLength(1);
       // tapping the plug row navigates nowhere (it has no Pressable wrapper)
-      fireEvent.press(screen.getByText('Pending/refund adjustment'));
+      await fireEvent.press(screen.getByText('Pending/refund adjustment'));
       expect(routerSpies.push).not.toHaveBeenCalled();
       // the real source still drills
-      fireEvent.press(screen.getByText('Salary'));
+      await fireEvent.press(screen.getByText('Salary'));
       expect(routerSpies.push).toHaveBeenCalledWith('/category/salary?cycle=0');
     });
 
@@ -922,7 +922,7 @@ describe('Insights earning share bars (WHIT-373)', () => {
     it('[B3] an all-reversed cycle renders rows but zero bars (denominator 0 is safe)', async () => {
       seedSides({ earned: -300, income: { salary: posted(-200), dividends: posted(-100) } });
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('-$200')).toBeTruthy();
       expect(screen.getByText('-$100')).toBeTruthy();
       expect(incomeBarWidths(screen.toJSON())).toHaveLength(0); // no green bars at all
@@ -934,7 +934,7 @@ describe('Insights earning share bars (WHIT-373)', () => {
     it('[B4] Earning choice carried into a later spend-only cycle shows the income empty, toggle intact', async () => {
       seedSides({ spend: { coffee: posted(20) }, earned: 3500, income: { salary: posted(3000) } });
       await renderInsights();
-      fireEvent.press(screen.getByTestId('insights-side-earning'));
+      await fireEvent.press(screen.getByTestId('insights-side-earning'));
       expect(screen.getByText('Salary')).toBeTruthy();
       // the other cycle's data arrives: spend only, no income sources
       server.once('GET', '/breakdown', { body: breakdownWire({ spend: { coffee: posted(20) }, earned: 0 }) });

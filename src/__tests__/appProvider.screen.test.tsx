@@ -62,8 +62,8 @@ function seed(txnList: readonly Transaction[] = [{ ...TXN }]) {
   queryClient.setQueryData(['rules'], []);
 }
 
-function mount() {
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+async function mount() {
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
@@ -78,7 +78,7 @@ const CAP_REASON = 'a category can have at most 50 sub-categories';
 it('createCategoryInline toasts the server reason and still returns null', async () => {
   server.once('POST', '/categories', { status: 400, reason: CAP_REASON });
   seed();
-  const result = mount();
+  const result = await mount();
   let created: unknown = 'unset';
   await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
   expect(result.current.toast).toBe('A category can have at most 50 sub-categories.');
@@ -89,7 +89,7 @@ it('createCategoryInline toasts the server reason and still returns null', async
 it('keeps the generic copy when the failure explains nothing', async () => {
   server.once('POST', '/categories', 'dropped');
   seed();
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
   expect(result.current.toast).toBe('Could not save category. Please try again.');
 });
@@ -97,7 +97,7 @@ it('keeps the generic copy when the failure explains nothing', async () => {
 it('keeps the generic copy for a 5xx that did explain itself', async () => {
   server.once('DELETE', '/categories/groceries', { status: 500, reason: 'internal boom' });
   seed();
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.deleteCategory('groceries'); });
   expect(result.current.toast).toBe('Could not delete category. Please try again.');
 });
@@ -106,9 +106,9 @@ it('keeps the generic copy for a 5xx that did explain itself', async () => {
 
 it('applyCategory(one) files the transaction and persists it', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('one'); });
 
   expect(bodies(server.sent('PATCH', '/transactions/t1'))).toEqual([{ category: 'groceries' }]);
@@ -119,9 +119,9 @@ it('applyCategory(one) files the transaction and persists it', async () => {
 it('applyCategory(one) rolls the category back on failure', async () => {
   server.once('PATCH', '/transactions/t1', 'dropped');
   seed();
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('one'); });
 
   expect(txns()[0].category).toBeNull();
@@ -138,9 +138,9 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
     { ...TXN, transaction_id: 't2' },
     { ...TXN, transaction_id: 't3', description: 'WOOLWORTHS NEAR COLES ST', merchant_name: 'Woolworths' },
   ]);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   // ONE batch call (WHIT-70), not N single PATCHes — carrying t1 + t2 only, NOT t3.
@@ -169,9 +169,9 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
     { ...TXN, transaction_id: 't2', category: 'FOOD_AND_DRINK' },  // raw enum, same merchant -> MUST sweep
     { ...TXN, transaction_id: 't3', category: 'groceries' },       // real user category -> must NOT touch
   ]);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   // t1 (null) + t2 (raw enum) swept in ONE batch; t3 (already groceries) left alone.
@@ -193,9 +193,9 @@ it('applyCategory(all) rolls back only the ids the batch reports as not saved', 
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
   ]);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
@@ -210,9 +210,9 @@ it('applyCategory(all) rolls back ALL ids when the whole batch call rejects', as
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
   ]);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
@@ -236,9 +236,9 @@ it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule 
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
   ]);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
@@ -267,10 +267,10 @@ it('applyCategory(all) invalidates budgets + breakdown when at least one charge 
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
   ]);
-  const result = mount();
+  const result = await mount();
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   // WHIT-192: the migrated Budgets/Insights screens read the query cache, so a
@@ -285,9 +285,9 @@ it('applyCategory(all) files the tapped charge even when the sweep is empty (nev
   // the charge the user explicitly picked is still filed. The batch therefore carries exactly
   // that one id, and is never sent empty (a real server 400s on {updates:[]}; the E1 guard).
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   const batches = server.sent('PATCH', '/transactions');
@@ -300,9 +300,9 @@ it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)
   // (100 + 50), not one oversized request the server would 400.
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
   seed(many);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   const batches = server.sent('PATCH', '/transactions');
@@ -320,9 +320,9 @@ it('applyCategory(all) reverts only the failed chunk when one of several rejects
   server.once('PATCH', '/transactions', { body: { results: first100.map((id) => ({ id, status: 'updated' })) } });
   server.once('PATCH', '/transactions', 'dropped');
   seed(many);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   // The scripted success reply matches the first batch actually sent.
@@ -338,7 +338,7 @@ it('applyCategory(all) reverts only the failed chunk when one of several rejects
 
 it('saveBudget persists a target and returns true', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('groceries', 300); });
@@ -349,7 +349,7 @@ it('saveBudget persists a target and returns true', async () => {
 
 it('saveBudget rejects a non-positive target without calling the API', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('groceries', 0); });
   expect(ok).toBe(false);
@@ -359,7 +359,7 @@ it('saveBudget rejects a non-positive target without calling the API', async () 
 it('saveBudget returns false + toasts on failure', async () => {
   server.once('PUT', '/budgets/groceries', 'dropped');
   seed();
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('groceries', 300); });
   expect(ok).toBe(false);
@@ -374,7 +374,7 @@ it('saveBudget rejects a Savings-bucket category without calling the API (WHIT-2
     { ...CAT },
     { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'piggy', color: '#8fd4c0' },
   ]);
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('nest_egg', 300); });
   expect(ok).toBe(false);
@@ -390,7 +390,7 @@ it('saveBudget on an uncached (cold) category falls through to the server, not t
   // undefined bucket, no PUT would be sent and the toast would be the Savings copy.
   seed(); // categories = [CAT] only; 'nest_egg' is NOT in the cache
   server.once('PUT', '/budgets/nest_egg', { status: 400 });
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('nest_egg', 300); });
@@ -406,7 +406,7 @@ it('deleteBudget removes the target from the budgets cache, calls the API, and t
   seed();
   // A stored target for 'groceries' in the RAW ['budgets', cycleLen] Record.
   queryClient.setQueryData(['budgets', 14], { groceries: { target: 300, posted: 40, pending: 10 } });
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteBudget('groceries'); });
@@ -423,7 +423,7 @@ it('deleteBudget returns false, restores the cache, and toasts on failure', asyn
   seed();
   const before = { groceries: { target: 300, posted: 40, pending: 10 } };
   queryClient.setQueryData(['budgets', 14], { ...before });
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteBudget('groceries'); });
@@ -439,7 +439,7 @@ it('deleteBudget returns false, restores the cache, and toasts on failure', asyn
 it('saveCategory creates a new category', async () => {
   server.once('POST', '/categories', { body: { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00' } });
   seed();
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveCategory(null, { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
@@ -452,7 +452,7 @@ it('saveCategory creates a new category', async () => {
 it('saveCategory edits an existing category in place', async () => {
   server.once('PATCH', '/categories/groceries', { body: { id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0' } });
   seed();
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }); });
@@ -470,7 +470,7 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
   server.once('PATCH', '/categories/groceries', { body: DELETE_GROCERIES });
   server.once('PATCH', '/categories/groceries', { body: DELETE_GROCERIES });
   seed();
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.saveCategory(null, { name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' }); });
   expect(bodies(server.sent('POST', '/categories'))).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' }]);
@@ -489,7 +489,7 @@ it('[A2] saveCategory that flips "Transfer, not spending" refreshes Budgets and 
   // lists must refetch — else Insights keeps showing the repayment as spending.
   server.once('PATCH', '/categories/groceries', { body: { ...DELETE_GROCERIES, transfer: true } });
   seed();
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', transfer: true }); });
@@ -501,7 +501,7 @@ it('[A2] saveCategory that flips "Transfer, not spending" refreshes Budgets and 
 it('saveCategory returns false + toasts on failure', async () => {
   server.once('POST', '/categories', 'dropped');
   seed();
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveCategory(null, { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
   expect(ok).toBe(false);
@@ -515,7 +515,7 @@ const GYM_ROW = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell',
 it('createCategoryInline returns the created category and mirrors it into the cache', async () => {
   server.once('POST', '/categories', { body: GYM_ROW });
   seed();
-  const result = mount();
+  const result = await mount();
 
   let created: unknown;
   await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', parent: null }); });
@@ -531,7 +531,7 @@ it('createCategoryInline returns the created category and mirrors it into the ca
 // into { silent: true } so the screen can show ONE summary toast instead of one per write.
 it('createCategoryInline toasts by default, and stays silent with { silent: true }', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
   // Silent FIRST, from the null baseline: no toast. Fail-on-revert: drop the `if (!opts?.silent)`
   // gate and toast is set here → this null assertion fails.
   await act(async () => { await result.current.createCategoryInline({ name: 'Bus', bucket: 'Living', icon: 'car', parent: null }, { silent: true }); });
@@ -543,7 +543,7 @@ it('createCategoryInline toasts by default, and stays silent with { silent: true
 
 it('saveCategory (update) toasts by default, and stays silent with { silent: true }', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }, { silent: true }); });
   expect(result.current.toast).toBeNull();
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }); });
@@ -559,7 +559,7 @@ it('saveCategory (update) toasts by default, and stays silent with { silent: tru
 it('createCategoryInline stays silent on failure with { silent: true }', async () => {
   server.once('POST', '/categories', 'dropped');
   seed();
-  const result = mount();
+  const result = await mount();
   await act(async () => {
     await expect(
       result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }, { silent: true }),
@@ -574,7 +574,7 @@ it('createCategoryInline stays silent on failure with { silent: true }', async (
 it('saveCategory stays silent on failure with { silent: true } and rejects', async () => {
   server.once('PATCH', '/categories/groceries', { status: 400, reason: CAP_REASON });
   seed();
-  const result = mount();
+  const result = await mount();
   await act(async () => {
     await expect(
       result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart' }, { silent: true }),
@@ -587,7 +587,7 @@ it('saveCategory stays silent on failure with { silent: true } and rejects', asy
 
 it('deleteCategory removes it (cache cascade) and returns true', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteCategory('groceries'); });
@@ -600,7 +600,7 @@ it('deleteCategory removes it (cache cascade) and returns true', async () => {
 it('deleteCategory returns false + toasts on failure', async () => {
   server.once('DELETE', '/categories/groceries', 'dropped');
   seed();
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteCategory('groceries'); });
   expect(ok).toBe(false);
@@ -613,7 +613,7 @@ const FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, ba
 
 it('saveLoanFacts persists + optimistically updates the cache, returns true', async () => {
   seed();
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveLoanFacts(FACTS); });
   expect(ok).toBe(true);
@@ -624,7 +624,7 @@ it('saveLoanFacts persists + optimistically updates the cache, returns true', as
 it('saveLoanFacts rolls the cache back + toasts on failure', async () => {
   server.once('PUT', '/loanfacts', 'dropped');
   seed();  // seeds all-null facts
-  const result = mount();
+  const result = await mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveLoanFacts(FACTS); });
   expect(ok).toBe(false);

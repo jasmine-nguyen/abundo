@@ -53,11 +53,11 @@ const TIED: DonutSlice[] = [
 ];
 
 describe('SpendingDonut — the painted band stays unique and never inverts', () => {
-  it('[D5] a wedge too thin to pay a full half-divider keeps a third of itself instead of inverting', () => {
+  it('[D5] a wedge too thin to pay a full half-divider keeps a third of itself instead of inverting', async () => {
     // Sweeps: 358.209° / 1.433° / 0.358°. Half a divider is 0.381°, so 'tiny' cannot pay it at both
     // ends and gives up a third of its sweep at each instead — always leaving a third painted.
     const values: Record<string, number> = { big: 1000, mid: 4, tiny: 1 };
-    render(<SpendingDonut slices={Object.entries(values).map(([id, v]) => sl(id, v))} />);
+    await render(<SpendingDonut slices={Object.entries(values).map(([id, v]) => sl(id, v))} />);
     // A wedge's sweep is its share of the total — the layout contract, independent of the inset.
     const total = Object.values(values).reduce((sum, v) => sum + v, 0);
     for (const [id, value] of Object.entries(values)) {
@@ -86,8 +86,8 @@ describe('SpendingDonut — the wedges tile the whole ring', () => {
     ['two wedges', [sl('a', 75), sl('b', 25)]],
     ['three wedges', THREE],
     ['six wedges', [sl('a', 60), sl('b', 50), sl('c', 40), sl('d', 30), sl('e', 20), sl('f', 10)]],
-  ])('[Q2] %s: identical gaps at every boundary and no arc left over', (_name, slices) => {
-    render(<SpendingDonut slices={slices as DonutSlice[]} />);
+  ])('[Q2] %s: identical gaps at every boundary and no arc left over', async (_name, slices) => {
+    await render(<SpendingDonut slices={slices as DonutSlice[]} />);
     const paths = (slices as DonutSlice[]).map((s) => bandPath(s.id));
     const gaps = paths.map((d, i) => dividerGapDeg(d, paths[(i + 1) % paths.length]));
     const painted = paths.reduce((sum, d) => sum + arcExtentDeg(d), 0);
@@ -104,15 +104,15 @@ describe('SpendingDonut — a wedge too thin to give up a full half-divider', ()
   // half a divider at each end — so spending LESS on a category could paint it THREE TIMES WIDER.
   // Walking a wedge's spend down across that cutoff must only ever shrink it. Restore the old
   // ternary and the pair straddling the cutoff inverts → red.
-  it('[Q3b] painting width only ever moves with spend — no cliff at the thin-wedge cutoff', () => {
+  it('[Q3b] painting width only ever moves with spend — no cliff at the thin-wedge cutoff', async () => {
     // 'mid' sweeps 1.20° → 1.00° across these, which straddles the old 1.143° cutoff.
     const midValues = [3.35, 3.21, 3.19, 3.07, 2.79];
-    const widths = midValues.map((value) => {
-      const view = render(<SpendingDonut slices={[sl('big', 1000), sl('mid', value), sl('tiny', 1)]} />);
-      const extent = arcExtentDeg(bandPath('mid'));
-      view.unmount();
-      return extent;
-    });
+    const widths: number[] = [];
+    for (const value of midValues) {
+      const view = await render(<SpendingDonut slices={[sl('big', 1000), sl('mid', value), sl('tiny', 1)]} />);
+      widths.push(arcExtentDeg(bandPath('mid')));
+      await view.unmount();
+    }
 
     const descending = [...widths].sort((a, b) => b - a);
     expect(widths).toEqual(descending); // never wider than the next-bigger spend
@@ -124,8 +124,8 @@ describe('SpendingDonut — the track is under the wedges and outside the select
   // Circle after {wedges} and it repaints the whole ring flat CHART_BG — a blank donut that D1
   // still passes (its colour and width are unchanged). The reset disc must stay last so a centre
   // tap always wins. ANCHOR: moving the track line below {wedges} reddens this.
-  it('[Q4] the track paints first, every band after it, and the centre reset disc last', () => {
-    render(<SpendingDonut slices={THREE} />);
+  it('[Q4] the track paints first, every band after it, and the centre reset disc last', async () => {
+    await render(<SpendingDonut slices={THREE} />);
     const order = testIdOrder();
     const trackAt = order.indexOf('donut-track');
     const bandAts = order.map((id, i) => (id.startsWith('donut-band-') ? i : -1)).filter((i) => i >= 0);
@@ -146,8 +146,8 @@ describe('SpendingDonut — extreme but legal values', () => {
   // [Q7] A trillion-dollar category next to a one-dollar one: the sweep/inset arithmetic must stay
   // finite. A NaN in `d` is silent under the jest SVG stub but is a blank (or throwing) ring on a
   // real device, so it is worth a cheap guard on the new inset path. REGRESSION GUARD.
-  it('[Q7] a 1e12-vs-1 spread still produces finite arc geometry for every wedge', () => {
-    render(<SpendingDonut slices={[sl('big', 1e12), sl('mid', 1e6), sl('tiny', 1)]} />);
+  it('[Q7] a 1e12-vs-1 spread still produces finite arc geometry for every wedge', async () => {
+    await render(<SpendingDonut slices={[sl('big', 1e12), sl('mid', 1e6), sl('tiny', 1)]} />);
     for (const id of ['big', 'mid', 'tiny']) {
       const { x1, y1, r, x2, y2 } = arcPoints(bandPath(id));
       expect([x1, y1, r, x2, y2].filter((n) => !Number.isFinite(n))).toEqual([]);
@@ -159,14 +159,14 @@ describe('SpendingDonut — extreme but legal values', () => {
 describe('SpendingDonut — slice order is spend descending, Other last', () => {
   // Exact-array equality, so this also carries the ported "no slice dropped or duplicated"
   // guarantee: a missing, extra or repeated wedge changes the array just as a reorder does.
-  it('[O1] paints wedges in spend order, with no warm/cool re-shuffle on top', () => {
-    render(<SpendingDonut slices={WARM_CLUSTERED} />);
+  it('[O1] paints wedges in spend order, with no warm/cool re-shuffle on top', async () => {
+    await render(<SpendingDonut slices={WARM_CLUSTERED} />);
     expect(paintedOrder()).toEqual(['health', 'eatingout', 'coffee', 'shopping', 'transport', 'pets']);
     // FAIL-ON-REVERT: restore arrangeByTemperature around reduceSlices and this fixture paints
     // [health, shopping, eatingout, transport, coffee, pets] instead — a different array.
   });
 
-  it('[O4] the folded Other slice is last even when it outweighs most kept slices', () => {
+  it('[O4] the folded Other slice is last even when it outweighs most kept slices', async () => {
     // 7 inputs → reduceSlices keeps the 5 largest and folds 55 + 50 into __other__ = 105, which is
     // bigger than four of the five kept slices. Other is appended AFTER the descending sort, so it
     // stays last; re-sorting the list after the fold would move it to position 2 and fail this.
@@ -175,7 +175,7 @@ describe('SpendingDonut — slice order is spend descending, Other last', () => 
       slice('eatingout', '#e5495f', 80), slice('transport', '#7aa2f7', 70),
       slice('coffee', '#ff9e64', 60), slice('a', '#7dcfff', 55), slice('b', '#9d7cd8', 50),
     ];
-    render(<SpendingDonut slices={many} />);
+    await render(<SpendingDonut slices={many} />);
     const order = paintedOrder();
     expect(order).toHaveLength(6);
     expect(order[order.length - 1]).toBe('__other__');
@@ -187,15 +187,15 @@ describe('SpendingDonut — ties keep the caller\'s order', () => {
   // paints [health, transport, coffee, pets] instead. Distinct from [O1], which relies on distinct
   // values — a shuffle that only fired on ties would still pass O1. Also pins that the ring and the
   // spoken summary agree under ties, and that an identical redraw does not reshuffle.
-  it('[Q8] four equal slices paint (and are spoken) in the order they were handed over', () => {
-    const { rerender } = render(<SpendingDonut slices={TIED} testID="donut-tied" />);
+  it('[Q8] four equal slices paint (and are spoken) in the order they were handed over', async () => {
+    const { rerender } = await render(<SpendingDonut slices={TIED} testID="donut-tied" />);
     expect(paintedOrder()).toEqual(['health', 'coffee', 'transport', 'pets']);
 
     const spokenAt = TIED.map((s) => labelOf('donut-tied').indexOf(s.name));
     expect(spokenAt).not.toContain(-1); // every category is named at all
     expect([...spokenAt].sort((a, b) => a - b)).toEqual(spokenAt); // spoken in the painted order
 
-    rerender(<SpendingDonut slices={TIED} testID="donut-tied" />);  // identical data, redrawn
+    await rerender(<SpendingDonut slices={TIED} testID="donut-tied" />);  // identical data, redrawn
     expect(paintedOrder()).toEqual(['health', 'coffee', 'transport', 'pets']); // no reshuffle
   });
 });
@@ -205,8 +205,8 @@ describe('SpendingDonut — hostile values', () => {
   // are dropped before layout, and the one survivor paints as a CLOSED full ring (the single-slice
   // branch), with the hole total counting only the positive spend. REGRESSION GUARD on reduceSlices'
   // filter reaching the render — the existing unit tests pin the filter, not what it paints.
-  it('[Q9] a negative and a zero category leave one closed full ring and an honest total', () => {
-    render(<SpendingDonut slices={[sl('a', 100), sl('refund', -50), sl('zero', 0)]} testID="donut-neg" />);
+  it('[Q9] a negative and a zero category leave one closed full ring and an honest total', async () => {
+    await render(<SpendingDonut slices={[sl('a', 100), sl('refund', -50), sl('zero', 0)]} testID="donut-neg" />);
 
     expect(paintedOrder()).toEqual(['a']);
     expect(screen.getByTestId('donut-band-a').props.d).toBeUndefined(); // full Circle, no arc ends
@@ -224,8 +224,8 @@ describe('SpendingDonut — hostile values', () => {
   it.each([
     ['an infinite value', [sl('a', Infinity), sl('b', 50)]],
     ['finite values that overflow the total', [sl('a', Number.MAX_VALUE), sl('b', Number.MAX_VALUE)]],
-  ])('[Q10b] %s never paints a NaN ring', (_name, slices) => {
-    render(<SpendingDonut slices={slices as DonutSlice[]} />);
+  ])('[Q10b] %s never paints a NaN ring', async (_name, slices) => {
+    await render(<SpendingDonut slices={slices as DonutSlice[]} />);
     // Whatever survives must be real geometry: no NaN in any painted arc, and no "∞" on screen.
     for (const band of screen.queryAllByTestId(/^donut-band-/)) {
       expect(String((band as any).props.d ?? '')).not.toContain('NaN');
@@ -241,12 +241,12 @@ describe('SpendingDonut — the folded "Other" bucket in the spoken summary', ()
   // screen reader naming a category that has no wedge is a lie about the chart).
   // ANCHOR-ish: re-sorting the painted list after the fold, or pointing the label back at a
   // separately-sorted list, reddens the ordering assertion.
-  it('[Q11] Other is spoken last, and the categories folded into it are not spoken', () => {
+  it('[Q11] Other is spoken last, and the categories folded into it are not spoken', async () => {
     const many: DonutSlice[] = [
       sl('Alpha', 100), sl('Bravo', 90), sl('Charlie', 80), sl('Delta', 70), sl('Echo', 60),
       sl('Foxtrot', 55), sl('Golf', 50), // folded → Other = 105, bigger than Bravo…Echo
     ];
-    render(<SpendingDonut slices={many} testID="donut-other" />);
+    await render(<SpendingDonut slices={many} testID="donut-other" />);
     const label = labelOf('donut-other');
 
     const otherAt = label.indexOf('Other');
@@ -267,14 +267,14 @@ describe('SpendingDonut — a data change that reorders the ring', () => {
   // the tapped wedge stays popped with its new amount in the hole, its neighbour stays dimmed, and
   // the ring order really did swap. REGRESSION GUARD on the paintedKey re-target surviving a
   // reorder (the existing enter/re-enter suites only add or remove ids, never permute them).
-  it('[Q12] two categories swapping places keeps the tapped one popped and re-reads its amount', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 100), sl('b', 60)]} />);
-    fireEvent.press(screen.getByTestId('donut-slice-b'));
+  it('[Q12] two categories swapping places keeps the tapped one popped and re-reads its amount', async () => {
+    const { rerender } = await render(<SpendingDonut slices={[sl('a', 100), sl('b', 60)]} />);
+    await fireEvent.press(screen.getByTestId('donut-slice-b'));
     expect(paintedOrder()).toEqual(['a', 'b']);
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$60');
     expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);
 
-    rerender(<SpendingDonut slices={[sl('a', 50), sl('b', 120)]} />); // b overtakes a
+    await rerender(<SpendingDonut slices={[sl('a', 50), sl('b', 120)]} />); // b overtakes a
 
     expect(paintedOrder()).toEqual(['b', 'a']);                                   // ring really swapped
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$120'); // still b, new total

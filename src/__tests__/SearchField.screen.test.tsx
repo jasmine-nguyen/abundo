@@ -15,15 +15,15 @@ const draw = (value: string) =>
   render(<SearchField value={value} onChangeText={jest.fn()} placeholder="Search" accessibilityLabel="Search" />);
 
 // [A4]
-it('shows a 44pt close-glyph clear button only once there is text', () => {
-  draw('');
+it('shows a 44pt close-glyph clear button only once there is text', async () => {
+  await draw('');
   expect(screen.queryByLabelText('Clear search')).toBeNull();
 
-  draw('wool');
+  await draw('wool');
   const clear = screen.getByLabelText('Clear search');
   const box = styleOf(clear);
   expect(box.minWidth).toBeGreaterThanOrEqual(44);
   expect(box.minHeight).toBeGreaterThanOrEqual(44);
-  expect(clear.findAll((n) => typeof n.props.xml === 'string' && n.props.xml.includes(CLOSE_PATH))).not.toHaveLength(0);
+  expect(clear.queryAll((n) => typeof n.props.xml === 'string' && n.props.xml.includes(CLOSE_PATH))).not.toHaveLength(0);
   expect(screen.queryByText('✕')).toBeNull();
 });

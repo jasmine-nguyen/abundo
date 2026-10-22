@@ -61,12 +61,12 @@ it('[A43] a context re-render does not re-fire the preview or snap back to the s
   // identity), the SAME sheet object underneath. The memoized preview must hold.
   await act(async () => {
     mockState = { ...mockState, toast: 'Filed something elsewhere' } as unknown as AppContext;
-    rerender(overlaysTree());
+    await rerender(overlaysTree());
   });
   // ...and its auto-clear 3.4s later — a second re-render.
   await act(async () => {
     mockState = { ...mockState, toast: null } as unknown as AppContext;
-    rerender(overlaysTree());
+    await rerender(overlaysTree());
   });
 
   expect(fns.previewFiling).toHaveBeenCalledTimes(1);           // never re-fired

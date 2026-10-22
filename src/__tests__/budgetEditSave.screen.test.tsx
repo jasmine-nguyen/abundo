@@ -13,7 +13,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { ScrollView, Switch } from 'react-native';
+import { hostsOfType, isWithin } from './support/layout';
 
 // Hoisted module-scope mock so the writer is assertable across renders.
 const mockSaveBudget = jest.fn(async (_id: string, _amount: number, _rollover?: boolean) => true);
@@ -28,6 +28,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE, SALARY } from './support/categories';
+import { startTaps } from './support/tap';
 
 const SPEND = COFFEE;
 
@@ -59,8 +60,8 @@ it('pressing Add budget saves the amount once and navigates to the budgets tab',
   seedServer([SPEND]);
   await renderWithQueries(<BudgetEdit />);
 
-  fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
-  await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
+  await fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
+  await startTaps(screen.getByText('Add budget'));
 
   // The real onPress→save()→saveBudget chain fired with the parsed number + the rollover
   // toggle (spend category → the flag is sent; default off), then navigated.
@@ -79,9 +80,9 @@ it('re-enables the Add budget button so a retry runs after saveBudget throws', a
   mockSaveBudget.mockRejectedValueOnce(new Error('network blew up'));
   await renderWithQueries(<BudgetEdit />);
 
-  fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
-  await act(async () => { fireEvent.press(screen.getByText('Add budget')); }); // throws → guard logs
-  await act(async () => { fireEvent.press(screen.getByText('Add budget')); }); // only fires if re-enabled
+  await fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
+  await startTaps(screen.getByText('Add budget')); // throws → guard logs
+  await startTaps(screen.getByText('Add budget')); // only fires if re-enabled
 
   expect(mockSaveBudget).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
@@ -94,9 +95,9 @@ it('keeps one decimal point in the amount box and saves what it shows', async ()
   seedServer([SPEND]);
   await renderWithQueries(<BudgetEdit />);
 
-  fireEvent.changeText(screen.getByPlaceholderText('0'), '1.2.3');
+  await fireEvent.changeText(screen.getByPlaceholderText('0'), '1.2.3');
   expect(screen.getByPlaceholderText('0').props.value).toBe('1.23');
-  await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
+  await startTaps(screen.getByText('Add budget'));
 
   expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 1.23, false);
 });
@@ -106,13 +107,13 @@ it('keeps one decimal point in the amount box and saves what it shows', async ()
 // app/budget/edit.tsx → find() returns undefined.
 it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reachable', async () => {
   seedServer([SPEND]);
-  const { UNSAFE_getAllByType } = await renderWithQueries(<BudgetEdit />);
-  const formScroll = UNSAFE_getAllByType(ScrollView).find(
+  await renderWithQueries(<BudgetEdit />);
+  const formScroll = hostsOfType('RCTScrollView').find(
     (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
   );
   expect(formScroll).toBeTruthy();
   // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
-  expect(formScroll!.findAll((n) => n === screen.getByText('Add budget'))).toHaveLength(1);
+  expect(isWithin(screen.getByText('Add budget'), formScroll!)).toBe(true);
 });
 
 // ===== WHIT-169 (folded from budgetEditIncome.screen.test.tsx) =====
@@ -145,12 +146,12 @@ describe('budgetEditRollover (folded)', () => {
   it('spend budget: flipping the Smoothing toggle ON makes Save pass rollover=true', async () => {
     setParams({ categoryId: 'coffee' });
     seedServer([SPEND]);
-    const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
+    await renderWithQueries(<BudgetEdit />);
 
     expect(screen.getByText('Smoothing')).toBeTruthy();                 // the toggle row is shown
-    fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
-    fireEvent(UNSAFE_getByType(Switch), 'valueChange', true);           // user turns rollover ON
-    await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
+    await fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
+    await fireEvent(screen.getByRole('switch'), 'valueChange', true);           // user turns rollover ON
+    await startTaps(screen.getByText('Add budget'));
 
     expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 300, true);
     await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
@@ -160,10 +161,10 @@ describe('budgetEditRollover (folded)', () => {
     setParams({ categoryId: 'coffee' });
     // existing budget already has rollover ON — the editor must seed the Switch from it.
     seedServer([SPEND], { coffee: { target: 100, posted: 0, pending: 0, rollover: true, carryover: 0 } });
-    const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
+    await renderWithQueries(<BudgetEdit />);
 
-    expect(UNSAFE_getByType(Switch).props.value).toBe(true);            // seeded ON from existing.rollover
-    await act(async () => { fireEvent.press(screen.getByText('Update budget')); });
+    expect(screen.getByRole('switch').props.value).toBe(true);            // seeded ON from existing.rollover
+    await startTaps(screen.getByText('Update budget'));
 
     expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 100, true);   // not silently flipped off
   });
@@ -171,12 +172,12 @@ describe('budgetEditRollover (folded)', () => {
   it('income category: no rollover toggle, and Save passes rollover=undefined (spend-only)', async () => {
     setParams({ categoryId: 'salary' });
     seedServer([SALARY]);
-    const { UNSAFE_queryAllByType } = await renderWithQueries(<BudgetEdit />);
+    await renderWithQueries(<BudgetEdit />);
 
     expect(screen.queryByText('Smoothing')).toBeNull();                 // toggle hidden for Income
-    expect(UNSAFE_queryAllByType(Switch)).toHaveLength(0);
-    fireEvent.changeText(screen.getByPlaceholderText('0'), '5000');
-    await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
+    expect(screen.queryAllByRole('switch')).toHaveLength(0);
+    await fireEvent.changeText(screen.getByPlaceholderText('0'), '5000');
+    await startTaps(screen.getByText('Add budget'));
 
     expect(mockSaveBudget).toHaveBeenCalledWith('salary', 5000, undefined);
   });
@@ -186,13 +187,13 @@ describe('budgetEditRollover (folded)', () => {
   it('existing rollover-ON budget: the switch is enabled, and toggling it OFF saves rollover=false', async () => {
     setParams({ categoryId: 'coffee' });
     seedServer([SPEND], { coffee: { target: 100, posted: 0, pending: 0, rollover: true, carryover: 40 } });
-    const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
+    await renderWithQueries(<BudgetEdit />);
 
-    const smoothingSwitch = UNSAFE_getByType(Switch);
+    const smoothingSwitch = screen.getByRole('switch');
     expect(smoothingSwitch.props.value).toBe(true);
     expect(smoothingSwitch.props.disabled).toBeFalsy();
-    fireEvent(smoothingSwitch, 'valueChange', false);
-    await act(async () => { fireEvent.press(screen.getByText('Update budget')); });
+    await fireEvent(smoothingSwitch, 'valueChange', false);
+    await startTaps(screen.getByText('Update budget'));
 
     expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 100, false);
   });

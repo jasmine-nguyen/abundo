@@ -30,9 +30,9 @@ it('[A25] a range caches apart from the cycle view and from another range', asyn
   server.once('GET', COFFEE_PATH, { body: [{ transaction_id: 'coffee-2026-06-12' }] });
   server.once('GET', COFFEE_PATH, { body: [{ transaction_id: 'coffee-2026-07-01' }] });
   const client = makeClient();
-  const cycle = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true), { wrapper: wrapper(client) });
-  const jun = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true, JUN_SEP), { wrapper: wrapper(client) });
-  const jul = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true, JUL_SEP), { wrapper: wrapper(client) });
+  const cycle = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true), { wrapper: wrapper(client) });
+  const jun = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true, JUN_SEP), { wrapper: wrapper(client) });
+  const jul = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true, JUL_SEP), { wrapper: wrapper(client) });
 
   await waitFor(() => expect(jul.result.current.data).toBeDefined());
   await waitFor(() => expect(jun.result.current.data).toBeDefined());
@@ -46,7 +46,7 @@ it('[A25] a range caches apart from the cycle view and from another range', asyn
 it('[A26] invalidating the categoryTransactions prefix refetches a range query', async () => {
   server.seed(COFFEE_PATH, [{ transaction_id: 'coffee-2026-06-12' }]);
   const client = makeClient();
-  const jun = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true, JUN_SEP), { wrapper: wrapper(client) });
+  const jun = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true, JUN_SEP), { wrapper: wrapper(client) });
   await waitFor(() => expect(jun.result.current.data).toBeDefined());
   expect(server.sentUnder('GET', COFFEE_PATH)).toHaveLength(1);
 

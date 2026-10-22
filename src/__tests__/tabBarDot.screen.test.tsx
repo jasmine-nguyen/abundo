@@ -35,9 +35,9 @@ const singleTab = tabBarProps(['transactions']);
 // The full navigator route set, in order, incl. the Accounts tab at index 2.
 const fiveTabs = tabBarProps(TAB_ROUTES, 1);
 
-// getByText returns the inner text node; its host Pressable is two parents up (composite Text →
-// host View). Scope testID queries to that per-tab subtree so a dot is attributed to the right tab.
-const tabItem = (label: string) => within(screen.getByText(label).parent!.parent!);
+// getByText returns the label; its parent is the tab's Pressable. Scope testID queries to that
+// per-tab subtree so a dot is attributed to the right tab.
+const tabItem = (label: string) => within(screen.getByText(label).parent!);
 
 beforeEach(() => resetAuth());
 
@@ -124,11 +124,12 @@ describe('the dot trusts the server count once it resolves', () => {
   it('[A2] lights the dot from the recent list while the server count is still loading', async () => {
     const held = server.hold(COUNT);
     server.seed('/transactions', [txn({ category: null, counts_to_budget: true })]);
-    render(<WithQueries><TabBar {...singleTab} /></WithQueries>);
+    await render(<WithQueries><TabBar {...singleTab} /></WithQueries>);
     // Every read but the held count settles; read the dot, then release before asserting so a
     // failure never leaves the held request open.
     await waitFor(() => expect(queryClient.isFetching()).toBe(1));
-    const dotWhileLoading = screen.queryByTestId('tab-uncat-dot');
+    // The recent list's redraw lands on a timer after its read settles, so give it a moment.
+    const dotWhileLoading = await waitFor(() => screen.getByTestId('tab-uncat-dot')).catch(() => null);
     // The server answers 0 (default) → the resolved value now wins and the dot goes away.
     // The held reply resolves over a few promise hops, so wait for the read to land inside act.
     await refreshInAct(async () => {

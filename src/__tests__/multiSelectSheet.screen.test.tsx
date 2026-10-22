@@ -40,7 +40,7 @@ describe('multi-select picker (WHIT-291)', () => {
     await openSheet({ mode: 'pickerMany', txIds: ['t1', 't2', 't3'] });
     expect(screen.getByText('3 transactions')).toBeTruthy(); // count header, not a merchant/amount
 
-    fireEvent.press(screen.getByText('Groceries'));
+    await fireEvent.press(screen.getByText('Groceries'));
     expect(fns.chooseCategory).toHaveBeenCalledWith('groceries');
   });
 
@@ -48,7 +48,7 @@ describe('multi-select picker (WHIT-291)', () => {
     await openSheet({ mode: 'confirmMany', txIds: ['t1', 't2', 't3'], categoryId: 'groceries' });
     expect(screen.getByText('File 3 transactions')).toBeTruthy();
 
-    fireEvent.press(screen.getByText('File 3 transactions'));
+    await fireEvent.press(screen.getByText('File 3 transactions'));
     expect(fns.applyCategoryToMany).toHaveBeenCalledTimes(1);
     expect(fns.applyCategoryToMany).toHaveBeenCalledWith(['t1', 't2', 't3'], 'groceries');
   });

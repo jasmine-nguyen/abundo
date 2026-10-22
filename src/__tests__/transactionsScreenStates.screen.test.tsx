@@ -8,7 +8,7 @@
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
+import { pullControl } from './support/pull';
 
 const mockOpenMultiPicker = jest.fn();
 const mockShowToast = jest.fn();
@@ -59,7 +59,7 @@ async function draw() {
   await waitFor(() => expect(screen.queryByTestId('transactions-loading')).toBeNull());
 }
 
-const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
+const refreshControl = () => pullControl();
 const isSpinning = () => refreshControl().props.refreshing;
 // Fire the RefreshControl's onRefresh the way a user pull does, flushing the state update.
 const pull = () => act(async () => { refreshControl().props.onRefresh(); });
@@ -86,7 +86,7 @@ it('error WITH cached rows keeps the rows and shows NO inline error (cache-first
 it('a background load (isLoading) with cached rows does NOT blank the list', async () => {
   seedFeedPage(server, FEED, [ROW]);
   const held = server.hold(CATEGORIES); // the taxonomy is still loading while the rows are in
-  render(<WithQueries><Transactions /></WithQueries>);
+  await render(<WithQueries><Transactions /></WithQueries>);
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-loading')).toBeNull();
   held.release();
@@ -101,7 +101,7 @@ it('empty + error shows the inline retry, and Retry re-reads the list and the st
   expect(screen.queryByTestId('transactions-updated')).toBeNull();
   const feedBefore = gets(FEED);
   const balancesBefore = gets(BALANCES);
-  fireEvent.press(screen.getByTestId('transactions-retry'));
+  await fireEvent.press(screen.getByTestId('transactions-retry'));
   await waitFor(() => expect(gets(FEED)).toBe(feedBefore + 1));
   await waitFor(() => expect(gets(BALANCES)).toBe(balancesBefore + 1));
   await settle();
@@ -112,13 +112,13 @@ it('empty + error says why: offline when the connection drops, our server on a 5
   await draw();
   expect(screen.getByTestId('transactions-error')).toHaveTextContent(/You look offline\. Check your connection and retry\./);
   server.once('GET', FEED, { status: 503 });
-  fireEvent.press(screen.getByTestId('transactions-retry'));
+  await fireEvent.press(screen.getByTestId('transactions-retry'));
   await waitFor(() => expect(screen.getByTestId('transactions-error')).toHaveTextContent(/Our server had a problem\. Try again in a moment\./));
 });
 
 it('empty + loading shows the spinner', async () => {
   const held = server.hold(FEED);
-  render(<WithQueries><Transactions /></WithQueries>);
+  await render(<WithQueries><Transactions /></WithQueries>);
   await waitFor(() => expect(gets(FEED)).toBe(1));
   expect(screen.getByTestId('transactions-loading')).toBeTruthy();
   held.release();
@@ -132,7 +132,7 @@ it('a cold-loading Uncategorized tab shows the spinner and no "Updated" line', a
   await draw();
   expect(screen.getByTestId('transactions-updated')).toBeTruthy();
   const held = server.hold(UNCATEGORIZED_FEED);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
   expect(screen.queryByTestId('transactions-updated')).toBeNull();
   held.release();
@@ -144,9 +144,9 @@ it('a cold-loading Uncategorized tab shows the spinner and no "Updated" line', a
 it('[A3] the "Updated" line renders above the Uncategorized hint', async () => {
   seedFeedPage(server, UNCATEGORIZED_FEED, [{ ...ROW, category: null }]);
   await draw();
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText(/Tap a transaction to categorise it/)).toBeTruthy();
-  const text = textOf(screen.root);
+  const text = textOf(screen.container);
   expect(text.indexOf('Updated ')).toBeGreaterThan(-1);
   expect(text.indexOf('Updated ')).toBeLessThan(text.indexOf('Tap a transaction to categorise it'));
 });
@@ -166,7 +166,7 @@ it('the tabs use the soft tint, Australian spelling and a rose Uncategorised row
   expect(within(uncategorisedTab).getByText('Uncategorised')).toBeTruthy();
   expect(await within(uncategorisedTab).findByText('1')).toBeTruthy();
   const rowLabel = (await screen.findAllByText('Uncategorised'))
-    .find((node) => uncategorisedTab.findAll((candidate) => candidate === node).length === 0);
+    .find((node) => uncategorisedTab.queryAll((candidate) => candidate === node).length === 0);
   expect(rowLabel).toBeTruthy();
   expect(styleOf(rowLabel!).color).toBe(C.bad);
   expect(screen.queryByText(/Uncategorized|categorize/)).toBeNull();
@@ -174,7 +174,7 @@ it('the tabs use the soft tint, Australian spelling and a rose Uncategorised row
 
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', async () => {
   await draw();
-  fireEvent.press(screen.getByText('Uncategorised'));
+  await fireEvent.press(screen.getByText('Uncategorised'));
   expect(await screen.findByText('All caught up')).toBeTruthy();
 });
 
@@ -186,7 +186,7 @@ it('the rows sit under their own day heading, between the controls and Load More
     { ...ROW, transaction_id: 'old', amount: -42 },
   ], 'c1');
   await draw();
-  const text = textOf(screen.root);
+  const text = textOf(screen.container);
   const order = ['Uncategorised', 'Thu 2 Jul', '−⁠$7.00', 'Wed 1 Jul', '−⁠$42.00', 'Load More'];
   const at = order.map((part) => text.indexOf(part));
   expect(at.every((index) => index >= 0)).toBe(true);
@@ -203,7 +203,7 @@ it('shows Load More when there is more history, and tapping it pages older rows 
   seedFeedPage(server, FEED, [row('t1')], 'c1');
   await draw();
   server.once('GET', FEED, { body: { transactions: [{ ...row('t2'), amount: -7 }], nextCursor: null } });
-  fireEvent.press(screen.getByTestId('transactions-load-more'));
+  await fireEvent.press(screen.getByTestId('transactions-load-more'));
   expect(await screen.findByText('−\u2060$7.00')).toBeTruthy();
   expect(server.sent('GET', '/transactions/feed?cursor=c1')).toHaveLength(1);
   expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
@@ -216,7 +216,7 @@ it('hides Load More on the uncategorized "all caught up" empty state, even with 
   seedFeedPage(server, FEED, [row('t1')], 'c1');
   seedFeedPage(server, UNCATEGORIZED_FEED, [], 'c1'); // the server count is 0 -> the empty state shows
   await draw();
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText('All caught up')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // fail-on-revert: reappears without the guard
 });
@@ -227,7 +227,7 @@ it('keeps Load More on the uncategorized tab when there ARE uncategorized rows',
   seedFeedPage(server, UNCATEGORIZED_FEED, [{ ...row('t1'), category: null }], 'c1');
   server.seed(COUNT, { count: 1 });
   await draw();
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByText('All caught up')).toBeNull();
   expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
@@ -315,7 +315,7 @@ it('[E1] a pull whose live balance call ERRORS still clears the spinner (and toa
 it('[E3] a pull during a cold load does NOT raise the pull spinner (inline spinner owns it)', async () => {
   const heldFeed = server.hold(FEED);
   const heldRefresh = server.hold(REFRESH);
-  render(<WithQueries><Transactions /></WithQueries>);
+  await render(<WithQueries><Transactions /></WithQueries>);
   expect(screen.getByTestId('transactions-loading')).toBeTruthy();
   await pull();
   expect(server.sent('POST', REFRESH)).toHaveLength(1); // the pull DID fire
@@ -393,7 +393,7 @@ it('typing filters the list to matching rows', async () => {
   expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.getByText('−\u2060$8.50')).toBeTruthy();
 
-  type('wool');
+  await type('wool');
   expect(screen.getByText('−\u2060$42.00')).toBeTruthy();   // Woolworths matches
   expect(screen.queryByText('−\u2060$8.50')).toBeNull();    // coffee filtered out
 });
@@ -404,7 +404,7 @@ it('typing keeps the same search box mounted while the rows change', async () =>
   await draw();
   const box = screen.getByPlaceholderText('Search transactions');
   for (const q of ['w', 'wo', 'woo', 'wool', 'xyz', '']) {
-    type(q);
+    await type(q);
     expect(screen.getByPlaceholderText('Search transactions')).toBe(box);
   }
   expect(screen.getByText('−⁠$8.50')).toBeTruthy();
@@ -413,20 +413,20 @@ it('typing keeps the same search box mounted while the rows change', async () =>
 
 it('the ✕ clears the search and restores the full list', async () => {
   await draw();
-  type('wool');
+  await type('wool');
   expect(screen.queryByText('−\u2060$8.50')).toBeNull();
 
-  fireEvent.press(screen.getByLabelText('Clear search'));
+  await fireEvent.press(screen.getByLabelText('Clear search'));
   expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.getByText('−\u2060$8.50')).toBeTruthy();
 });
 
 it('entering selection mode clears an active search (the box hides, so no secret filter)', async () => {
   await draw();
-  type('wool');
+  await type('wool');
   expect(screen.queryByText('−\u2060$8.50')).toBeNull();
 
-  fireEvent.press(screen.getByText('Select'));
+  await fireEvent.press(screen.getByText('Select'));
   // The search box is gone in selection mode, and the list is back to the full set. In selection
   // mode the row body is a11y-hidden (the checkbox owns the label), so assert on the checkboxes.
   expect(screen.queryByPlaceholderText('Search transactions')).toBeNull();
@@ -451,23 +451,23 @@ beforeEach(() => {
 it('the "Select" header button shows on BOTH segments (All and Uncategorized)', async () => {
   await draw();
   expect(screen.getByText('Select')).toBeTruthy();
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(screen.getByText('Select')).toBeTruthy();
 });
 
 it('Select enters selection mode; toggling rows updates the count; Re-categorize hands the ids to the picker', async () => {
   await draw();
-  fireEvent.press(screen.getByText('Select'));
+  await fireEvent.press(screen.getByText('Select'));
 
   // Even a categorized row (Woolworths → groceries) is selectable in this mode.
-  fireEvent.press(screen.getByLabelText('Select Woolworths'));
-  fireEvent.press(screen.getByLabelText('Select Coles'));
+  await fireEvent.press(screen.getByLabelText('Select Woolworths'));
+  await fireEvent.press(screen.getByLabelText('Select Coles'));
   expect(screen.getByText('2 selected')).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText('Select Coles')); // untoggle one
+  await fireEvent.press(screen.getByLabelText('Select Coles')); // untoggle one
   expect(screen.getByText('1 selected')).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
+  await fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
   expect(mockOpenMultiPicker).toHaveBeenCalledWith(['t1']);
 });
 
@@ -477,15 +477,15 @@ it('a long list draws only the first rows, and Select ticks redraw the tapped ro
   const seeded = 200;
   seedFeedPage(server, FEED, Array.from({ length: seeded }, (_, i) => row(`t${i}`, `Shop ${i}`)));
   await draw();
-  fireEvent.press(screen.getByText('Select'));
+  await fireEvent.press(screen.getByText('Select'));
 
   const boxes = screen.getAllByLabelText(/^Select Shop \d+$/);
   expect(boxes.length).toBeGreaterThan(2);
   expect(boxes.length).toBeLessThan(seeded);
 
   const [first, second, third] = boxes.map((box) => box.props.accessibilityLabel as string);
-  fireEvent.press(screen.getByLabelText(first));
-  fireEvent.press(screen.getByLabelText(second));
+  await fireEvent.press(screen.getByLabelText(first));
+  await fireEvent.press(screen.getByLabelText(second));
   expect(screen.getByText('2 selected')).toBeTruthy();
   expect(screen.getByLabelText(first).props.accessibilityState).toMatchObject({ checked: true });
   expect(screen.getByLabelText(second).props.accessibilityState).toMatchObject({ checked: true });
@@ -494,17 +494,17 @@ it('a long list draws only the first rows, and Select ticks redraw the tapped ro
 
 it('Re-categorize does nothing with an empty selection (disabled)', async () => {
   await draw();
-  fireEvent.press(screen.getByText('Select'));
-  fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
+  await fireEvent.press(screen.getByText('Select'));
+  await fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
   expect(mockOpenMultiPicker).not.toHaveBeenCalled();
 });
 
 it('Cancel leaves selection mode and clears the checkboxes', async () => {
   await draw();
-  fireEvent.press(screen.getByText('Select'));
+  await fireEvent.press(screen.getByText('Select'));
   expect(screen.getByLabelText('Select Woolworths')).toBeTruthy();
 
-  fireEvent.press(screen.getByText('Cancel'));
+  await fireEvent.press(screen.getByText('Cancel'));
   expect(screen.queryByLabelText('Select Woolworths')).toBeNull();
   expect(screen.getByText('Select')).toBeTruthy();
 });
@@ -527,9 +527,9 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
   // and Load More stays hidden. Fail-on-revert: drop the Load More guard and it reappears here.
   it('[A-S1] uncategorized + all-filed + active search: All caught up shows, No matches suppressed, Load More hidden', async () => {
     await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByText('All caught up')).toBeTruthy();
-    type('zzzzz');
+    await type('zzzzz');
     expect(screen.getByText('All caught up')).toBeTruthy();
     expect(screen.queryByTestId('transactions-no-results')).toBeNull(); // not double-shown with All caught up
     expect(screen.queryByTestId('transactions-load-more')).toBeNull();  // guard holds under an active search
@@ -543,9 +543,9 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
     seedFeedPage(server, UNCATEGORIZED_FEED, [uncategorized], 'c1');
     server.seed(COUNT, { count: 1 });
     await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
-    type('zzzzz');
+    await type('zzzzz');
     await act(async () => { jest.advanceTimersByTime(300); });
     expect(await screen.findByTestId('transactions-no-results')).toBeTruthy();
     expect(server.sent('GET', '/transactions/search?tab=uncategorized&q=zzzzz')).toHaveLength(1);
@@ -559,10 +559,10 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
   it('[A-T1] All -> Uncategorized -> All toggles Load More off then back on (0 uncategorized, more history)', async () => {
     await draw();
     expect(screen.getByTestId('transactions-load-more')).toBeTruthy();  // All: shown
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByText('All caught up')).toBeTruthy();
     expect(screen.queryByTestId('transactions-load-more')).toBeNull();  // Uncategorized empty: hidden
-    fireEvent.press(screen.getByTestId('tab-all'));
+    await fireEvent.press(screen.getByTestId('tab-all'));
     expect(screen.getByTestId('transactions-load-more')).toBeTruthy();  // back to All: shown again
   });
 
@@ -573,11 +573,11 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
   it('[A-LS1] uncategorized all-caught-up + a page mid-load: neither Load More button nor its spinner renders', async () => {
     server.seed(COUNT, { count: 1 });
     await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     const loadMore = await screen.findByTestId('transactions-load-more');
     const held = server.hold(UNCATEGORIZED_FEED);
     server.once('GET', UNCATEGORIZED_FEED, { body: { transactions: [], nextCursor: null } });
-    fireEvent.press(loadMore);
+    await fireEvent.press(loadMore);
     expect(await screen.findByTestId('transactions-load-more-spinner')).toBeTruthy();
 
     await refreshInAct(() => queryClient.setQueryData(uncategorizedCountKey, 0));
@@ -603,7 +603,7 @@ describe('Transactions — a not-in-budget transfer on the Uncategorized tab (WH
 
   async function openUncategorizedTab() {
     await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     await screen.findByText('Internal Transfer');
     expect(gets(UNCATEGORIZED_FEED)).toBe(1);
   }
@@ -616,10 +616,10 @@ describe('Transactions — a not-in-budget transfer on the Uncategorized tab (WH
 
   it('[A-file] selection mode on the Uncategorized tab can hand the transfer to the picker', async () => {
     await openUncategorizedTab();
-    fireEvent.press(screen.getByText('Select'));
-    fireEvent.press(screen.getByLabelText('Select Internal Transfer'));
+    await fireEvent.press(screen.getByText('Select'));
+    await fireEvent.press(screen.getByLabelText('Select Internal Transfer'));
     expect(screen.getByText('1 selected')).toBeTruthy();
-    fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
+    await fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
     expect(mockOpenMultiPicker).toHaveBeenCalledWith(['xfer1']);
   });
 });

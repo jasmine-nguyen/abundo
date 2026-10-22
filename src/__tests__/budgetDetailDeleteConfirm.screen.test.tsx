@@ -38,8 +38,8 @@ beforeEach(() => {
   server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 12 });
 });
 
-function openConfirm() {
-  fireEvent.press(screen.getByRole('button', { name: 'Delete budget' }));
+async function openConfirm() {
+  await fireEvent.press(screen.getByRole('button', { name: 'Delete budget' }));
   expect(alerts.spy).toHaveBeenCalledTimes(1);
   return alerts.last();
 }
@@ -47,7 +47,7 @@ function openConfirm() {
 it('user must confirm before a budget is deleted; Delete removes it once and goes back', async () => {
   await renderWithQueries(<BudgetDetail />);
 
-  const { title, button } = openConfirm();
+  const { title, button } = await openConfirm();
 
   expect(title).toBe('Delete this budget?');
   // ABU-101: a quiet red text link, not a filled button.
@@ -66,7 +66,7 @@ it('a failed delete stays on the screen (no navigation) so the user can retry', 
   mockDeleteBudget.mockResolvedValue(false);
   await renderWithQueries(<BudgetDetail />);
 
-  const { button } = openConfirm();
+  const { button } = await openConfirm();
   await act(async () => { await button('Delete').onPress!(); });
 
   expect(mockDeleteBudget).toHaveBeenCalledTimes(1);
@@ -76,7 +76,7 @@ it('a failed delete stays on the screen (no navigation) so the user can retry', 
 it('user can cancel the confirm and the budget is kept', async () => {
   await renderWithQueries(<BudgetDetail />);
 
-  const { button } = openConfirm();
+  const { button } = await openConfirm();
   const cancel = button('Cancel');
   expect(cancel.style).toBe('cancel');
   await act(async () => { await cancel.onPress?.(); });

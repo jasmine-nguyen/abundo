@@ -38,7 +38,7 @@ it.each<[string, () => { isLoading: boolean; daysLeft: number; cycleLen: number 
   ['useBudgetsScreenData', () => useBudgetsScreenData()],
   ['useBudgetDetailScreenData', () => useBudgetDetailScreenData('coffee')],
 ])('%s surfaces the server days_left, not a locally computed countdown', async (_hook, hook) => {
-  const { result } = renderHook(hook, { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(hook, { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.daysLeft).toBe(SERVER_DAYS);
   expect(result.current.cycleLen).toBe(14);

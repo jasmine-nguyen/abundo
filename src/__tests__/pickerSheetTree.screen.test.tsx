@@ -17,6 +17,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -65,19 +66,19 @@ describe('picker category tree', () => {
     ['a child', 'Groceries', 'groceries'],
   ])('tapping %s name selects it', async (_case, name, id) => {
     await openPicker(FAMILY, fns);
-    fireEvent.press(screen.getByText(name));
+    await fireEvent.press(screen.getByText(name));
     expect(fns.chooseCategory).toHaveBeenCalledWith(id);
   });
 
   // [A7] (P0)
   it('[A7] a toast landing keeps the picker open, its fold state intact, and fires no pick', async () => {
     const { rerender } = await openPicker(FAMILY, fns);
-    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
+    await fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.queryByText('Dining')).toBeNull();
 
     await act(async () => {
       mockState = { ...mockState, toast: 'Filed something elsewhere' } as unknown as AppContext;
-      rerender(overlaysTree());
+      await rerender(overlaysTree());
     });
 
     expect(screen.getByText('Categorise')).toBeTruthy();
@@ -88,7 +89,7 @@ describe('picker category tree', () => {
 
   it('tapping a parent chevron folds its subs away without selecting anything', async () => {
     await openPicker(FAMILY, fns);
-    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
+    await fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     // Subs gone; parent and the unrelated top-level stay.
     expect(screen.queryByText('Dining')).toBeNull();
     expect(screen.queryByText('Groceries')).toBeNull();
@@ -100,9 +101,9 @@ describe('picker category tree', () => {
 
   it('unfolding a parent brings its subs back', async () => {
     await openPicker(FAMILY, fns);
-    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
+    await fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.queryByText('Dining')).toBeNull();
-    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
+    await fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.getByText('Dining')).toBeTruthy();
     expect(screen.getByText('Groceries')).toBeTruthy();
   });
@@ -112,7 +113,7 @@ describe('picker category tree', () => {
     const deep = [cat('food', 'Food'), cat('restaurants', 'Restaurants', 'food'), cat('fastfood', 'Fast food', 'restaurants')];
     await openPicker(deep, fns);
     expect(screen.getByText('Fast food')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
+    await fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.queryByText('Restaurants')).toBeNull();
     expect(screen.queryByText('Fast food')).toBeNull();
   });
@@ -130,7 +131,7 @@ describe('picker tree — gaps (WHIT-273)', () => {
       await openPicker([cat('food', 'Food'), cat('dining', 'Dining', 'food')], fns);
       const toggle = () => screen.getByTestId('pickerCat-toggle-food');
       expect((toggle().props as any).accessibilityState.expanded).toBe(true);
-      fireEvent.press(toggle());
+      await fireEvent.press(toggle());
       expect((toggle().props as any).accessibilityState.expanded).toBe(false);
       // And the fold reports through a11y without ever firing a select.
       expect(fns.chooseCategory).not.toHaveBeenCalled();
@@ -154,9 +155,9 @@ describe('picker inline-create (WHIT-238)', () => {
 
   it('creating files the transaction into the new category', async () => {
     await openPicker([COFFEE], fns);
-    fireEvent.press(screen.getByTestId('pickerNewCategory'));
-    fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
-    await act(async () => { fireEvent.press(screen.getByText('Create & file')); });
+    await fireEvent.press(screen.getByTestId('pickerNewCategory'));
+    await fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
+    await startTaps(screen.getByText('Create & file'));
 
     expect(fns.createCategoryInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Gym', bucket: 'Lifestyle', parent: null }));
     // ...then files THIS transaction into the just-created category (advances to confirm).
@@ -166,9 +167,9 @@ describe('picker inline-create (WHIT-238)', () => {
   it('does not file when creation fails (chooseCategory not called)', async () => {
     fns.createCategoryInline.mockResolvedValueOnce(null);
     await openPicker([COFFEE], fns);
-    fireEvent.press(screen.getByTestId('pickerNewCategory'));
-    fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
-    await act(async () => { fireEvent.press(screen.getByText('Create & file')); });
+    await fireEvent.press(screen.getByTestId('pickerNewCategory'));
+    await fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
+    await startTaps(screen.getByText('Create & file'));
 
     expect(fns.createCategoryInline).toHaveBeenCalled();
     expect(fns.chooseCategory).not.toHaveBeenCalled();
@@ -204,11 +205,11 @@ describe('picker create&file throw re-enable (WHIT-249)', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     fns.createCategoryInline.mockRejectedValueOnce(new Error('network blew up')); // 1st press throws
     await openPicker([COFFEE], fns);
-    fireEvent.press(screen.getByTestId('pickerNewCategory'));
-    fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
+    await fireEvent.press(screen.getByTestId('pickerNewCategory'));
+    await fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
 
-    await act(async () => { fireEvent.press(screen.getByText('Create & file')); }); // throws → guard logs, submitting reset
-    await act(async () => { fireEvent.press(screen.getByText('Create & file')); }); // only fires if re-enabled
+    await startTaps(screen.getByText('Create & file')); // throws → guard logs, submitting reset
+    await startTaps(screen.getByText('Create & file')); // only fires if re-enabled
 
     // Called TWICE = `submitting` was reset (else `busy` keeps the button disabled and press #2 no-ops).
     expect(fns.createCategoryInline).toHaveBeenCalledTimes(2);
@@ -230,7 +231,7 @@ describe('confirm pop-up', () => {
     await openOverlays({ sheet: { mode: 'confirm', txId: 't1', categoryId: 'dining' }, toast: null, ...fns } as unknown as AppContext, setMockState);
 
     expect(screen.getByText('File as Dining')).toBeTruthy();
-    fireEvent.press(screen.getByText('Just this one'));
+    await fireEvent.press(screen.getByText('Just this one'));
     expect(fns.applyCategory).toHaveBeenCalledWith('one');
   });
 });

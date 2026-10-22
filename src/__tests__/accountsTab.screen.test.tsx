@@ -11,9 +11,9 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
+import { pullControl } from './support/pull';
 import { C } from '../theme';
-import { Icon, ICON, GLYPH } from '../icons';
+import { ICON, GLYPH } from '../icons';
 import { ACCOUNT_KIND_ICON } from '../accountDisplay';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES_RECORD } from './support/categories';
@@ -21,7 +21,7 @@ import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settl
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 import { styleOf, sharedHost, expectStacked } from './support/layout';
-import type { ReactTestInstance } from 'react-test-renderer';
+import type { TestInstance } from 'test-renderer';
 import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { pinToday } from './support/clock';
@@ -77,13 +77,13 @@ it('derives one card per account_id from the transactions (consistent name)', as
 it('tapping an account card navigates to that account\'s detail route', async () => {
   seedFeedPage(server, FEED, [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   await renderWithQueries(<Accounts />);
-  fireEvent.press(screen.getByText('ANZ'));
+  await fireEvent.press(screen.getByText('ANZ'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/a1');
 });
 
 it('shows the cold-load spinner (empty + loading)', async () => {
   const feed = server.hold('/transactions/feed');
-  render(<WithQueries><Accounts /></WithQueries>);
+  await render(<WithQueries><Accounts /></WithQueries>);
   await waitFor(() => expect(feedReads()).toHaveLength(1));
   expect(screen.getByTestId('accounts-loading')).toBeTruthy();
   feed.release();
@@ -109,11 +109,11 @@ it('shows the pull spinner when pulling the settled empty list', async () => {
   expect(screen.getByText('No accounts yet')).toBeTruthy();
   // Hold the live balance refresh open so `refreshing` stays observable while in flight.
   const liveRefresh = server.hold('/accounts/balances/refresh');
-  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
-  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+  expect(pullControl().props.refreshing).toBe(true);
   liveRefresh.release();
-  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
 });
 
 // WHIT-489 divergent gate (the OTHER half): the Accounts RefreshControl gates on
@@ -125,12 +125,12 @@ it('shows the pull spinner when pulling the settled empty list', async () => {
 it('does NOT raise the pull spinner during a cold load (inline spinner owns it)', async () => {
   const feed = server.hold('/transactions/feed');
   const liveRefresh = server.hold('/accounts/balances/refresh');
-  render(<WithQueries><Accounts /></WithQueries>);
+  await render(<WithQueries><Accounts /></WithQueries>);
   await waitFor(() => expect(feedReads()).toHaveLength(1));
   expect(screen.getByTestId('accounts-loading')).toBeTruthy(); // inline cold-load spinner is up
-  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1)); // the pull DID fire
-  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false); // ...but gated off
+  expect(pullControl().props.refreshing).toBe(false); // ...but gated off
   liveRefresh.release();
   feed.release();
   await settle();
@@ -153,7 +153,7 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
   expect(screen.getByText('owed')).toBeTruthy();
   // ABU-64: with no payoff plan set up, the loan card points inside instead of "No recent transactions".
   expect(screen.getByText('Home loan · payoff inside')).toBeTruthy();
-  fireEvent.press(screen.getByText('Up Homeloan'));
+  await fireEvent.press(screen.getByText('Up Homeloan'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
 });
 
@@ -171,7 +171,7 @@ it('the home loan card shows the next payoff milestone; other cards keep their o
   expect(await screen.findByText('Next milestone: $50,000 to go')).toBeTruthy();
   expect(screen.getByText(/^Last spend /)).toBeTruthy();
   expect(screen.queryByText('No recent spending')).toBeNull();
-  fireEvent.press(screen.getByText('Up Homeloan'));
+  await fireEvent.press(screen.getByText('Up Homeloan'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
 });
 
@@ -243,9 +243,18 @@ it('shows the four accounts in a fixed order, icon and colour, with owed balance
       .filter(Boolean);
     expect(cardOrder()).toEqual(names);
 
-    const chips = () => screen.UNSAFE_getAllByType(Icon)
-      .map((i) => i.props as { name: string; color: string })
-      .filter((p) => ['card', 'wallet', 'home', 'bank'].includes(p.name));
+    // Each drawn icon is an SVG string: read back which chip glyph it is and the colour it's painted.
+    const chipOf = (xml: string) => {
+      for (const name of ['card', 'wallet', 'home', 'bank']) {
+        const inner = (ICON[name] || GLYPH[name]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').split('currentColor').join('(.+?)');
+        const match = xml.match(new RegExp(`^<svg viewBox="0 0 24 24">${inner}</svg>$`));
+        if (match) return { name, color: match[1] };
+      }
+      return null;
+    };
+    const chips = () => screen.container.queryAll((node) => typeof node.props.xml === 'string')
+      .map((node) => chipOf(node.props.xml))
+      .filter((chip): chip is { name: string; color: string } => chip !== null);
     expect(chips().map((p) => p.name)).toEqual(['card', 'card', 'wallet', 'home']);
     const colours = chips().map((p) => p.color);
     expect(new Set(colours).size).toBe(4);
@@ -313,7 +322,7 @@ it('ABU-75 — at very large text an account row stacks: the balance sits below 
   expect(name.props.numberOfLines).toBeUndefined();
   // The sub-line ("Last spend yesterday") gets the full width too, not squeezed beside the chip.
   const rowRoot = sharedHost(name, balance);
-  for (let host: ReactTestInstance | null = screen.getByText(/^Last spend/).parent; host && host !== rowRoot; host = host.parent) {
+  for (let host: TestInstance | null = screen.getByText(/^Last spend/).parent; host && host !== rowRoot; host = host.parent) {
     if (typeof host.type === 'string') expect(styleOf(host).flexDirection).not.toBe('row');
   }
 });

@@ -23,7 +23,7 @@ beforeEach(() => {
 
 it('does not fetch before login, then fires on the auth flip to authed', async () => {
   setAuthStatusQuietly('anon');
-  const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient()) });
   expect(ruleRequests()).toHaveLength(0);
 
   await act(async () => { setAuthStatus('authed'); });

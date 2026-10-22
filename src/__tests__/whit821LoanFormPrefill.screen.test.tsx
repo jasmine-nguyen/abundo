@@ -53,7 +53,7 @@ it('Loan form: waits for a slow repayment read, then opens pre-filled', async ()
   server.seed('/loanfacts', EMPTY_LOAN_FACTS);
   server.seed('/repayment', LAST_REPAYMENT);
   const held = server.hold('/repayment');
-  drawHeld(<Loan />);
+  await drawHeld(<Loan />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Save loan details')).toBeNull();
   expect(screen.getByTestId('loan-facts-loading')).toBeTruthy();

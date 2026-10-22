@@ -7,7 +7,8 @@
 // Renders with the global zero safe-area insets and the NavBars default context.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { Text, RefreshControl } from 'react-native';
+import { Text } from 'react-native';
+import { pullControl } from './support/pull';
 import { render, fireEvent, within } from '@testing-library/react-native';
 import { contentStyle } from './support/scrollChromeHeader';
 import {
@@ -17,8 +18,8 @@ import {
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-it('renders a screen-supplied `right` action with the gear on the left, no spacers', () => {
-  const r = render(
+it('renders a screen-supplied `right` action with the gear on the left, no spacers', async () => {
+  const r = await render(
     <ScrollChromeHeader title="Transactions" right={<Text>ACTION</Text>}>
       <Text>body</Text>
     </ScrollChromeHeader>,
@@ -28,8 +29,8 @@ it('renders a screen-supplied `right` action with the gear on the left, no space
   expect(r.getByLabelText('Settings')).toBeTruthy();
 });
 
-it('flattens a screen contentContainerStyle over the shared insets (Transactions select-mode padding wins)', () => {
-  const r = render(
+it('flattens a screen contentContainerStyle over the shared insets (Transactions select-mode padding wins)', async () => {
+  const r = await render(
     <ScrollChromeHeader title="Transactions" contentContainerStyle={{ paddingBottom: 321 }}>
       <Text>body</Text>
     </ScrollChromeHeader>,
@@ -50,8 +51,8 @@ it.each([
   ['a subtitle', <Text key="line">Updated 9:40am</Text>, 90, 90],
   ['no subtitle', undefined, 90, HEADER_BODY_HEIGHT],
   ['a subtitle that renders nothing', <Nothing key="nothing" />, HEADER_BODY_HEIGHT, HEADER_BODY_HEIGHT],
-])('with %s, the list top gap and pull spinner follow the measured header height (WHIT-863)', (_label, subtitle, measured, expected) => {
-  const r = render(
+])('with %s, the list top gap and pull spinner follow the measured header height (WHIT-863)', async (_label, subtitle, measured, expected) => {
+  const r = await render(
     <ScrollChromeHeader title="Transactions" subtitle={subtitle} onRefresh={() => {}}>
       <Text>body</Text>
     </ScrollChromeHeader>,
@@ -60,7 +61,7 @@ it.each([
   if (subtitle?.key === 'line') {
     expect(within(header).getByText('Updated 9:40am')).toBeTruthy();
   }
-  fireEvent(header, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: measured } } });
+  await fireEvent(header, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: measured } } });
   expect(contentStyle(r).paddingTop).toBe(expected);
-  expect(r.UNSAFE_getByType(RefreshControl).props.progressViewOffset).toBe(expected);
+  expect(pullControl().props.progressViewOffset).toBe(expected);
 });

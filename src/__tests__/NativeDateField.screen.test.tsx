@@ -43,27 +43,27 @@ afterEach(() => { Platform.OS = ORIGINAL_OS; });
 
 // Open the picker if there's a "Set date"/"Change" affordance (Android, or iOS-when-unset),
 // then tap the picker itself.
-function openAndTap() {
+async function openAndTap() {
   const opens = screen.queryAllByTestId('date-open');
-  if (opens.length) fireEvent.press(opens[opens.length - 1]);
+  if (opens.length) await fireEvent.press(opens[opens.length - 1]);
   const pickers = screen.getAllByTestId('mock-datepicker');
-  fireEvent.press(pickers[pickers.length - 1]);
+  await fireEvent.press(pickers[pickers.length - 1]);
 }
 
 describe('the pick / dismiss commit quirk', () => {
-  it('a real pick commits the chosen ISO date', () => {
+  it('a real pick commits the chosen ISO date', async () => {
     const onChange = jest.fn();
-    render(<NativeDateField value={null} onChange={onChange} />);
-    openAndTap();
+    await render(<NativeDateField value={null} onChange={onChange} />);
+    await openAndTap();
     expect(onChange).toHaveBeenCalledWith('2026-06-20');
   });
 
-  it('a DISMISS (no date) does NOT commit — the load-bearing Android quirk', () => {
+  it('a DISMISS (no date) does NOT commit — the load-bearing Android quirk', async () => {
     mockPickedDate = undefined;
     mockEventType = 'dismissed';
     const onChange = jest.fn();
-    render(<NativeDateField value={null} onChange={onChange} />);
-    openAndTap();
+    await render(<NativeDateField value={null} onChange={onChange} />);
+    await openAndTap();
     expect(onChange).not.toHaveBeenCalled();
   });
 });
@@ -71,24 +71,24 @@ describe('the pick / dismiss commit quirk', () => {
 describe('the iOS pill gate', () => {
   beforeEach(() => { Platform.OS = 'ios'; });
 
-  it('without alwaysShowPillIOS, an UNSET field shows the affordance, not the pill', () => {
-    render(<NativeDateField value={null} onChange={jest.fn()} />);
+  it('without alwaysShowPillIOS, an UNSET field shows the affordance, not the pill', async () => {
+    await render(<NativeDateField value={null} onChange={jest.fn()} />);
     expect(screen.queryByTestId('mock-datepicker')).toBeNull();
     expect(screen.getByTestId('date-open')).toBeTruthy();
   });
 
-  it('with alwaysShowPillIOS, an UNSET field shows the pill immediately (the loan behaviour)', () => {
-    render(<NativeDateField value={null} onChange={jest.fn()} alwaysShowPillIOS />);
+  it('with alwaysShowPillIOS, an UNSET field shows the pill immediately (the loan behaviour)', async () => {
+    await render(<NativeDateField value={null} onChange={jest.fn()} alwaysShowPillIOS />);
     expect(screen.getByTestId('mock-datepicker')).toBeTruthy();
     expect(screen.queryByTestId('date-open')).toBeNull();
   });
 
-  it('a set value shows "Change" not a duplicate pill; the pill appears only once you tap it', () => {
-    render(<NativeDateField value="2026-01-15" onChange={jest.fn()} />);
+  it('a set value shows "Change" not a duplicate pill; the pill appears only once you tap it', async () => {
+    await render(<NativeDateField value="2026-01-15" onChange={jest.fn()} />);
     // The value already renders as the row text — showing the pill too would print the date twice.
     expect(screen.queryByTestId('mock-datepicker')).toBeNull();
     expect(screen.getByText('Change')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('date-open'));
+    await fireEvent.press(screen.getByTestId('date-open'));
     expect(screen.getByTestId('mock-datepicker')).toBeTruthy();
   });
 });
@@ -96,30 +96,30 @@ describe('the iOS pill gate', () => {
 describe('Android', () => {
   beforeEach(() => { Platform.OS = 'android'; });
 
-  it('shows the affordance and opens the below-row dialog on tap', () => {
-    render(<NativeDateField value={null} onChange={jest.fn()} />);
+  it('shows the affordance and opens the below-row dialog on tap', async () => {
+    await render(<NativeDateField value={null} onChange={jest.fn()} />);
     expect(screen.queryByTestId('mock-datepicker')).toBeNull(); // closed until opened
-    fireEvent.press(screen.getByTestId('date-open'));
+    await fireEvent.press(screen.getByTestId('date-open'));
     expect(screen.getByTestId('mock-datepicker')).toBeTruthy();
   });
 });
 
 describe('the Clear affordance', () => {
-  it('clearable + a value renders Clear; tapping it commits null', () => {
+  it('clearable + a value renders Clear; tapping it commits null', async () => {
     const onChange = jest.fn();
-    render(<NativeDateField value="2026-01-15" onChange={onChange} clearable />);
-    fireEvent.press(screen.getByText('Clear'));
+    await render(<NativeDateField value="2026-01-15" onChange={onChange} clearable />);
+    await fireEvent.press(screen.getByText('Clear'));
     expect(onChange).toHaveBeenCalledWith(null);
   });
 });
 
 describe('min / max forwarding', () => {
-  it('passes minimumDate and maximumDate through to the picker', () => {
+  it('passes minimumDate and maximumDate through to the picker', async () => {
     const min = new Date(2026, 0, 1);
     const max = new Date(2026, 11, 31);
-    render(<NativeDateField value="2026-06-01" onChange={jest.fn()} minimumDate={min} maximumDate={max} />);
+    await render(<NativeDateField value="2026-06-01" onChange={jest.fn()} minimumDate={min} maximumDate={max} />);
     // A set value hides the pill behind "Change" now — open it so the picker mounts and forwards.
-    fireEvent.press(screen.getByTestId('date-open'));
+    await fireEvent.press(screen.getByTestId('date-open'));
     expect(mockLastProps?.minimumDate).toBe(min);
     expect(mockLastProps?.maximumDate).toBe(max);
   });

@@ -49,7 +49,7 @@
   },
   "private": true,
   "//async-storage": "@react-native-async-storage/async-storage stores the Ask Abundo consent (src/chat/ChatContext.tsx), and amazon-cognito-identity-js also needs it at runtime to persist sessions. Keep it. expo.install.exclude keeps it on v3 because Expo 58 pins 2.2.0, which would lose that saved data, so the exclusion must stay.",
-  "//overrides": "jest-expo 58 and @react-native/jest-preset both use jest 30, but npm mixes patch levels, so force one jest 30 toolchain so the runtime/mock/env versions agree. expo-router 58 lists @testing-library/react-native 14 as an optional peer; the expo-router entry keeps us on 13, because 14 makes render/fireEvent async across every screen test.",
+  "//overrides": "jest-expo 58 and @react-native/jest-preset both use jest 30, but npm mixes patch levels, so force one jest 30 toolchain so the runtime/mock/env versions agree.",
   "overrides": {
     "jest": "30.4.1",
     "jest-cli": "30.4.1",
@@ -62,21 +62,18 @@
     "jest-config": "30.4.1",
     "jest-environment-jsdom": "30.4.1",
     "jest-environment-node": "30.4.1",
-    "expect": "30.4.1",
-    "expo-router": {
-      "@testing-library/react-native": "$@testing-library/react-native"
-    }
+    "expect": "30.4.1"
   },
   "devDependencies": {
     "@react-native/jest-preset": "0.88.0",
-    "@testing-library/react-native": "^13.3.3",
+    "@testing-library/react-native": "^14.1.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.1.0",
     "@types/react": "~19.3.0",
     "istanbul-lib-coverage": "^3.2.2",
     "jest": "30.4.1",
     "jest-expo": "~58.0.12",
-    "react-test-renderer": "19.3.0",
+    "test-renderer": "~1.3.1",
     "typescript": "~6.0.3"
   },
   "expo": {

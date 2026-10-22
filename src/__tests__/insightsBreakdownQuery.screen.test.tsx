@@ -49,7 +49,7 @@ beforeEach(() => {
 
 it('does not fetch breakdown before login, then fires when auth flips to authed', async () => {
   setAuthStatusQuietly('anon');
-  renderInsights();
+  await renderInsights();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(0);
   expect(server.sent('GET', '/paycycle')).toHaveLength(0);
 
@@ -62,7 +62,7 @@ it('does not fetch breakdown before login, then fires when auth flips to authed'
 
 it('a transient 5xx on breakdown retries and self-heals — no error shown', async () => {
   server.once('GET', '/breakdown', { status: 503 });
-  renderInsights(makeClient({ retry: 2 }));
+  await renderInsights(makeClient({ retry: 2 }));
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('insights-error')).toBeNull();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
@@ -72,24 +72,24 @@ it('a sustained breakdown failure sends a bounded number of requests (WHIT-668)'
   // The focus refresh used to re-run on every redraw; an errored read with nothing saved is always
   // out of date, so each failure asked again straight away (about 20 requests in 200ms here).
   server.fail('/breakdown', 503);
-  renderInsights(makeClient());
+  await renderInsights(makeClient());
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
   await pause(200);
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
 
   server.once('GET', '/breakdown', { body: BREAKDOWN }); // a queued reply goes out ahead of the failure
-  fireEvent.press(screen.getByTestId('insights-retry'));
+  await fireEvent.press(screen.getByTestId('insights-retry'));
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
 });
 
 it('the AI summary read fires once per focus, not on every redraw (WHIT-668)', async () => {
-  renderInsights();
+  await renderInsights();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 } } });
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   expect(await screen.findByText('LAST PAY CYCLE')).toBeTruthy();
-  fireEvent.press(screen.getByTestId('insights-cycle-current'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-current'));
   expect(await screen.findByText('THIS PAY CYCLE')).toBeTruthy();
   expect(refreshAiInsights).toHaveBeenCalledTimes(1);
 });
@@ -97,7 +97,7 @@ it('the AI summary read fires once per focus, not on every redraw (WHIT-668)', a
 // --- WHIT-68: historical look-back selector ----------------------------------
 
 it('the cycle selector reads the prior cycle, relabels the hero, and hides the AI coach', async () => {
-  renderInsights();
+  await renderInsights();
 
   // current cycle: "THIS PAY CYCLE" eyebrow + the AI coach card present
   expect(await screen.findByText('THIS PAY CYCLE')).toBeTruthy();
@@ -105,7 +105,7 @@ it('the cycle selector reads the prior cycle, relabels the hero, and hides the A
   expect(screen.getByText('Worth a look')).toBeTruthy();
 
   server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 } } });
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev'));
 
   expect(await screen.findByText('LAST PAY CYCLE')).toBeTruthy();
   // The prior-cycle read fired with cycle=1; the `days` param is inconsequential (the server
@@ -115,7 +115,7 @@ it('the cycle selector reads the prior cycle, relabels the hero, and hides the A
 
   // back to "This cycle" — served from cache (no new fetch), label + coach return
   const callsBefore = server.sentUnder('GET', '/breakdown').length;
-  fireEvent.press(screen.getByTestId('insights-cycle-current'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-current'));
   expect(await screen.findByText('THIS PAY CYCLE')).toBeTruthy();
   expect(screen.getByText('Worth a look')).toBeTruthy();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(callsBefore); // cycle 0 already cached
@@ -133,7 +133,7 @@ describe('partial failure: categories down while breakdown succeeds', () => {
   it('breakdown has real + uncategorized spend, categories failed on first load → the inline error IS shown (no partial hero)', async () => {
     server.fail('/categories', 500);
     server.seed('/breakdown', { coffee: { posted: 40, pending: 0 }, [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } });
-    renderInsights(makeClient());
+    await renderInsights(makeClient());
     expect(await screen.findByTestId('insights-error')).toBeTruthy();     // error surfaces now
     expect(screen.getByText("Couldn't load")).toBeTruthy();               // ...and the hero says so
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();             // real row dropped (no taxonomy)
@@ -145,7 +145,7 @@ describe('partial failure: categories down while breakdown succeeds', () => {
 
 describe('focus refetch does not storm', () => {
   it('fresh data + focus effect (staleTime 60s) → each fetcher called exactly once', async () => {
-    renderInsights();
+    await renderInsights();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     await act(async () => {
       await Promise.resolve();
@@ -158,7 +158,7 @@ describe('focus refetch does not storm', () => {
 
 describe('auth transition mid-session on Insights', () => {
   it('authed→locked keeps cached rows, shows no error, and fires no doomed refetch', async () => {
-    renderInsights();
+    await renderInsights();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     const before = server.sentUnder('GET', '/breakdown').length;
 

@@ -45,7 +45,7 @@ it('the tab bar renders the round Ask button above itself, and tapping it opens 
   expect(screen.queryByText('Ask')).toBeNull();
 
   expect(chatOpen).toBe(false);
-  fireEvent.press(button);
+  await fireEvent.press(button);
   expect(chatOpen).toBe(true);
 });
 
@@ -59,6 +59,6 @@ it('[A20] WHIT-730: with the bars shown the Ask button sits in place, and its fu
   // The wrapper covers the screen, so it must pass taps to the list and tabs beneath it.
   expect(slideView.props.pointerEvents).toBe('box-none');
 
-  fireEvent.press(screen.getByLabelText('Ask about your spending'));
+  await fireEvent.press(screen.getByLabelText('Ask about your spending'));
   expect(chatOpen).toBe(true);
 });

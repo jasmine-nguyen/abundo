@@ -44,14 +44,14 @@ beforeEach(() => {
 });
 afterEach(() => { queryClient.clear(); });
 
-function mount() {
-  return renderHook(() => useAppContext(), { wrapper }).result;
+async function mount() {
+  return (await renderHook(() => useAppContext(), { wrapper })).result;
 }
 
 it('[1] files a deep-history row that lives ONLY in a search result', async () => {
   seedSearch([txn()]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -61,8 +61,8 @@ it('[1] files a deep-history row that lives ONLY in a search result', async () =
 
 it('[3] "every charge from this shop" also files the same shop\'s unfiled search-only rows', async () => {
   seedSearch([txn(), txn({ transaction_id: 'deep2', date: '2019-05-01' })]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('all'); });
 
@@ -71,7 +71,7 @@ it('[3] "every charge from this shop" also files the same shop\'s unfiled search
 
 it('[4] a notes edit lands in the search result', async () => {
   seedSearch([txn()]);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyTransactionEdit('deep1', { notes: 'birthday' }); });
 
@@ -80,7 +80,7 @@ it('[4] a notes edit lands in the search result', async () => {
 
 it('[6] deleting a category refreshes search results', async () => {
   seedSearch([txn({ category: 'groceries' })]);
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.deleteCategory('groceries'); });
@@ -91,7 +91,7 @@ it('[6] deleting a category refreshes search results', async () => {
 });
 
 it('[7] renaming a category refreshes search results (the name is searchable text)', async () => {
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Food shop', bucket: 'Living', icon: 'cart' }); });
@@ -101,7 +101,7 @@ it('[7] renaming a category refreshes search results (the name is searchable tex
 });
 
 it('[8] an icon-only category save leaves search results alone (no pointless full-history re-scan)', async () => {
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'basket' }); });

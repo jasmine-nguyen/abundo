@@ -30,6 +30,6 @@ it('opens the chat seeded with the summary', async () => {
   setAi({ insights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z', cycle_start: '2026-09-01', cached: false } });
   await renderWithQueries(<AiCoachCard />);
   expect(styleOf(screen.getByTestId('ai-ask-follow-up')).minHeight).toBe(44); // ABU-63: a full-size tap target
-  fireEvent.press(screen.getByText('Ask a follow-up →'));
+  await fireEvent.press(screen.getByText('Ask a follow-up →'));
   expect(mockOpenChat).toHaveBeenCalledWith({ seed: 'You are pacing well this cycle.' });
 });

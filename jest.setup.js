@@ -28,6 +28,8 @@ jest.mock('@react-native-community/datetimepicker', () => {
       Pressable,
       {
         testID: 'mock-datepicker',
+        // Kept on the drawn element so a test can read what the screen passed (renderedPickerProps).
+        pickerProps: props,
         onPress: () => props.onChange && props.onChange({ type: 'set' }, new Date(2026, 5, 20)),
       },
       React.createElement(Text, null, 'picker'),

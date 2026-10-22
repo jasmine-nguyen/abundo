@@ -5,7 +5,7 @@
 // Real ../api over the fake server; ../auth + expo-router mocked; ../context PARTIALLY mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { RefreshControl } from 'react-native';
+import { pullControl } from './support/pull';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
@@ -35,7 +35,7 @@ const TXNS = [{
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 }];
 
-const rc = () => screen.UNSAFE_getByType(RefreshControl);
+const rc = () => pullControl();
 const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
 
 beforeEach(() => {
@@ -54,7 +54,7 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
   // pull ran. Fail-on-revert: drop the successMessage arg in accounts.tsx → no toast → RED.
   it('[N2] an UNCHANGED balance still toasts "Balances up to date"', async () => {
     server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -100 }] }); // same as stored
-    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
+    await render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
     expect(await screen.findByText('$100.00')).toBeTruthy();
 
     await pull();

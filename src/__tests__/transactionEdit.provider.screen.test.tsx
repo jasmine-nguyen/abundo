@@ -24,14 +24,14 @@ const cached = (id: string) =>
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); }); // clear the singleton's gcTime timers so none leak past the suite
 
-function mount(transactions: Transaction[] = [txn()]) {
+async function mount(transactions: Transaction[] = [txn()]) {
   seedTransactionsCache(queryClient, transactions);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
 it('saves a note optimistically, calls the API with only that field, and invalidates nothing', async () => {
-  const result = mount();
+  const result = await mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
@@ -46,7 +46,7 @@ it('saves a note optimistically, calls the API with only that field, and invalid
 
 it('rolls the note back to its previous value (and toasts) on save failure', async () => {
   server.fail('/transactions/t1', 500);
-  const result = mount([txn({ notes: 'old note' })]);
+  const result = await mount([txn({ notes: 'old note' })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'new note' }); });
 
@@ -55,7 +55,7 @@ it('rolls the note back to its previous value (and toasts) on save failure', asy
 });
 
 it('adds tags optimistically without clobbering the note', async () => {
-  const result = mount([txn({ notes: 'keep me' })]);
+  const result = await mount([txn({ notes: 'keep me' })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
 
@@ -64,7 +64,7 @@ it('adds tags optimistically without clobbering the note', async () => {
 });
 
 it('is a no-op (no API call) when the transaction is not in the cache', async () => {
-  const result = mount([]);
+  const result = await mount([]);
   await act(async () => { await result.current.applyTransactionEdit('ghost', { notes: 'x' }); });
   expect(server.requests().filter((r) => r.method === 'PATCH')).toHaveLength(0);
 });
@@ -72,7 +72,7 @@ it('is a no-op (no API call) when the transaction is not in the cache', async ()
 it('rolls budget_excluded back to absent on failure when it was unset before', async () => {
   // Without the widened rollback snapshot this stays stuck `true` — the fail-on-revert anchor.
   server.fail('/transactions/t1', 500);
-  const result = mount([txn()]); // no override
+  const result = await mount([txn()]); // no override
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
@@ -83,7 +83,7 @@ it('rolls budget_excluded back to absent on failure when it was unset before', a
 // WHIT-275 adversarial gaps — two SEQUENTIAL edits where the second reads the cache the first
 // patched (neither field clobbers the other), and clearing a note writes "" via a { notes: "" } PATCH.
 it('a note edit then a tags edit both land — the tags call does not drop the note', async () => { // [A20]
-  const result = mount([txn()]); // starts with neither note nor tags
+  const result = await mount([txn()]); // starts with neither note nor tags
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
   await act(async () => { await result.current.applyTransactionEdit('t1', { tags: ['work'] }); });

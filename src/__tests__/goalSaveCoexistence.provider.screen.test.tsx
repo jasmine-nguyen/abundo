@@ -27,7 +27,7 @@ beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 it('a saveLoanFacts propagates to a mounted Goal composite observer (read-your-write)', async () => {
-  const { result } = renderHook(() => ({ ctx: useAppContext(), goal: useGoalScreenData() }), { wrapper });
+  const { result } = await renderHook(() => ({ ctx: useAppContext(), goal: useGoalScreenData() }), { wrapper });
 
   // Composite starts on the unset facts (equity unknowable).
   await waitFor(() => expect(result.current.goal.loanFacts).toEqual(EMPTY));

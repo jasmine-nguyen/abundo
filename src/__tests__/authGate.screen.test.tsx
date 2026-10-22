@@ -179,10 +179,10 @@ describe('WHIT-160 auth gate — static redirect states', () => {
     delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
   });
 
-  it('redirects an anon user on a protected route to the login screen', () => {
+  it('redirects an anon user on a protected route to the login screen', async () => {
     mockGetStatus.mockReturnValue('anon');
     mockSegments = ['(tabs)', 'budgets'];
-    renderGate();
+    await renderGate();
     expect(mockRedirectSpy).toHaveBeenCalledWith('/');
     // WHIT-265: the child (the root Stack) stays MOUNTED during the redirect —
     // unmounting it resets navigation and loops the gate. The opaque absolute-fill
@@ -194,31 +194,31 @@ describe('WHIT-160 auth gate — static redirect states', () => {
     expect([cover.top, cover.right, cover.bottom, cover.left]).toEqual([0, 0, 0, 0]);
   });
 
-  it('redirects an anon user on a ROOT-LEVEL detail route (e.g. /loan) to login', () => {
+  it('redirects an anon user on a ROOT-LEVEL detail route (e.g. /loan) to login', async () => {
     // Regression: /loan, /rules, /budget/[id] etc. are root-level protected screens
     // with a non-empty, non-(tabs) first segment. They must NOT be treated as the
     // login page (which would leave them reachable while signed out).
     mockGetStatus.mockReturnValue('anon');
     mockSegments = ['loan'];
-    renderGate();
+    await renderGate();
     expect(mockRedirectSpy).toHaveBeenCalledWith('/');
     expect(screen.getByTestId('child')).toBeTruthy(); // WHIT-265: stays mounted, covered
     expect(screen.getByTestId('gate-cover')).toBeTruthy();
   });
 
-  it('does NOT bounce an authed user off a root-level detail route (e.g. /loan)', () => {
+  it('does NOT bounce an authed user off a root-level detail route (e.g. /loan)', async () => {
     mockGetStatus.mockReturnValue('authed');
     mockSegments = ['loan'];
-    renderGate();
+    await renderGate();
     expect(mockRedirectSpy).not.toHaveBeenCalled();
     expect(screen.getByTestId('child')).toBeTruthy();
     expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
   });
 
-  it('shows a placeholder (no child, no redirect) while loading', () => {
+  it('shows a placeholder (no child, no redirect) while loading', async () => {
     mockGetStatus.mockReturnValue('loading');
     mockSegments = ['(tabs)', 'budgets'];
-    renderGate();
+    await renderGate();
     expect(mockRedirectSpy).not.toHaveBeenCalled();
     expect(screen.queryByTestId('child')).toBeNull();
   });
@@ -252,10 +252,10 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     jest.restoreAllMocks();
   });
 
-  it('renders the lock screen over the still-mounted app when a session is locked', () => {
+  it('renders the lock screen over the still-mounted app when a session is locked', async () => {
     // WHIT-266: the app now stays MOUNTED under an opaque cover (so scroll/form state
     // survives), instead of being unmounted and replaced by the lock screen.
-    renderGate();
+    await renderGate();
     expect(screen.getByText('Abundo is locked')).toBeTruthy();
     expect(screen.getByTestId('lock-cover')).toBeTruthy();
     // The app stays MOUNTED (so scroll/form state survives unlock) but is hidden from screen
@@ -265,33 +265,33 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
   });
 
-  it('reveals the app after a successful Unlock', () => {
-    renderGate();
-    fireEvent.press(screen.getByText('Unlock'));
+  it('reveals the app after a successful Unlock', async () => {
+    await renderGate();
+    await fireEvent.press(screen.getByText('Unlock'));
     expect(mockUnlock).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('child')).toBeTruthy();
   });
 
-  it('keeps the lock screen (with a working retry) when Unlock is cancelled', () => {
+  it('keeps the lock screen (with a working retry) when Unlock is cancelled', async () => {
     mockUnlock.mockImplementation(async () => false); // cancelled — status stays 'locked'
-    renderGate();
-    fireEvent.press(screen.getByText('Unlock'));
+    await renderGate();
+    await fireEvent.press(screen.getByText('Unlock'));
     expect(mockUnlock).toHaveBeenCalled();
     expect(screen.getByText('Abundo is locked')).toBeTruthy();
     // Still locked → app stays mounted under the cover, hidden from screen readers (WHIT-266).
     expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
   });
 
-  it('Sign in again signs out (→ anon, gate redirects to login)', () => {
-    renderGate();
-    fireEvent.press(screen.getByText('Sign in again'));
+  it('Sign in again signs out (→ anon, gate redirects to login)', async () => {
+    await renderGate();
+    await fireEvent.press(screen.getByText('Sign in again'));
     expect(mockSignOut).toHaveBeenCalledTimes(1);
   });
 
-  it('re-locks on a background → active resume after the grace window', () => {
+  it('re-locks on a background → active resume after the grace window', async () => {
     mockStatus = 'authed';
     const nowSpy = jest.spyOn(Date, 'now');
-    renderGate();
+    await renderGate();
     expect(screen.getByTestId('child')).toBeTruthy();
     // Away long enough (past RELOCK_GRACE_MS) → re-prompt Face ID on return.
     nowSpy.mockReturnValueOnce(1_000_000)                        // stamp on background
@@ -302,10 +302,10 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     expect(mockUnlock).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT re-lock on a brief switch-away (within the grace window)', () => {
+  it('does NOT re-lock on a brief switch-away (within the grace window)', async () => {
     mockStatus = 'authed';
     const nowSpy = jest.spyOn(Date, 'now');
-    renderGate();
+    await renderGate();
     // Back after 5s — a quick flick to another app must resume straight in, no Face ID.
     nowSpy.mockReturnValueOnce(1_000_000).mockReturnValueOnce(1_000_000 + 5_000);
     appStateHandler('background');
@@ -314,9 +314,9 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     expect(mockUnlock).not.toHaveBeenCalled();
   });
 
-  it('does NOT re-lock on inactive → active (the Face ID sheet loop guard)', () => {
+  it('does NOT re-lock on inactive → active (the Face ID sheet loop guard)', async () => {
     mockStatus = 'authed';
-    renderGate();
+    await renderGate();
     // The biometric sheet backgrounds the app to 'inactive', not 'background'.
     appStateHandler('inactive');
     appStateHandler('active');
@@ -349,9 +349,9 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
   });
 
   describe('WHIT-266 lock cover', () => {
-    it('lock cover is opaque, absolute-fill, and painted on top', () => {
-      renderGate();
-      act(() => setStatus('locked'));
+    it('lock cover is opaque, absolute-fill, and painted on top', async () => {
+      await renderGate();
+      await act(() => setStatus('locked'));
       const cover = styleOf(screen.getByTestId('lock-cover'));
       expect(cover.backgroundColor).toBe(C.bg);
       expect(cover.position).toBe('absolute');
@@ -359,11 +359,11 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       expect(screen.getByTestId('lock-cover').props.pointerEvents ?? cover.pointerEvents ?? 'auto').toBe('auto'); // blocks touches
     });
 
-    it('dismisses the keyboard as the lock cover goes up', () => {
+    it('dismisses the keyboard as the lock cover goes up', async () => {
       const dismiss = jest.spyOn(Keyboard, 'dismiss');
-      renderGate();
+      await renderGate();
       dismiss.mockClear(); // ignore any dismiss from the initial (unlocked) render
-      act(() => setStatus('locked'));
+      await act(() => setStatus('locked'));
       expect(dismiss).toHaveBeenCalledTimes(1);
     });
   });
@@ -373,10 +373,10 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
     // [G1] locked on the INDEX route: the two covers never co-occur, and unlock releases the
     // legitimate authed+index → budgets redirect. gateRedirect returns null while locked, so even
     // sitting where an authed user WOULD be bounced, no redirect cover competes with the lock.
-    it('[G1] locked on index: only the lock cover (no redirect cover / no redirect); unlock releases the budgets redirect', () => {
+    it('[G1] locked on index: only the lock cover (no redirect cover / no redirect); unlock releases the budgets redirect', async () => {
       mockSegments = []; // the index route — where an AUTHED user is redirected to budgets
       mockStatus = 'locked'; // cold launch straight into a locked session
-      renderGate();
+      await renderGate();
 
       // While locked: lock cover up, NO redirect cover, and gateRedirect emitted NOTHING —
       // the lock status suppresses the redirect so the two covers are mutually exclusive.
@@ -388,7 +388,7 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
 
       // Unlock: authed + on index → the SUPPRESSED redirect is now released.
-      act(() => setStatus('authed'));
+      await act(() => setStatus('authed'));
       expect(screen.queryByTestId('lock-cover')).toBeNull();
       expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
       expect(screen.getByTestId('gate-cover')).toBeTruthy();
@@ -422,18 +422,18 @@ describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
     jest.restoreAllMocks();
   });
 
-  it('does NOT re-lock on background → active when the device cannot biometric-lock (never lock out)', () => {
+  it('does NOT re-lock on background → active when the device cannot biometric-lock (never lock out)', async () => {
     mockCanBiometric.mockReturnValue(false);
-    renderGate();
+    await renderGate();
     appStateHandler('background');
     appStateHandler('active');
     expect(mockLock).not.toHaveBeenCalled();
     expect(mockUnlock).not.toHaveBeenCalled();
   });
 
-  it('does NOT re-lock on background → active when the session is not authed (nothing to re-seal)', () => {
+  it('does NOT re-lock on background → active when the session is not authed (nothing to re-seal)', async () => {
     mockStatus = 'anon';
-    renderGate();
+    await renderGate();
     appStateHandler('background');
     appStateHandler('active');
     expect(mockLock).not.toHaveBeenCalled();
@@ -455,19 +455,17 @@ describe('WHIT-265 auth gate — redirect loop', () => {
     mockSegStore.listeners.clear();
   });
 
-  it('authed cold launch on index: redirects exactly once, never loops (WHIT-265 fail-on-revert)', () => {
+  it('authed cold launch on index: redirects exactly once, never loops (WHIT-265 fail-on-revert)', async () => {
     mockGetStatus.mockReturnValue('authed');
     mockSegStore.segs = [];
     // Pre-fix this throws "Maximum update depth exceeded": Redirect replaces the
     // FakeStack → navigation lands on (tabs)/budgets → children remount → the fresh
     // mount resets segments to [] → redirect again, forever.
-    expect(() =>
-      render(
-        <AuthGate>
-          <FakeStack />
-        </AuthGate>,
-      ),
-    ).not.toThrow();
+    await expect(render(
+      <AuthGate>
+        <FakeStack />
+      </AuthGate>,
+    )).resolves.toBeTruthy();
     // The load-bearing assertions: one redirect, child still mounted, cover gone.
     expect(mockRedirectSpy).toHaveBeenCalledTimes(1);
     expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
@@ -506,10 +504,10 @@ describe('WHIT auth gate — timed re-lock grace', () => {
   // a brief second absence must NOT re-lock. Only possible if `backgroundedAt` is re-stamped
   // on the 2nd 'background'. If it were stale at the first stamp, the 2nd resume would read a
   // huge awayMs and wrongly re-lock again.
-  it('[AB2] a brief 2nd absence after a long 1st does NOT re-lock (backgroundedAt re-stamps)', () => {
+  it('[AB2] a brief 2nd absence after a long 1st does NOT re-lock (backgroundedAt re-stamps)', async () => {
     mockStatus = 'authed';
     const nowSpy = jest.spyOn(Date, 'now');
-    renderGate();
+    await renderGate();
     nowSpy
       .mockReturnValueOnce(1_000_000)                      // cycle 1: stamp on background
       .mockReturnValueOnce(1_000_000 + RELOCK_GRACE_MS + 1) // cycle 1: resume past grace → re-lock
@@ -531,10 +529,10 @@ describe('WHIT auth gate — timed re-lock grace', () => {
   // For a lock, an anomalous clock must fail CLOSED — re-lock, never skip Face ID. Pins the
   // `elapsedMs < 0` guard: without it, a negative elapsed reads as < grace and would resume
   // straight in (fail open).
-  it('[AB4] a backward clock jump (negative elapsed) re-locks (fail closed)', () => {
+  it('[AB4] a backward clock jump (negative elapsed) re-locks (fail closed)', async () => {
     mockStatus = 'authed';
     const nowSpy = jest.spyOn(Date, 'now');
-    renderGate();
+    await renderGate();
     nowSpy
       .mockReturnValueOnce(2_000_000)   // stamp on background
       .mockReturnValueOnce(1_000_000);  // resume EARLIER than the stamp → elapsed = -1_000_000
@@ -578,7 +576,7 @@ describe('WHIT-160 auth gate — restore re-render', () => {
   });
 
   it('transitions loading -> anon via the subscribe listener and then redirects', async () => {
-    render(
+    await render(
       <AuthGate>
         <Text testID="child">app</Text>
       </AuthGate>,
@@ -636,24 +634,24 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
 
   // [A7] Sign out from a DEEP protected route: the Stack must never remount while the
   // login redirect is in flight, and the opaque cover must shield it the whole time.
-  it('[A7] sign-out from a deep protected route: cover shields, child never remounts, settles on login', () => {
+  it('[A7] sign-out from a deep protected route: cover shields, child never remounts, settles on login', async () => {
     mockAutoComplete = false; // hold redirects so the in-flight window is observable
     mockStatus = 'authed';
-    render(
+    await render(
       <AuthGate>
         <FakeStack />
       </AuthGate>,
     );
     // Launch: the fresh Stack resets to index, authed → redirect queued. Land it, then
     // walk the user deep into the app.
-    act(() => mockSegStore.set(['(tabs)', 'budgets'])); // launch redirect lands
-    act(() => mockSegStore.set(['(tabs)', 'settings'])); // user navigates deep
+    await act(() => mockSegStore.set(['(tabs)', 'budgets'])); // launch redirect lands
+    await act(() => mockSegStore.set(['(tabs)', 'settings'])); // user navigates deep
     expect(screen.queryByTestId('gate-cover')).toBeNull(); // settled, no cover
     mockRedirectSpy.mockClear();
     const mountsBefore = stackMounts;
 
     // The sign-out broadcast ('anon') arrives while the user sits on /settings.
-    act(() => mockSetStatus('anon'));
+    await act(() => mockSetStatus('anon'));
 
     // In flight: exactly one redirect to login; the protected Stack is still mounted
     // BEHIND the cover (no remount = no navigation reset = no loop, and no flash).
@@ -668,7 +666,7 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     expect(cover.props.pointerEvents ?? coverStyle.pointerEvents ?? 'auto').toBe('auto');
     expect(stackMounts).toBe(mountsBefore);
 
-    act(() => mockSegStore.set([])); // the router lands on the login screen
+    await act(() => mockSegStore.set([])); // the router lands on the login screen
     expect(screen.queryByTestId('gate-cover')).toBeNull();
     expect(screen.getByTestId('child')).toBeTruthy();
     expect(stackMounts).toBe(mountsBefore); // never remounted end-to-end
@@ -676,10 +674,10 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
 
   // [A8] The target changes VALUE mid-flight: authed→anon while the '/(tabs)/budgets'
   // cover is up. A latched/stale target would redirect a signed-out user INTO the app.
-  it('[A8] authed→anon flip while the into-app redirect is in flight drops the stale redirect', () => {
+  it('[A8] authed→anon flip while the into-app redirect is in flight drops the stale redirect', async () => {
     mockAutoComplete = false;
     mockStatus = 'authed';
-    render(
+    await render(
       <AuthGate>
         <FakeStack />
       </AuthGate>,
@@ -689,7 +687,7 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     expect(screen.getByTestId('gate-cover')).toBeTruthy();
     mockRedirectSpy.mockClear();
 
-    act(() => mockSetStatus('anon')); // the session died before the redirect landed
+    await act(() => mockSetStatus('anon')); // the session died before the redirect landed
 
     // anon + index = stay on login: the cover and its stale redirect must vanish, and
     // no further redirect into the app may render for a signed-out user.
@@ -707,7 +705,7 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
   it('[A9] background→Face-ID resume: app stays mounted under the lock cover, no remount, no Budgets bounce', async () => {
     mockAutoComplete = true;
     mockStatus = 'authed';
-    render(
+    await render(
       <AuthGate>
         <FakeStack />
       </AuthGate>,
@@ -718,10 +716,15 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     mockRedirectSpy.mockClear();
     expect(stackMounts).toBe(1);
 
+    // Hold the Face-ID unlock so the locked state can be seen before it answers.
+    let finishUnlock: () => void = () => {};
+    mockUnlock.mockImplementation(() => new Promise<boolean>((resolve) => {
+      finishUnlock = () => { mockSetStatus('authed'); resolve(true); };
+    }));
     // Away past the grace window, so the resume re-locks (WHIT: timed re-lock).
     const nowSpy = jest.spyOn(Date, 'now');
     nowSpy.mockReturnValueOnce(1_000_000).mockReturnValueOnce(1_000_000 + RELOCK_GRACE_MS + 1);
-    act(() => {
+    await act(() => {
       appStateHandler('background');
       appStateHandler('active'); // the gate's listener runs lock() then void unlock()
     });
@@ -734,7 +737,7 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     expect(stackMounts).toBe(1); // never unmounted while locked
     expect(mockSegStore.segs).toEqual(['(tabs)', 'budgets']);
 
-    await act(async () => {}); // flush the unlock's resolution → 'authed'
+    await act(async () => { finishUnlock(); }); // Face ID answers → 'authed'
 
     expect(mockUnlock).toHaveBeenCalledTimes(1);
     // Unlocked and settled: lock cover gone, SAME Stack instance (never remounted), no cover,
@@ -749,13 +752,13 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
   // [A10] navReady false→true on a LATER render: the mounted-guard must RELEASE — the
   // redirect + cover appear as soon as the navigator reports a key. Fails if the
   // target were computed once and cached instead of derived live at render.
-  it('[A10] redirect + cover appear when the navigator becomes ready after mount', () => {
+  it('[A10] redirect + cover appear when the navigator becomes ready after mount', async () => {
     mockAutoComplete = false;
     mockNavState = undefined; // root navigator not mounted yet
     mockStatus = 'anon';
     mockSegStore.segs = ['(tabs)', 'budgets'];
     // Plain child (no FakeStack): a not-yet-ready navigator can't reset segments.
-    const view = render(
+    const view = await render(
       <AuthGate>
         <Text testID="child">app</Text>
       </AuthGate>,
@@ -764,7 +767,7 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     expect(screen.queryByTestId('gate-cover')).toBeNull();
 
     mockNavState = { key: 'root' }; // the navigator mounts
-    view.rerender(
+    await view.rerender(
       <AuthGate>
         <Text testID="child">app</Text>
       </AuthGate>,

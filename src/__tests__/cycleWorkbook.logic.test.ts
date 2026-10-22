@@ -8,6 +8,8 @@ import { stubFetch } from './support/fetchStub';
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const fileInstances: { args: unknown[]; created: unknown[]; written: unknown[]; uri: string }[] = [];
+// expo-file-system 58's File.write() is async (ABU-114); a test can swap in its outcome.
+let mockWriteOutcome: () => Promise<void> = async () => undefined;
 jest.mock('expo-file-system', () => ({
   Paths: { cache: { uri: 'file:///cache/' } },
   File: class {
@@ -20,7 +22,7 @@ jest.mock('expo-file-system', () => ({
       fileInstances.push(this);
     }
     create(options: unknown) { this.created.push(options); }
-    write(content: unknown) { this.written.push(content); }
+    write(content: unknown) { this.written.push(content); return mockWriteOutcome(); }
   },
 }));
 jest.mock('expo-sharing', () => ({ shareAsync: jest.fn(async () => undefined) }));
@@ -207,6 +209,7 @@ const EXPECTED_TRANSACTION_ROWS = [
 
 beforeEach(() => {
   fileInstances.length = 0;
+  mockWriteOutcome = async () => undefined;
   shareAsync.mockReset();
   shareAsync.mockResolvedValue(undefined);
 });
@@ -510,6 +513,16 @@ describe('shareCycleExport', () => {
     }));
     await expect(shareCycleExport(0, category)).rejects.toBeTruthy();
     expect(fileInstances).toHaveLength(0);
+    expect(shareAsync).not.toHaveBeenCalled();
+  });
+
+  // [A1] File.write() is async on SDK 58: the share menu must wait for the file to be written.
+  it('a failed file write rejects without opening the share menu', async () => {
+    stubFetch(async () => ({
+      ok: true, status: 200, json: async () => ({ start: '2026-06-01', end: '2026-06-30', transactions: [] }),
+    }));
+    mockWriteOutcome = async () => { throw new Error('disk full'); };
+    await expect(shareCycleExport(1, category)).rejects.toThrow('disk full');
     expect(shareAsync).not.toHaveBeenCalled();
   });
 });

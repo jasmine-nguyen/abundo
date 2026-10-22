@@ -19,10 +19,10 @@ const server = installFakeServer();
 const NETFLIX: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']);
 
-function mount(seedRules: Rule[] = [NETFLIX]) {
+async function mount(seedRules: Rule[] = [NETFLIX]) {
   queryClient.setQueryData<Rule[]>(['rules'], seedRules);
   queryClient.setQueryData<Category[]>(['categories'], [SUBS]);
-  return renderHook(() => useAppContext(), { wrapper }).result;
+  return (await renderHook(() => useAppContext(), { wrapper })).result;
 }
 
 beforeEach(() => { resetAuth(); queryClient.clear(); });
@@ -31,7 +31,7 @@ afterEach(() => { queryClient.clear(); });
 // [A6]
 it('with no sign-in token a new rule is never sent, and the optimistic rule is rolled back', async () => {
   setAuthToken(undefined);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
@@ -43,7 +43,7 @@ it('with no sign-in token a new rule is never sent, and the optimistic rule is r
 // [A7]
 it('a rule id with a slash is escaped in the path, so the edit reaches that rule', async () => {
   const slashed: Rule = { ...NETFLIX, id: 'a/b' };
-  const result = mount([slashed]);
+  const result = await mount([slashed]);
 
   await act(async () => { await result.current.updateRule('a/b', 'DISNEY', 'subs'); });
 
@@ -58,7 +58,7 @@ it('a rule id with a slash is escaped in the path, so the edit reaches that rule
 // [A11]
 it('a failed rule delete is sent once and not retried', async () => {
   server.fail('/rules/e1', 500);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.deleteRule('e1'); });
 

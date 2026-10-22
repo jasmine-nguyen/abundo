@@ -22,16 +22,16 @@ const STR_OPTIONS = [
 ];
 
 describe('SegmentedControl', () => {
-  it('marks exactly the selected option as selected', () => {
-    render(<SegmentedControl value={1} onChange={jest.fn()} options={NUM_OPTIONS} />);
+  it('marks exactly the selected option as selected', async () => {
+    await render(<SegmentedControl value={1} onChange={jest.fn()} options={NUM_OPTIONS} />);
     expect(screen.getByTestId('seg-current').props.accessibilityState.selected).toBe(false);
     expect(screen.getByTestId('seg-prev').props.accessibilityState.selected).toBe(true);
   });
 
-  it('fires onChange with the tapped option value (number)', () => {
+  it('fires onChange with the tapped option value (number)', async () => {
     const onChange = jest.fn();
-    render(<SegmentedControl value={0} onChange={onChange} options={NUM_OPTIONS} />);
-    fireEvent.press(screen.getByTestId('seg-prev'));
+    await render(<SegmentedControl value={0} onChange={onChange} options={NUM_OPTIONS} />);
+    await fireEvent.press(screen.getByTestId('seg-prev'));
     expect(onChange).toHaveBeenCalledWith(1);
   });
 });
@@ -42,22 +42,22 @@ describe('SegmentedControl count bubble and equal widths', () => {
   const BADGED = [{ ...STR_OPTIONS[0], flex: 1.45, badge: 0 }, STR_OPTIONS[1]];
 
   // [A2] a rose bubble, the same whether its segment is selected or not; a zero count still shows.
-  it.each(['spending', 'earning'] as const)('the bubble is rose with %s selected', (value) => {
-    render(<SegmentedControl value={value} onChange={jest.fn()} options={BADGED} />);
+  it.each(['spending', 'earning'] as const)('the bubble is rose with %s selected', async (value) => {
+    await render(<SegmentedControl value={value} onChange={jest.fn()} options={BADGED} />);
     const count = within(screen.getByTestId('seg-spending')).getByText('0');
     expect(styleOf(count)).toMatchObject({ color: C.badBright, fontWeight: '700' });
     expect(styleOf(hostParent(count)).backgroundColor).toBe(tint(C.bad, 0.2));
   });
 
   // [A3] no badge → no bubble.
-  it('draws no bubble without a badge', () => {
-    render(<SegmentedControl value="earning" onChange={jest.fn()} options={BADGED} />);
+  it('draws no bubble without a badge', async () => {
+    await render(<SegmentedControl value="earning" onChange={jest.fn()} options={BADGED} />);
     expect(within(screen.getByTestId('seg-earning')).queryAllByText(/\d/)).toHaveLength(0);
   });
 
   // ABU-105: every segment is flex 1 — a badge or a per-option width can't make one wider.
-  it('gives every segment an equal width', () => {
-    render(<SegmentedControl value="spending" onChange={jest.fn()} options={BADGED} />);
+  it('gives every segment an equal width', async () => {
+    await render(<SegmentedControl value="spending" onChange={jest.fn()} options={BADGED} />);
     expect(styleOf(screen.getByTestId('seg-spending')).flex).toBe(1);
     expect(styleOf(screen.getByTestId('seg-earning')).flex).toBe(1);
   });

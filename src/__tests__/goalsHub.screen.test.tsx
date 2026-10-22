@@ -163,7 +163,7 @@ describe('the mortgage card', () => {
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByTestId('mortgage-no-home-loan')).toBeTruthy();
     expect(card.queryByText('Tap to see your payoff plan')).toBeNull();
-    fireEvent.press(screen.getByTestId('mortgage-link'));
+    await fireEvent.press(screen.getByTestId('mortgage-link'));
     expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 
@@ -172,7 +172,7 @@ describe('the mortgage card', () => {
   it('[O4b] balance still loading: no "no home loan" line until the check lands empty', async () => {
     seedHub({ homeLoan: { balance: null, asOf: null } });
     const held = server.hold('/homeloan');
-    drawHeld(<Goals />);
+    await drawHeld(<Goals />);
     await refreshInAct(() => undefined);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.queryByTestId('mortgage-no-home-loan')).toBeNull();
@@ -242,7 +242,7 @@ describe('the mortgage card — rich payoff state', () => {
 describe('loading + error', () => {
   it('shows a spinner while loading with nothing cached', async () => {
     const held = server.hold('/goals');
-    render(<WithQueries><Goals /></WithQueries>);
+    await render(<WithQueries><Goals /></WithQueries>);
     expect(screen.getByTestId('goals-loading')).toBeTruthy();
     expect(screen.queryByTestId('goals-empty-hint')).toBeNull();
     await act(async () => { held.release(); });
@@ -276,13 +276,13 @@ describe('navigation', () => {
 
   it('the "+" routes to the goal add screen', async () => {
     await renderWithQueries(<Goals />);
-    fireEvent.press(screen.getByTestId('add-goal'));
+    await fireEvent.press(screen.getByTestId('add-goal'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit');
   });
 
   it('the mortgage card routes to the full mortgage screen', async () => {
     await renderWithQueries(<Goals />);
-    fireEvent.press(screen.getByTestId('mortgage-link'));
+    await fireEvent.press(screen.getByTestId('mortgage-link'));
     expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 });
@@ -299,7 +299,7 @@ describe('manual goal balance (WHIT-235)', () => {
 
   it('tapping Update balance opens the balance sheet for that goal', async () => {
     await renderWithQueries(<Goals />);
-    fireEvent.press(screen.getByTestId('goal-balance-g2'));
+    await fireEvent.press(screen.getByTestId('goal-balance-g2'));
     expect(mockOpenGoalBalance).toHaveBeenCalledWith('g2');
     // (The card-body-still-navigates complement is goalsHubBalanceGaps [A17]; RNTL never bubbles
     // an inner press to the parent, so asserting "no push" here would pass tautologically.)
@@ -365,7 +365,7 @@ describe('secondary reads degrade one card, never the hub', () => {
   it('a held home loan read leaves the goals drawn and the mortgage card on its waiting line', async () => {
     seedHub({ goals: [GROW] });
     const held = server.hold('/homeloan');
-    render(<WithQueries><Goals /></WithQueries>);
+    await render(<WithQueries><Goals /></WithQueries>);
     await waitFor(() => expect(screen.getByTestId('goal-card-g1')).toBeTruthy());
     expect(screen.queryByTestId('goals-loading')).toBeNull();
     expect(within(screen.getByTestId('mortgage-link')).getByText('Tap to see your payoff plan')).toBeTruthy();
@@ -409,7 +409,7 @@ describe('the pay cycle is a primary read', () => {
   // [A3] a held pay cycle keeps the spinner up until it lands.
   it('a held pay cycle read shows the spinner until it lands', async () => {
     const held = server.hold('/paycycle');
-    render(<WithQueries><Goals /></WithQueries>);
+    await render(<WithQueries><Goals /></WithQueries>);
     await waitFor(() => expect(queryClient.isFetching()).toBe(1)); // every read but the pay cycle has landed
     expect(screen.getByTestId('goals-loading')).toBeTruthy();
     await act(async () => { held.release(); });

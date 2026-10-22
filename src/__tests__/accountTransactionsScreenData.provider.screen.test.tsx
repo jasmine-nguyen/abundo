@@ -39,10 +39,10 @@ function mount(accountId = 'a1') {
 
 const rowIds = (rows: { transaction_id: string }[]) => rows.map((row) => row.transaction_id);
 
-async function loadOlderPage(result: ReturnType<typeof mount>['result']) {
+async function loadOlderPage(result: Awaited<ReturnType<typeof mount>>['result']) {
   await waitFor(() => expect(rowIds(result.current.page.transactions)).toEqual(['newest']));
   server.once('GET', '/transactions/feed', { body: { transactions: [OLDER], nextCursor: null } });
-  act(() => result.current.page.loadMore());
+  await act(() => result.current.page.loadMore());
   await waitFor(() => expect(rowIds(result.current.page.transactions)).toEqual(['newest', 'older']));
   expect(result.current.page.hasMore).toBe(false);
 }
@@ -52,11 +52,11 @@ async function loadOlderPage(result: ReturnType<typeof mount>['result']) {
 // findTx is undefined and applyCategory bails; drop it from patchTransactionsCache → the row keeps
 // category null.
 it('[A6] an older Load More row resolves, and a re-file updates it in place', async () => {
-  const { result } = mount();
+  const { result } = await mount();
   await loadOlderPage(result);
   await waitFor(() => expect(result.current.resolver.findTx('older')).toBeDefined());
 
-  act(() => result.current.app.setSheet({ mode: 'confirm', txId: 'older', categoryId: 'groceries' }));
+  await act(() => result.current.app.setSheet({ mode: 'confirm', txId: 'older', categoryId: 'groceries' }));
   await act(async () => { await result.current.app.applyCategory('one'); });
 
   expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/older', body: { category: 'groceries' } });
@@ -68,7 +68,7 @@ it('[A6] an older Load More row resolves, and a re-file updates it in place', as
 // its own page. Fail-on-revert: drop accountFeedKey from patchTransactionsCache → it stays; from
 // removeFromAllCopies' snapshot prefixes → the failed delete never restores it.
 it('[A7] deleting an older Load More row removes it; a failed delete restores it', async () => {
-  const { result } = mount();
+  const { result } = await mount();
   await loadOlderPage(result);
 
   server.once('DELETE', '/transactions/older', { status: 500 });
@@ -83,11 +83,11 @@ it('[A7] deleting an older Load More row removes it; a failed delete restores it
 // cursor) and doesn't show the first account's loaded pages. Fail-on-revert: drop the account id
 // from the query key → the second account reuses the first's cache and sends no request.
 it('[A8] switching accounts reads the other account\'s own newest page', async () => {
-  const { result, rerender } = mount('a1');
+  const { result, rerender } = await mount('a1');
   await loadOlderPage(result);
 
   server.once('GET', '/transactions/feed', { body: { transactions: [colesTxn({ transaction_id: 'other', account_id: 'a2' })], nextCursor: null } });
-  rerender({ id: 'a2' });
+  await rerender({ id: 'a2' });
   await waitFor(() => expect(rowIds(result.current.page.transactions)).toEqual(['other']));
   const a2Reads = server.sentUnder('GET', '/transactions/feed').filter((request) => request.path.includes('account=a2'));
   expect(a2Reads.map((request) => request.path)).toEqual(['/transactions/feed?account=a2']);

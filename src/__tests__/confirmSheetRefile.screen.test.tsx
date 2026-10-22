@@ -56,14 +56,14 @@ describe('confirm (re-categorise) — one flow for every entry point', () => {
 
   it('"All from this merchant" files the whole merchant (applyCategory("all"))', async () => {
     await openConfirm();
-    fireEvent.press(screen.getByText('All from this merchant'));
+    await fireEvent.press(screen.getByText('All from this merchant'));
     expect(fns.applyCategory).toHaveBeenCalledTimes(1);
     expect(fns.applyCategory).toHaveBeenCalledWith('all');
   });
 
   it('"Just this one" re-files only this transaction (applyCategory("one"))', async () => {
     await openConfirm();
-    fireEvent.press(screen.getByText('Just this one'));
+    await fireEvent.press(screen.getByText('Just this one'));
     expect(fns.applyCategory).toHaveBeenCalledTimes(1);
     expect(fns.applyCategory).toHaveBeenCalledWith('one');
   });

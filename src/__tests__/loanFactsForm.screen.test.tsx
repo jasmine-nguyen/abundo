@@ -24,6 +24,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderLoaded } from './support/renderWithQueries';
 import { fillLoanForm, VALID_LOAN_FORM, type LoanFormValues } from './support/loanForm';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -56,8 +57,8 @@ beforeEach(() => {
 it('saves the facts (LVR as a fraction) and navigates back', async () => {
   const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
-  fillValid();
-  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  await fillValid();
+  await startTaps(screen.getByText('Save loan details'));
 
   // 80% entered → stored as the fraction 0.8; no goal date set → payoffGoalDate null.
   expect(saveLoanFacts).toHaveBeenCalledWith({ original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null, depositTarget: null });
@@ -71,42 +72,41 @@ it('a double-tap on Save while the save is in flight saves once and goes back on
   let resolveSave: (v: boolean) => void = () => {};
   saveLoanFacts.mockImplementation(() => new Promise<boolean>((res) => { resolveSave = res; }));
   await renderLoaded(<Loan />);
-  fillValid();
+  await fillValid();
 
-  await act(async () => {
-    fireEvent.press(screen.getByText('Save loan details'));
-    fireEvent.press(screen.getByText('Save loan details'));   // same frame, save still pending
-  });
+  const save = screen.getByText('Save loan details');
+  const taps = await startTaps(save, save);   // same frame, save still pending
   expect(saveLoanFacts).toHaveBeenCalledTimes(1);
   await act(async () => { resolveSave(true); });
+  await taps.settled;
   expect(routerSpies.back).toHaveBeenCalledTimes(1);
 });
 
 it('sends the picked target payoff date, and clears it back to null (WHIT-126)', async () => {
   const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
-  fillValid();
+  await fillValid();
 
   // The mock date picker fires a fixed date (2026-06-20) on press.
-  await act(async () => { fireEvent.press(screen.getByTestId('mock-datepicker')); });
+  await startTaps(screen.getByTestId('mock-datepicker'));
   expect(screen.getByText('20 Jun 2026')).toBeTruthy();     // label reflects the pick
-  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  await startTaps(screen.getByText('Save loan details'));
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: '2026-06-20' }));
 
   // Clearing it removes the date; the next save carries null again.
   saveLoanFacts.mockClear();
-  await act(async () => { fireEvent.press(screen.getByText('Clear')); });
+  await startTaps(screen.getByText('Clear'));
   expect(screen.getByText('Not set')).toBeTruthy();
-  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  await startTaps(screen.getByText('Save loan details'));
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: null }));
 });
 
 it('sends a typed deposit target as a number (WHIT-378)', async () => {
   const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
-  fillValid();
-  fillLoanForm({ deposit: '120000' });
-  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  await fillValid();
+  await fillLoanForm({ deposit: '120000' });
+  await startTaps(screen.getByText('Save loan details'));
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: 120000 }));
   // (the blank → null case is already locked by the "saves the facts" test above)
 });
@@ -115,8 +115,8 @@ it('blocks an incomplete save with a toast and no API call', async () => {
   const { saveLoanFacts, showToast } = mountSpies();
   await renderLoaded(<Loan />);
   // Fill everything except property value → invalid.
-  fillLoanForm({ orig: '600000', lvr: '80', rate: '5.74', base: '1240' });
-  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  await fillLoanForm({ orig: '600000', lvr: '80', rate: '5.74', base: '1240' });
+  await startTaps(screen.getByText('Save loan details'));
 
   expect(saveLoanFacts).not.toHaveBeenCalled();
   expect(showToast).toHaveBeenCalled();
@@ -132,9 +132,9 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
   it('[A6] garbage deposit target (all six fields valid) is blocked by the target toast, no save', async () => {
     const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
-    fillValid();
-    fillLoanForm({ deposit: '12abc' });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fillValid();
+    await fillLoanForm({ deposit: '12abc' });
+    await startTaps(screen.getByText('Save loan details'));
 
     // The six-field guard passes, so it's the DEPOSIT-specific message that fires...
     expect(showToast).toHaveBeenCalledWith('Enter a valid deposit target, or leave it blank.');
@@ -147,9 +147,9 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
   it('[A8] a deposit target over the ceiling is blocked by its own toast, no save', async () => {
     const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
-    fillValid();
-    fillLoanForm({ deposit: OVER });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fillValid();
+    await fillLoanForm({ deposit: OVER });
+    await startTaps(screen.getByText('Save loan details'));
     // Distinct from the finite/>0 toast — this is the ceiling message. Fail-on-revert: drop the
     // deposit-target ceiling guard and an over-ceiling value sails through to saveLoanFacts.
     expect(showToast).toHaveBeenCalledWith(DEPOSIT_TOAST);
@@ -162,8 +162,8 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
     expect(screen.getByDisplayValue('120000')).toBeTruthy();   // seeded
-    fireEvent.changeText(screen.getByDisplayValue('120000'), '');  // user clears it
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fireEvent.changeText(screen.getByDisplayValue('120000'), '');  // user clears it
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: null }));
   });
 });
@@ -186,7 +186,7 @@ describe('saved facts round trip', () => {
     expect(screen.getByDisplayValue('1240')).toBeTruthy();
     expect(screen.getByDisplayValue('200')).toBeTruthy();
 
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await startTaps(screen.getByText('Save loan details'));
 
     expect(saveLoanFacts).toHaveBeenCalledWith(SAVED);
     expect(routerSpies.back).toHaveBeenCalled();
@@ -205,7 +205,7 @@ describe('saved facts round trip', () => {
     server.seed('/loanfacts', { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: '2035-06-01' });
     const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: '2035-06-01' }));
     expect(routerSpies.back).toHaveBeenCalled();
   });
@@ -217,8 +217,8 @@ describe('client-guard boundaries', () => {
   it('accepts Extra = 0 (optional top-up) and saves', async () => {
     const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
-    fill({ extra: '0' });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fill({ extra: '0' });
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: 0 }));
     expect(routerSpies.back).toHaveBeenCalled();
   });
@@ -226,16 +226,16 @@ describe('client-guard boundaries', () => {
   it('accepts the exact upper bounds LVR = 100% and rate = 100', async () => {
     const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
-    fill({ lvr: '100', rate: '100' });   // client guard is lvr<=1 (fraction) and ratePct<=100
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fill({ lvr: '100', rate: '100' });   // client guard is lvr<=1 (fraction) and ratePct<=100
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ lvr: 1, ratePct: 100 }));
   });
 
   it('blocks LVR = 0 (must be > 0) with a toast and no save', async () => {
     const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
-    fill({ lvr: '0' });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fill({ lvr: '0' });
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalled();
   });
@@ -243,8 +243,8 @@ describe('client-guard boundaries', () => {
   it('rejects trailing garbage in a number ("80abc") rather than storing 80', async () => {
     const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
-    fill({ home: '770000abc' });   // paste can slip past the decimal-pad keyboard
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fill({ home: '770000abc' });   // paste can slip past the decimal-pad keyboard
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalled();
   });
@@ -253,8 +253,8 @@ describe('client-guard boundaries', () => {
     const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     // A non-first field over the ceiling — proves the .some() check catches more than original.
-    fill({ extra: OVER });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fill({ extra: OVER });
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
   });
@@ -262,8 +262,8 @@ describe('client-guard boundaries', () => {
   it('accepts exactly the ceiling (strict >, matching the server) and saves', async () => {
     const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
-    fill({ orig: AT });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    await fill({ orig: AT });
+    await startTaps(screen.getByText('Save loan details'));
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: LOANFACTS_FIELD_MAX }));
     expect(routerSpies.back).toHaveBeenCalled();
   });
@@ -291,8 +291,8 @@ describe('the ceiling toast tells the truth about the ceiling', () => {
   async function amountCeilingToast(): Promise<string> {
     const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
-    fill({ deposit: '', home: OVER });
-    fireEvent.press(screen.getByText('Save loan details'));
+    await fill({ deposit: '', home: OVER });
+    await fireEvent.press(screen.getByText('Save loan details'));
     expect(saveLoanFacts).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledTimes(1);
     return String(showToast.mock.calls[0][0]);

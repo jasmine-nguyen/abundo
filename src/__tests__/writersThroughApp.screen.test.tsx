@@ -49,8 +49,8 @@ it('user saves an edited category → the real app sends PATCH /categories/parki
   await renderWithApp(<CategoryEdit />);
   await waitFor(() => expect(screen.getByDisplayValue('Parking')).toBeTruthy());
 
-  fireEvent.changeText(screen.getByDisplayValue('Parking'), 'Car parks');
-  fireEvent.press(screen.getByText('Save category'));
+  await fireEvent.changeText(screen.getByDisplayValue('Parking'), 'Car parks');
+  await fireEvent.press(screen.getByText('Save category'));
 
   await waitFor(() => expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1));
   expect(server.sent('PATCH', '/categories/parking')[0].body).toEqual(
@@ -69,7 +69,7 @@ describe('Rules delete through the real deleteRule', () => {
     await renderWithApp(<Rules />);
     expect(cachedRuleIds()).toEqual(['e1', 'e2', 'e3']);
 
-    fireEvent.press(screen.getByTestId('delete-rule-e2'));
+    await fireEvent.press(screen.getByTestId('delete-rule-e2'));
     pressAlertButton(alerts, 'Delete');
     await waitFor(() => expect(shownToasts()).toEqual(['Could not delete rule. Please try again.']));
 
@@ -84,10 +84,10 @@ describe('Rules delete through the real deleteRule', () => {
     await renderWithApp(<Rules />);
     const held = server.hold('/rules/e1');
 
-    fireEvent.press(screen.getByTestId('delete-rule-e1'));
+    await fireEvent.press(screen.getByTestId('delete-rule-e1'));
     pressAlertButton(alerts, 'Delete');
     await waitFor(() => expect(server.sent('DELETE', '/rules/e1')).toHaveLength(1));
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     await act(async () => { held.fail('DELETE', { status: 500 }); });
     await act(async () => { await Promise.resolve(); });
 
@@ -111,8 +111,8 @@ describe('Category edit save through the real saveCategory', () => {
   it('[A6] a save blocked by a failed category list sends no write of any kind', async () => {
     server.fail('/categories', 500);
     await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
-    fireEvent.press(screen.getByText('Save category'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
+    await fireEvent.press(screen.getByText('Save category'));
     await refreshInAct(() => undefined);
     expect(nonGets()).toEqual([]);
     expect(routerSpies.back).not.toHaveBeenCalled();
@@ -122,8 +122,8 @@ describe('Category edit save through the real saveCategory', () => {
   it('[A7] a successful save toasts "Category updated." once and goes back', async () => {
     server.seed('/categories', CATEGORIES);
     await drawEdit();
-    fireEvent.changeText(screen.getByDisplayValue('Coffee'), 'Cafes');
-    fireEvent.press(screen.getByText('Save category'));
+    await fireEvent.changeText(screen.getByDisplayValue('Coffee'), 'Cafes');
+    await fireEvent.press(screen.getByText('Save category'));
     await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(shownToasts()).toEqual(['Category updated.']);
     expect(server.sent('PATCH', '/categories/coffee')).toHaveLength(1);

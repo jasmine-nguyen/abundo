@@ -6,7 +6,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, type RenderResult } from '@testing-library/react-native';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -22,11 +22,11 @@ jest.mock('../../src/auth', () => ({
 import Login from '../../app/index';
 
 // Sign in and land on the challenge → the new-password form is shown.
-async function reachNewPasswordForm(api: ReturnType<typeof render>) {
+async function reachNewPasswordForm(api: RenderResult) {
   mockSignInWithPassword.mockResolvedValue({ ok: false, challenge: 'NEW_PASSWORD_REQUIRED' });
-  fireEvent.changeText(api.getByTestId('login-email'), 'me@x.com');
-  fireEvent.changeText(api.getByTestId('login-password'), 'Temp#123');
-  fireEvent.press(api.getByTestId('login-submit'));
+  await fireEvent.changeText(api.getByTestId('login-email'), 'me@x.com');
+  await fireEvent.changeText(api.getByTestId('login-password'), 'Temp#123');
+  await fireEvent.press(api.getByTestId('login-submit'));
   await waitFor(() => expect(api.getByTestId('newpass-form')).toBeTruthy());
 }
 
@@ -38,11 +38,11 @@ beforeEach(() => {
 });
 
 it('mismatched passwords show an error and do NOT call completeNewPassword', async () => {
-  const api = render(<Login />);
+  const api = await render(<Login />);
   await reachNewPasswordForm(api);
-  fireEvent.changeText(api.getByTestId('newpass-new'), 'Str0ng#Pass');
-  fireEvent.changeText(api.getByTestId('newpass-confirm'), 'different');
-  fireEvent.press(api.getByTestId('newpass-submit'));
+  await fireEvent.changeText(api.getByTestId('newpass-new'), 'Str0ng#Pass');
+  await fireEvent.changeText(api.getByTestId('newpass-confirm'), 'different');
+  await fireEvent.press(api.getByTestId('newpass-submit'));
   expect(await api.findByText(/don.t match/i)).toBeTruthy();
   expect(mockCompleteNewPassword).not.toHaveBeenCalled();
   expect(routerSpies.replace).not.toHaveBeenCalled();
@@ -50,22 +50,22 @@ it('mismatched passwords show an error and do NOT call completeNewPassword', asy
 
 it('matching passwords call completeNewPassword and enter the app on success', async () => {
   mockCompleteNewPassword.mockResolvedValue({ ok: true });
-  const api = render(<Login />);
+  const api = await render(<Login />);
   await reachNewPasswordForm(api);
-  fireEvent.changeText(api.getByTestId('newpass-new'), 'Str0ng#Pass');
-  fireEvent.changeText(api.getByTestId('newpass-confirm'), 'Str0ng#Pass');
-  fireEvent.press(api.getByTestId('newpass-submit'));
+  await fireEvent.changeText(api.getByTestId('newpass-new'), 'Str0ng#Pass');
+  await fireEvent.changeText(api.getByTestId('newpass-confirm'), 'Str0ng#Pass');
+  await fireEvent.press(api.getByTestId('newpass-submit'));
   await waitFor(() => expect(mockCompleteNewPassword).toHaveBeenCalledWith('Str0ng#Pass'));
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
 it('a completeNewPassword error stays on the form (e.g. weak password), no navigation', async () => {
   mockCompleteNewPassword.mockResolvedValue({ ok: false, error: "That password doesn't meet the requirements. Try a stronger one." });
-  const api = render(<Login />);
+  const api = await render(<Login />);
   await reachNewPasswordForm(api);
-  fireEvent.changeText(api.getByTestId('newpass-new'), 'weak');
-  fireEvent.changeText(api.getByTestId('newpass-confirm'), 'weak');
-  fireEvent.press(api.getByTestId('newpass-submit'));
+  await fireEvent.changeText(api.getByTestId('newpass-new'), 'weak');
+  await fireEvent.changeText(api.getByTestId('newpass-confirm'), 'weak');
+  await fireEvent.press(api.getByTestId('newpass-submit'));
   expect(await api.findByText(/requirements/i)).toBeTruthy();
   expect(api.getByTestId('newpass-form')).toBeTruthy(); // still on the set-password step
   expect(routerSpies.replace).not.toHaveBeenCalled();

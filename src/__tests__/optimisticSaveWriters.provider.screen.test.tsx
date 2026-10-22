@@ -36,12 +36,12 @@ describe('WHIT-628 — budget writers settling after sign-out', () => {
   it('deleteBudget FAILURE after sign-out cannot overwrite the NEXT account\'s budgets', async () => {
     queryClient.setQueryData(['budgets'], { c1: rollup(100) });
     const held = server.hold('/budgets/c1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<boolean>;
-    act(() => { pending = result.current.deleteBudget('c1'); });
-    signOut();
-    act(() => setAuthStatus('authed'));
+    await act(() => { pending = result.current.deleteBudget('c1'); });
+    await signOut();
+    await act(() => setAuthStatus('authed'));
     queryClient.setQueryData(['budgets'], { other: rollup(7) });
     let returned!: boolean;
     await act(async () => {
@@ -61,10 +61,10 @@ describe('WHIT-628 — writers still signed in', () => {
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     queryClient.setQueryData(['rules'], [{ id: 'r0', pattern: 'ALDI', categoryId: 'c1', isNew: false }]);
     const held = server.hold('/rules');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
-    act(() => { pending = result.current.saveManualRule('COLES', 'c1'); });
+    await act(() => { pending = result.current.saveManualRule('COLES', 'c1'); });
     const optimistic = queryClient.getQueryData<{ id: string; pattern: string }[]>(['rules']) ?? [];
     expect(optimistic.map((r) => r.pattern)).toEqual(['COLES', 'ALDI']);
     expect(result.current.toast).toBe('Rule added — COLES files as Groceries.');
@@ -86,7 +86,7 @@ describe('WHIT-628 — writers still signed in', () => {
       body: { id: 'srv-1', value: 'COLES', category_id: 'c1', field: 'description', operator: 'contains' },
     });
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.saveManualRule('COLES', 'c1'); });
 
@@ -102,10 +102,10 @@ describe('WHIT-628 — writers still signed in', () => {
     queryClient.setQueryData(['rules'], [original]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     const held = server.hold('/rules/r1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
-    act(() => { pending = result.current.updateRule('r1', 'NEW', 'c1'); });
+    await act(() => { pending = result.current.updateRule('r1', 'NEW', 'c1'); });
     expect(queryClient.getQueryData<{ pattern: string }[]>(['rules'])?.[0].pattern).toBe('NEW');
 
     await act(async () => {
@@ -122,10 +122,10 @@ describe('WHIT-628 — writers still signed in', () => {
     queryClient.setQueryData(['goals'], [{ id: 'g1', target: 100 }]);
     jest.spyOn(Crypto, 'randomUUID').mockReturnValueOnce('new-goal');
     const held = server.hold('/goals/new-goal');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveGoal(null, { target: 200 } as never); });
+    await act(() => { pending = result.current.saveGoal(null, { target: 200 } as never); });
     expect(queryClient.getQueryData<unknown[]>(['goals'])).toHaveLength(2);
 
     let returned!: boolean;
@@ -143,9 +143,9 @@ describe('WHIT-628 — writers still signed in', () => {
   it('persistPayCycle success refetches payCycle, budgets and breakdown', async () => {
     queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-06-06' });
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
-    act(() => { result.current.setPayCycleLength(30); });
+    await act(() => { result.current.setPayCycleLength(30); });
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['payCycle'] }));
 
     expect(server.sent('PUT', '/paycycle').map((request) => request.body)).toEqual([{ length: 30, last_pay_date: '2026-06-06' }]);

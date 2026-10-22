@@ -21,8 +21,8 @@ const server = installFakeServer();
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
-function mount() {
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+async function mount() {
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
@@ -31,7 +31,7 @@ function mount() {
 it('setPayCycleLength bails on a cold [payCycle] cache — no server write, no corrupt cache', async () => {
   // The pay-cycle sheet warms ['payCycle'] on open; if a change fires before that resolved,
   // persisting mutate({length}) over an undefined prev would drop the sibling last_pay_date.
-  const result = mount(); // NO ['payCycle'] seed
+  const result = await mount(); // NO ['payCycle'] seed
 
   await act(async () => { result.current.setPayCycleLength(30); });
 
@@ -43,8 +43,8 @@ it('setPayCycleLength bails on a cold [payCycle] cache — no server write, no c
 // --- applyCategory: cold ['transactions']/['categories'] must no-op (close the sheet) --------
 
 it('applyCategory(all) no-ops on a cold cache — mints no rule, sends no batch', async () => {
-  const result = mount();
-  act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }); });
+  const result = await mount();
+  await act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }); });
 
   await act(async () => { await result.current.applyCategory('all'); });
 
@@ -57,8 +57,8 @@ it('applyCategory no-ops when transactions are warm but the taxonomy is cold (pa
   // The tx exists, but the chosen category can't be resolved (['categories'] never loaded) →
   // the category lookup fails and the write must bail rather than file under an unknown id.
   seedTransactionsCache(queryClient, [txn({ transaction_id: 't1' })]);
-  const result = mount();
-  act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }); });
+  const result = await mount();
+  await act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }); });
 
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -71,7 +71,7 @@ it('applyCategory no-ops when transactions are warm but the taxonomy is cold (pa
 it('saveBudget still saves on a cold [categories] cache — returns true, no crash, no success toast', async () => {
   // The toast copy needs the category name from ['categories']; cold → no name → the write
   // still persists (the Budgets screen invalidates + reconciles), it just shows no toast.
-  const result = mount(); // NO categories/budgets seed
+  const result = await mount(); // NO categories/budgets seed
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('groceries', 300); });
@@ -88,7 +88,7 @@ it('saveManualRule writes the rule but shows no toast when [categories] is cold'
   // returns undefined and the success toast is skipped, but the rule is still created + cached.
   server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
   queryClient.setQueryData<Rule[]>(['rules'], []);
-  const result = mount(); // NO categories seed
+  const result = await mount(); // NO categories seed
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
@@ -100,7 +100,7 @@ it('saveManualRule writes the rule but shows no toast when [categories] is cold'
 // --- updateRule: cold ['rules'] cache means no `before` snapshot → bail, no server write -------
 
 it('updateRule bails on a cold [rules] cache — no PUT, no toast, cache untouched', async () => {
-  const result = mount(); // NO rules seed
+  const result = await mount(); // NO rules seed
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });
 

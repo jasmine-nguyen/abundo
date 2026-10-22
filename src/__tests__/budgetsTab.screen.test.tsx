@@ -14,7 +14,6 @@ import { COFFEE, GROCERIES, GROCERIES_RECORD, SALARY, SAVINGS, MORTGAGE_RECORD }
 import { seedBudgetsTab } from './support/budgetsTab';
 import { expectStacked } from './support/layout';
 import { pullAndSettle } from './support/pull';
-import { BudgetBar } from '../components/ui';
 
 let mockLarge = false;
 jest.mock('../hooks/useLargeText', () =>
@@ -41,7 +40,7 @@ describe('WHIT-706 Budgets top card', () => {
 
   it('no budgets → days left stays, money part is replaced by one "Add a spending budget" button', async () => {
     server.seed('/budgets', {});
-    renderBudgets();
+    await renderBudgets();
     expect(await screen.findByText('Add a spending budget')).toBeTruthy();
     expect(screen.getByText("No spending budgets yet. Set one and this shows what's left to spend.")).toBeTruthy();
     expect(screen.getByText('days left')).toBeTruthy();
@@ -50,7 +49,7 @@ describe('WHIT-706 Budgets top card', () => {
     expect(screen.queryByText('Over budget')).toBeNull();
     expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
     expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
-    fireEvent.press(screen.getByTestId('budgets-hero-add'));
+    await fireEvent.press(screen.getByTestId('budgets-hero-add'));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
   });
 
@@ -69,7 +68,7 @@ describe('WHIT-706 Budgets top card', () => {
 
   it('[A4] empty → a budget appears on refetch → money view returns, first-time prompt goes', async () => {
     server.seed('/budgets', {});
-    const { client } = renderBudgets();
+    const { client } = await renderBudgets();
     await screen.findByText('Add a spending budget');
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
     await refreshInAct(() => client.invalidateQueries({ queryKey: ['budgets'] }));
@@ -107,7 +106,7 @@ describe('WHIT-706 Budgets top card', () => {
 it('[A25] the row press opens the detail', async () => {
   seedBudgetsTab(server, { coffee: { target: 80, posted: 90.25, pending: 0 } }, [COFFEE], 6, '2026-09-25');
   await renderLoadedBudgetsWithQueries();
-  fireEvent.press(screen.getByText('Cafes & Coffee'));
+  await fireEvent.press(screen.getByText('Cafes & Coffee'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
 });
 
@@ -122,7 +121,7 @@ describe('WHIT-714 top card totals', () => {
 
   it('income-only budgets → no "$0 Left to spend" money column, honest empty wording', async () => {
     server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
-    renderBudgets();
+    await renderBudgets();
     await screen.findByText('Salary');
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
@@ -136,7 +135,7 @@ describe('WHIT-714 top card totals', () => {
   it('while the pay cycle is still loading → spinner only, never the default cycle count', async () => {
     const heldPayCycle = server.hold('/paycycle');
     const heldBudgets = server.hold('/budgets');
-    renderBudgets();
+    await renderBudgets();
     await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.getByTestId('budgets-loading')).toBeTruthy();
@@ -151,7 +150,7 @@ describe('WHIT-714 top card totals', () => {
   it('[A3] categories still loading → days-only card, no false empty prompt', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
     const held = server.hold('/categories');
-    renderBudgets();
+    await renderBudgets();
     expect(await screen.findByText('days left')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
     expect(screen.getByTestId('budgets-loading')).toBeTruthy();
@@ -165,7 +164,7 @@ describe('WHIT-714 top card totals', () => {
   it('[A4] pay cycle fails while budgets load → error view, no days-left card', async () => {
     server.fail('/paycycle', 500);
     server.hold('/budgets');
-    renderBudgets();
+    await renderBudgets();
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.queryByText(/days? left/)).toBeNull();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
@@ -181,10 +180,10 @@ it('a $0 budget is a slim row with no bar that keeps its note and still opens th
     groceries: { target: 100, posted: 30, pending: 0 },
   });
 
-  expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(1);
+  expect(screen.queryAllByTestId('budget-bar')).toHaveLength(1);
   expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $200 past leftovers');
 
-  fireEvent.press(screen.getByText('Cafes & Coffee'));
+  await fireEvent.press(screen.getByText('Cafes & Coffee'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
 });
 

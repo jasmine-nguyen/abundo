@@ -50,12 +50,12 @@ beforeEach(() => {
 
 it('builds a two-condition rule and saves it directly (no preview step)', async () => {
   await mount();
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
-  fireEvent.press(screen.getByTestId('rule-add-condition'));
-  fireEvent.press(screen.getByTestId('rule-field-1-amount'));
-  fireEvent.changeText(screen.getByTestId('rule-value-1'), '30');
-  fireEvent.press(screen.getByText('Subscriptions'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
+  await fireEvent.press(screen.getByTestId('rule-add-condition'));
+  await fireEvent.press(screen.getByTestId('rule-field-1-amount'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-1'), '30');
+  await fireEvent.press(screen.getByText('Subscriptions'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, {
     conditions: [
       { field: 'description', operator: 'contains', value: 'NETFLIX' },
@@ -69,13 +69,13 @@ it('builds a two-condition rule and saves it directly (no preview step)', async 
 
 it('the logic toggle sets "any" in the saved payload', async () => {
   await mount();
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
-  fireEvent.press(screen.getByTestId('rule-add-condition'));
-  fireEvent.press(screen.getByTestId('rule-field-1-amount'));
-  fireEvent.changeText(screen.getByTestId('rule-value-1'), '30');
-  fireEvent.press(screen.getByTestId('rule-logic-any'));
-  fireEvent.press(screen.getByText('Subscriptions'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
+  await fireEvent.press(screen.getByTestId('rule-add-condition'));
+  await fireEvent.press(screen.getByTestId('rule-field-1-amount'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-1'), '30');
+  await fireEvent.press(screen.getByTestId('rule-logic-any'));
+  await fireEvent.press(screen.getByText('Subscriptions'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, expect.objectContaining({ logic: 'any' }));
 });
 
@@ -93,28 +93,28 @@ it.each([
   },
 ])('a single non-text condition saves via the conditions payload: $name', async ({ transactions, field, pick, category, value, categoryId, condition }) => {
   await mount({ transactions });
-  fireEvent.press(screen.getByTestId(`rule-field-0-${field}`));
-  if (pick) fireEvent.press(screen.getByTestId(pick));
-  fireEvent.press(screen.getByText(category));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId(`rule-field-0-${field}`));
+  if (pick) await fireEvent.press(screen.getByTestId(pick));
+  await fireEvent.press(screen.getByText(category));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).toHaveBeenCalledWith(value, categoryId, false, { conditions: [condition], logic: 'all' });
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
 
 it('an amount condition of 0 keeps save disabled', async () => {
   await mount();
-  fireEvent.press(screen.getByTestId('rule-field-0-amount'));
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), '0');
-  fireEvent.press(screen.getByText('Subscriptions'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId('rule-field-0-amount'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), '0');
+  await fireEvent.press(screen.getByText('Subscriptions'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
 it('a too-short description-contains value keeps save disabled (mirrors the server floor)', async () => {
   await mount();
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'AB'); // < 4 alphanumerics
-  fireEvent.press(screen.getByText('Subscriptions'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'AB'); // < 4 alphanumerics
+  await fireEvent.press(screen.getByText('Subscriptions'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled();
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
@@ -136,7 +136,7 @@ it('editing a multi-condition rule round-trips its conditions and logic', async 
   expect(screen.getByTestId('rule-condition-1')).toBeTruthy();
   expect(screen.getByDisplayValue('COLES')).toBeTruthy();
   expect(screen.getByDisplayValue('100')).toBeTruthy();
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('m1', 'COLES', 'groceries', false, {
     conditions: [
       { field: 'description', operator: 'contains', value: 'COLES' },
@@ -150,14 +150,14 @@ it('editing a multi-condition rule round-trips its conditions and logic', async 
 // operator must snap to the new field's default (not keep the previous field's picked operator).
 it('switching a row field clears the stale value and resets the operator to the field default', async () => {
   await mount();
-  fireEvent.press(screen.getByTestId('rule-op-0-equals'));
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
+  await fireEvent.press(screen.getByTestId('rule-op-0-equals'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
   expect(screen.getByDisplayValue('NETFLIX')).toBeTruthy();
-  fireEvent.press(screen.getByTestId('rule-field-0-amount'));
+  await fireEvent.press(screen.getByTestId('rule-field-0-amount'));
   expect(screen.queryByDisplayValue('NETFLIX')).toBeNull();
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), '30');
-  fireEvent.press(screen.getByText('Groceries'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), '30');
+  await fireEvent.press(screen.getByText('Groceries'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('30', 'groceries', false, {
     conditions: [{ field: 'amount', operator: 'less_than', value: '30' }],
     logic: 'all',
@@ -178,7 +178,7 @@ it('an editing rule account not in the recent set is surfaced and round-trips', 
     }],
   });
   expect(screen.getByTestId('rule-account-0-acc-gone')).toBeTruthy();
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('a1', 'acc-gone', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'acc-gone' }],
     logic: 'all',
@@ -190,13 +190,13 @@ it('an editing rule account not in the recent set is surfaced and round-trips', 
 // multi conditions payload.
 it('adding then removing a row back to one classic row routes a new rule through the preview', async () => {
   await mount();
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
-  fireEvent.press(screen.getByTestId('rule-add-condition'));
-  fireEvent.press(screen.getByTestId('rule-field-1-amount'));
-  fireEvent.changeText(screen.getByTestId('rule-value-1'), '30');
-  fireEvent.press(screen.getByTestId('rule-remove-1'));
-  fireEvent.press(screen.getByText('Subscriptions'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
+  await fireEvent.press(screen.getByTestId('rule-add-condition'));
+  await fireEvent.press(screen.getByTestId('rule-field-1-amount'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-1'), '30');
+  await fireEvent.press(screen.getByTestId('rule-remove-1'));
+  await fireEvent.press(screen.getByText('Subscriptions'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.setSheet).toHaveBeenCalledWith(
     expect.objectContaining({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs' }),
   );
@@ -212,7 +212,7 @@ it.each([
 ])('editing %s on save', async (_name, rule) => {
   await mount({ sheet: { mode: 'addrule', ruleId: rule.id }, rules: [rule] });
   expect(screen.getByDisplayValue(rule.value)).toBeTruthy();
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith(rule.id, rule.value, 'groceries', false, {
     conditions: [{ field: rule.field, operator: rule.operator, value: rule.value }],
     logic: 'all',
@@ -235,8 +235,8 @@ it('editing a multi rule down to one classic row saves via the flat path (no con
       logic: 'all',
     }],
   });
-  fireEvent.press(screen.getByTestId('rule-remove-1')); // drop the amount row → one description/contains row
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByTestId('rule-remove-1')); // drop the amount row → one description/contains row
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('m2', 'NETFLIX', 'subs', false);
 });
 
@@ -248,27 +248,27 @@ const colesGroceries = { id: 'g1', value: 'COLES', categoryId: 'groceries' };
 const wooliesGroceries = { id: 'w1', value: 'WOOLIES', categoryId: 'groceries' };
 
 // Build a two-condition rule "COLES AND under $40", filed as Subscriptions.
-function buildColesUnder40() {
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'COLES');
-  fireEvent.press(screen.getByTestId('rule-add-condition'));
-  fireEvent.press(screen.getByTestId('rule-field-1-amount'));
-  fireEvent.changeText(screen.getByTestId('rule-value-1'), '40');
-  fireEvent.press(screen.getByText('Subscriptions'));
+async function buildColesUnder40() {
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'COLES');
+  await fireEvent.press(screen.getByTestId('rule-add-condition'));
+  await fireEvent.press(screen.getByTestId('rule-field-1-amount'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-1'), '40');
+  await fireEvent.press(screen.getByText('Subscriptions'));
 }
 
 it('warns (does not save) when a multi rule overlaps an existing rule filing elsewhere', async () => {
   await mount({ rules: [colesGroceries] });
-  buildColesUnder40();
-  fireEvent.press(screen.getByText('Add rule'));
+  await buildColesUnder40();
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(screen.getByTestId('rule-overlap')).toBeTruthy();
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
 it('"Save anyway" saves the rule despite the overlap', async () => {
   await mount({ rules: [colesGroceries] });
-  buildColesUnder40();
-  fireEvent.press(screen.getByText('Add rule'));
-  fireEvent.press(screen.getByTestId('rule-overlap-save'));
+  await buildColesUnder40();
+  await fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId('rule-overlap-save'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'subs', false, {
     conditions: [
       { field: 'description', operator: 'contains', value: 'COLES' },
@@ -280,9 +280,9 @@ it('"Save anyway" saves the rule despite the overlap', async () => {
 
 it('"Cancel" dismisses the warning and does not save', async () => {
   await mount({ rules: [colesGroceries] });
-  buildColesUnder40();
-  fireEvent.press(screen.getByText('Add rule'));
-  fireEvent.press(screen.getByTestId('rule-overlap-cancel'));
+  await buildColesUnder40();
+  await fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId('rule-overlap-cancel'));
   expect(screen.queryByTestId('rule-overlap')).toBeNull();
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
@@ -290,8 +290,8 @@ it('"Cancel" dismisses the warning and does not save', async () => {
 it('a non-overlapping multi rule saves directly (no warning)', async () => {
   // Existing rule matches WOOLIES; the candidate needs COLES too, so no charge matches both.
   await mount({ rules: [wooliesGroceries] });
-  buildColesUnder40();
-  fireEvent.press(screen.getByText('Add rule'));
+  await buildColesUnder40();
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(screen.queryByTestId('rule-overlap')).toBeNull();
   expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'subs', false, expect.objectContaining({ logic: 'all' }));
 });
@@ -302,10 +302,10 @@ it('[A1] offers an account that only the /accounts/balances read knows, named fr
     account_id: 'home-loan', amount: 100, available_balance: null, currency: 'AUD', as_of: '2024-01-01T00:00:00Z', account_type: null,
   }]);
   await mount();
-  fireEvent.press(screen.getByTestId('rule-field-0-account'));
-  fireEvent.press(screen.getByTestId('rule-account-0-home-loan'));
-  fireEvent.press(screen.getByText('Groceries'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId('rule-field-0-account'));
+  await fireEvent.press(screen.getByTestId('rule-account-0-home-loan'));
+  await fireEvent.press(screen.getByText('Groceries'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('home-loan', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'home-loan' }],
     logic: 'all',

@@ -78,7 +78,7 @@ it('[A6] rules arriving late fill in the named rule line', async () => {
   seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })]);
   server.seed('/rules', [{ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'coffee' }]);
   const held = server.hold('/rules');
-  render(<WithQueries><TransactionDetail /></WithQueries>);
+  await render(<WithQueries><TransactionDetail /></WithQueries>);
   await screen.findByText('Woolworths');
   expect(screen.queryByText('Filed automatically by one of your rules')).toBeNull();
 
