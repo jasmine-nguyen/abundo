@@ -8,7 +8,7 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 import { pinToday } from './support/clock';
-import { hostParent, sharedHost, styleOf } from './support/layout';
+import { sharedHost, styleOf } from './support/layout';
 import type { Category } from '../types';
 
 // WHIT-192: the row reads only openPicker (client-state) from the store now; the
@@ -152,16 +152,16 @@ describe('large text never lets the amount overlap the Pending tag (WHIT-845)', 
   // tag shrink inside the column instead of spilling under the amount.
   it('normal text: the category and the Pending tag shrink to fit beside the amount', async () => {
     const { merchant, category, pending, amount } = await pendingRow();
-    expect(sharedHost(merchant, amount)).not.toBe(hostParent(merchant));
+    expect(sharedHost(merchant, amount)).not.toBe(merchant.parent!);
     expect(styleOf(category).flexShrink).toBe(1);
-    expect(styleOf(hostParent(pending)).flexShrink).toBe(1);
+    expect(styleOf(pending.parent!).flexShrink).toBe(1);
     expect(styleOf(pending).flexShrink).toBe(1);
   });
 
   it('large text: the amount stacks under Pending, inside the merchant column', async () => {
     mockLarge = true;
     const { merchant, pending, amount } = await pendingRow();
-    const column = hostParent(merchant);
+    const column = merchant.parent!;
     expect(sharedHost(merchant, pending)).toBe(column);
     expect(sharedHost(merchant, amount)).toBe(column);
     const order = screen.container.queryAll((n) => n === merchant || n === pending || n === amount);

@@ -20,7 +20,7 @@ import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
-import { styleOf, sharedHost, expectStacked } from './support/layout';
+import { styleOf, sharedHost, expectStacked, xmlsIn } from './support/layout';
 import type { TestInstance } from 'test-renderer';
 import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
@@ -252,8 +252,8 @@ it('shows the four accounts in a fixed order, icon and colour, with owed balance
       }
       return null;
     };
-    const chips = () => screen.container.queryAll((node) => typeof node.props.xml === 'string')
-      .map((node) => chipOf(node.props.xml))
+    const chips = () => xmlsIn(screen.container)
+      .map(chipOf)
       .filter((chip): chip is { name: string; color: string } => chip !== null);
     expect(chips().map((p) => p.name)).toEqual(['card', 'card', 'wallet', 'home']);
     const colours = chips().map((p) => p.color);
@@ -323,7 +323,7 @@ it('ABU-75 — at very large text an account row stacks: the balance sits below 
   // The sub-line ("Last spend yesterday") gets the full width too, not squeezed beside the chip.
   const rowRoot = sharedHost(name, balance);
   for (let host: TestInstance | null = screen.getByText(/^Last spend/).parent; host && host !== rowRoot; host = host.parent) {
-    if (typeof host.type === 'string') expect(styleOf(host).flexDirection).not.toBe('row');
+    expect(styleOf(host).flexDirection).not.toBe('row');
   }
 });
 

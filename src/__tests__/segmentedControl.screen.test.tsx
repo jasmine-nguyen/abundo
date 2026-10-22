@@ -8,7 +8,7 @@ import React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react-native';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { C, tint } from '../theme';
-import { hostParent, styleOf } from './support/layout';
+import { styleOf } from './support/layout';
 
 // Synthetic colours on purpose (WHIT-398): these are fixtures for the generic component, not
 // production values, so they must not read as a second copy of a real theme colour.
@@ -46,7 +46,7 @@ describe('SegmentedControl count bubble and equal widths', () => {
     await render(<SegmentedControl value={value} onChange={jest.fn()} options={BADGED} />);
     const count = within(screen.getByTestId('seg-spending')).getByText('0');
     expect(styleOf(count)).toMatchObject({ color: C.badBright, fontWeight: '700' });
-    expect(styleOf(hostParent(count)).backgroundColor).toBe(tint(C.bad, 0.2));
+    expect(styleOf(count.parent!).backgroundColor).toBe(tint(C.bad, 0.2));
   });
 
   // [A3] no badge → no bubble.

@@ -15,6 +15,10 @@ export const textOf = (node: TestInstance): string =>
 export const hostsOfType = (type: string, root: TestInstance = screen.container) =>
   root.queryAll((node) => node.type === type);
 
+// The SVG strings drawn under `node`.
+export const xmlsIn = (node: TestInstance) =>
+  node.queryAll((n) => typeof n.props.xml === 'string').map((n) => n.props.xml as string);
+
 // The rendered SectionLists / FlatLists: scrollers that pull their rows through getItem.
 export const virtualLists = () => hostsOfType('RCTScrollView').filter((list) => list.props.getItem);
 
@@ -22,11 +26,6 @@ export const virtualLists = () => hostsOfType('RCTScrollView').filter((list) => 
 export function isWithin(node: TestInstance, host: TestInstance) {
   for (let n: TestInstance | null = node; n; n = n.parent) if (n === host) return true;
   return false;
-}
-
-// The element directly above `node`.
-export function hostParent(node: TestInstance) {
-  return node.parent!;
 }
 
 export function sharedHost(node: TestInstance, other: TestInstance) {
@@ -52,6 +51,6 @@ export async function expectScrollEdge(scroller: TestInstance) {
 export function expectStacked(name: TestInstance, amount: TestInstance) {
   expect(styleOf(sharedHost(name, amount)).flexDirection).not.toBe('row');
   for (let host: TestInstance | null = amount.parent; host; host = host.parent) {
-    if (typeof host.type === 'string') expect(styleOf(host).maxWidth).not.toBe('45%');
+    expect(styleOf(host).maxWidth).not.toBe('45%');
   }
 }

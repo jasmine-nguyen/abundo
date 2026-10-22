@@ -20,7 +20,7 @@ import {
   refreshAiInsights, generateAiInsights,
 } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
-import { styleOf, sharedHost } from './support/layout';
+import { styleOf, sharedHost, xmlsIn } from './support/layout';
 import { pullAndSettle } from './support/pull';
 import { pinToday } from './support/clock';
 import { GLYPH, ICON } from '../icons';
@@ -651,8 +651,6 @@ describe('Insights refund line (WHIT-349)', () => {
 describe('Insights parent row arrow', () => {
   beforeEach(seedCarRefund);
 
-  const xmlsIn = (node: TestInstance) =>
-    node.queryAll((n) => typeof n.props.xml === 'string').map((n) => n.props.xml as string);
   const parentRow = () => screen.getByRole('button', { name: /Car/ });
   const drawn = (inner: string) => `<svg viewBox="0 0 24 24">${inner.replace(/currentColor/g, C.textDim)}</svg>`;
 

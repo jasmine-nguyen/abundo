@@ -77,7 +77,6 @@ function sidePaddingOf(node: TestInstance) {
 export function rightOnlyGaps(node: TestInstance) {
   const gaps: { testID?: string; left?: unknown; right?: unknown }[] = [];
   for (let host: TestInstance | null = node; host; host = host.parent) {
-    if (typeof host.type !== 'string') continue;
     const { left, right } = sidePaddingOf(host);
     if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
   }

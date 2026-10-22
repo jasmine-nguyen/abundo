@@ -6,7 +6,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import { SearchField } from '../components/SearchField';
 import { GLYPH } from '../icons';
-import { styleOf } from './support/layout';
+import { styleOf, xmlsIn } from './support/layout';
 
 // The close glyph's path (its colour is inlined when drawn, so match the path, not the whole xml).
 const CLOSE_PATH = GLYPH.close.match(/d="([^"]+)"/)![1];
@@ -24,6 +24,6 @@ it('shows a 44pt close-glyph clear button only once there is text', async () => 
   const box = styleOf(clear);
   expect(box.minWidth).toBeGreaterThanOrEqual(44);
   expect(box.minHeight).toBeGreaterThanOrEqual(44);
-  expect(clear.queryAll((n) => typeof n.props.xml === 'string' && n.props.xml.includes(CLOSE_PATH))).not.toHaveLength(0);
+  expect(xmlsIn(clear).some((xml) => xml.includes(CLOSE_PATH))).toBe(true);
   expect(screen.queryByText('✕')).toBeNull();
 });
