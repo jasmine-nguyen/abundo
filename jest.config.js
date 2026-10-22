@@ -18,7 +18,7 @@
 // --maxWorkers. Filter any of them further with a test-name/path argument.
 
 const RN_TRANSFORM_IGNORE = [
-  "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-native-svg))",
+  "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-native-svg|standard-navigation))",
 ];
 
 module.exports = {
