@@ -15,6 +15,7 @@ import { useInFlightGuard } from '../hooks/useInFlightGuard';
 import { confirmDelete } from '../confirmDelete';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 import { useScrollEdge } from '../hooks/useScrollEdge';
+import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by tapping a TransactionRow
 // or its chevron; the id in the route is the transaction_id. The transaction comes from the
@@ -111,7 +112,8 @@ export function TransactionDetailView({ id, embedded = false, onClose }: {
       <Header title="Transaction" divider={edge.scrolled} back={!embedded} />
       <ScrollView
         {...edge.scrollProps}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        // In the wide-screen pane the tab bar floats over it, so clear it like the tab's own list.
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: embedded ? TAB_BAR_CLEARANCE : insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         // The NOTE + TAGS fields sit at the bottom of the screen, so the keyboard opens

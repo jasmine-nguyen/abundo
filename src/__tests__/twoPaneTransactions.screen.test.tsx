@@ -13,6 +13,7 @@ import { resetListTabs } from './support/listTabsScreen';
 import { routerSpies, setFocused } from './support/routerMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { removeFromAllCopies } from '../transactionCache';
+import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
 
 let mockWide = true;
 jest.mock('../hooks/useWideLayout', () =>
@@ -96,6 +97,79 @@ describe('wide screen', () => {
 
     expect(routerSpies.push.mock.calls.map(([href]) => href)).toEqual(pushed);
     expect(detailShown()).toBe(false);
+  });
+
+  // [A7] the pane sits beside the list, so it has no back arrow.
+  it('the pane has no back arrow', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    expect(screen.queryByLabelText('Back')).toBeNull();
+  });
+
+  // [A8] select mode doesn't change on a wide screen; [A9] an unfiled row still opens the picker.
+  it('in select mode, or on an unfiled row, a tap does not open the pane', async () => {
+    seedFeedPage(server, FEED, [ROW, KEEP, txn({ transaction_id: 't3', merchant_name: 'Cafe', description: 'CAFE', category: null })]);
+    await renderWithApp(<Transactions />);
+    fireEvent.press(await screen.findByText('Cafe'));
+    fireEvent.press(screen.getByText('Select'));
+    fireEvent.press(screen.getByText('Woolworths', { includeHiddenElements: true }));
+
+    expect(screen.getByLabelText('Select Woolworths').props.accessibilityState).toEqual({ checked: true });
+    expect(detailShown()).toBe(false);
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  // [A10] switching rows saves the first row's typed note and never shows it on the second.
+  it('opening another row saves the note typed in the pane and shows the new row\'s own note', async () => {
+    seedFeedPage(server, FEED, [ROW, { ...KEEP, notes: 'weekly shop' }]);
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    fireEvent.press(screen.getByTestId('note-add'));
+    fireEvent.changeText(screen.getByTestId('note-input'), 'lunch');
+
+    await refreshInAct(() => fireEvent.press(screen.getByText('Coles')));
+
+    expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { notes: 'lunch' } });
+    expect(screen.getByTestId('note-input').props.value).toBe('weekly shop');
+  });
+
+  // [A11] folding mid-edit doesn't lose the typed note: it saves, then the charge reopens full screen.
+  it('folding with a note typed in the pane saves it', async () => {
+    const view = await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    fireEvent.press(screen.getByTestId('note-add'));
+    fireEvent.changeText(screen.getByTestId('note-input'), 'lunch');
+
+    mockWide = false;
+    await redraw(view);
+
+    expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { notes: 'lunch' } });
+    expect(routerSpies.push).toHaveBeenCalledWith('/transaction/t1');
+  });
+
+  // [A12] a failed delete puts the charge back and keeps the pane open for a retry.
+  it('a failed delete from the pane keeps the pane open', async () => {
+    server.fail('/transactions/t1', 500);
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    fireEvent.press(screen.getByTestId('transaction-delete'));
+    await refreshInAct(() => pressAlertButton(alerts, 'Delete'));
+
+    await waitFor(() => expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false }));
+    expect(detailShown()).toBe(true);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A13] the tab bar floats over the tab, pane included: the pane's last row must scroll clear of it,
+  // as the list's does.
+  it('the pane scrolls its last row clear of the tab bar', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    const [paneScroll] = screen.UNSAFE_getAllByProps({ automaticallyAdjustKeyboardInsets: true });
+    expect(paneScroll.props.contentContainerStyle.paddingBottom).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
   });
 });
 
