@@ -15,6 +15,7 @@ import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { removeFromAllCopies } from '../transactionCache';
 import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
 import { TwoPane } from '../components/TwoPane';
+import { hostsOfType } from './support/layout';
 
 let mockWide = true;
 jest.mock('../hooks/useWideLayout', () =>
@@ -36,7 +37,7 @@ const detailShown = () => screen.queryByTestId('transaction-delete') !== null;
 async function drawAndOpen() {
   const view = await renderWithApp(<Transactions />);
   expect(await screen.findByText('Woolworths')).toBeTruthy();
-  fireEvent.press(screen.getByText('Woolworths'));
+  await fireEvent.press(screen.getByText('Woolworths'));
   return view;
 }
 
@@ -64,7 +65,7 @@ describe('wide screen', () => {
     await drawAndOpen();
     await waitFor(() => expect(detailShown()).toBe(true));
 
-    fireEvent.press(screen.getByTestId('transaction-delete'));
+    await fireEvent.press(screen.getByTestId('transaction-delete'));
     await refreshInAct(() => pressAlertButton(alerts, 'Delete'));
 
     await waitFor(() => expect(detailShown()).toBe(false));
@@ -112,9 +113,9 @@ describe('wide screen', () => {
   it('in select mode, or on an unfiled row, a tap does not open the pane', async () => {
     seedFeedPage(server, FEED, [ROW, KEEP, txn({ transaction_id: 't3', merchant_name: 'Cafe', description: 'CAFE', category: null })]);
     await renderWithApp(<Transactions />);
-    fireEvent.press(await screen.findByText('Cafe'));
-    fireEvent.press(screen.getByText('Select'));
-    fireEvent.press(screen.getByText('Woolworths', { includeHiddenElements: true }));
+    await fireEvent.press(await screen.findByText('Cafe'));
+    await fireEvent.press(screen.getByText('Select'));
+    await fireEvent.press(screen.getByText('Woolworths', { includeHiddenElements: true }));
 
     expect(screen.getByLabelText('Select Woolworths').props.accessibilityState).toEqual({ checked: true });
     expect(detailShown()).toBe(false);
@@ -126,8 +127,8 @@ describe('wide screen', () => {
     seedFeedPage(server, FEED, [ROW, { ...KEEP, notes: 'weekly shop' }]);
     await drawAndOpen();
     await waitFor(() => expect(detailShown()).toBe(true));
-    fireEvent.press(screen.getByTestId('note-add'));
-    fireEvent.changeText(screen.getByTestId('note-input'), 'lunch');
+    await fireEvent.press(screen.getByTestId('note-add'));
+    await fireEvent.changeText(screen.getByTestId('note-input'), 'lunch');
 
     await refreshInAct(() => fireEvent.press(screen.getByText('Coles')));
 
@@ -139,8 +140,8 @@ describe('wide screen', () => {
   it('folding with a note typed in the pane saves it', async () => {
     const view = await drawAndOpen();
     await waitFor(() => expect(detailShown()).toBe(true));
-    fireEvent.press(screen.getByTestId('note-add'));
-    fireEvent.changeText(screen.getByTestId('note-input'), 'lunch');
+    await fireEvent.press(screen.getByTestId('note-add'));
+    await fireEvent.changeText(screen.getByTestId('note-input'), 'lunch');
 
     mockWide = false;
     await redraw(view);
@@ -155,7 +156,7 @@ describe('wide screen', () => {
     await drawAndOpen();
     await waitFor(() => expect(detailShown()).toBe(true));
 
-    fireEvent.press(screen.getByTestId('transaction-delete'));
+    await fireEvent.press(screen.getByTestId('transaction-delete'));
     await refreshInAct(() => pressAlertButton(alerts, 'Delete'));
 
     await waitFor(() => expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false }));
@@ -169,8 +170,9 @@ describe('wide screen', () => {
     await drawAndOpen();
     await waitFor(() => expect(detailShown()).toBe(true));
 
-    const [paneScroll] = screen.UNSAFE_getAllByProps({ automaticallyAdjustKeyboardInsets: true });
-    expect(paneScroll.props.contentContainerStyle.paddingBottom).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
+    const paneScroll = hostsOfType('RCTScrollView').find((sv) => sv.props.automaticallyAdjustKeyboardInsets === true);
+    expect(paneScroll).toBeTruthy();
+    expect(paneScroll!.props.contentContainerStyle.paddingBottom).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
   });
 });
 
@@ -183,18 +185,18 @@ it('narrow screen: tapping a row opens its detail page, as today', async () => {
 });
 
 // Folding or unfolding keeps the same list (and its scroll position): it must not be rebuilt.
-it('switching between narrow and wide keeps the list mounted', () => {
+it('switching between narrow and wide keeps the list mounted', async () => {
   let mounts = 0;
   function Probe() {
     React.useEffect(() => { mounts += 1; }, []);
     return null;
   }
   mockWide = false;
-  const view = render(<TwoPane list={<Probe />} />);
+  const view = await render(<TwoPane list={<Probe />} />);
   mockWide = true;
-  view.rerender(<TwoPane list={<Probe />} />);
+  await view.rerender(<TwoPane list={<Probe />} />);
   mockWide = false;
-  view.rerender(<TwoPane list={<Probe />} />);
+  await view.rerender(<TwoPane list={<Probe />} />);
 
   expect(mounts).toBe(1);
 });
