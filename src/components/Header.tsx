@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { C, FONT } from '../theme';
 import { HeaderIconButton } from './ui';
 import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
+import { useHeaderSidePadding } from '../hooks/useHeaderSidePadding';
 
 export function Header({
   title, right, divider, back = true,
@@ -14,8 +15,9 @@ export function Header({
   divider?: boolean;
 }) {
   const router = useRouter();
+  const sidePadding = useHeaderSidePadding();
   return (
-    <View testID="header-wrap" style={[styles.wrap, divider && styles.divider]}>
+    <View testID="header-wrap" style={[styles.wrap, sidePadding, divider && styles.divider]}>
       <View style={styles.row}>
         <View style={styles.side}>
           {back && <HeaderIconButton icon="back" accessibilityLabel="Back" onPress={() => router.back()} />}
