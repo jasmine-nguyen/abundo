@@ -11,7 +11,6 @@ import { renderWithQueries, refreshInAct, settle, useTestQueryClient, drawHeld, 
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
-import { startTaps } from './support/tap';
 
 let mockState: Partial<AppContext>;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -84,7 +83,7 @@ it('Milestone detail: Retry after a failed milestones read brings back the plan'
   seedGoal(server, { homeLoan: HOME_LOAN });
   server.once('GET', '/milestones', { status: 500 });
   await renderWithQueries(<Milestone />);
-  await startTaps(screen.getByTestId('milestone-plan-retry'));
+  await fireEvent.press(screen.getByTestId('milestone-plan-retry'));
   await settle();
   expect(screen.queryByTestId('milestone-plan-retry')).toBeNull();
   expect(screen.getByText('Your payoff plan')).toBeTruthy();

@@ -16,27 +16,9 @@ jest.setTimeout(15000);
 require('@testing-library/react-native').configure({ asyncUtilTimeout: 5000 });
 
 // The date picker is a native view; render a lightweight stand-in that still fires
-// onChange, so the pay-cycle sheet can be tested headlessly.
-jest.mock('@react-native-community/datetimepicker', () => {
-  const React = require('react');
-  const { Pressable, Text } = require('react-native');
-  const MockPicker = (props) => {
-    // Tapping emits a fixed picked date through onChange using the real
-    // (event, date) signature — the Date is the SECOND arg — so the component's
-    // arg-extraction (the crash fix) is genuinely exercised against the actual API.
-    return React.createElement(
-      Pressable,
-      {
-        testID: 'mock-datepicker',
-        // Kept on the drawn element so a test can read what the screen passed (renderedPickerProps).
-        pickerProps: props,
-        onPress: () => props.onChange && props.onChange({ type: 'set' }, new Date(2026, 5, 20)),
-      },
-      React.createElement(Text, null, 'picker'),
-    );
-  };
-  return { __esModule: true, default: MockPicker };
-});
+// onChange, so the pay-cycle sheet can be tested headlessly. Every tap picks a fixed past date.
+jest.mock('@react-native-community/datetimepicker', () =>
+  require('./src/__tests__/support/mockDatePicker').mockDatePickerModule(new Date(2026, 5, 20)));
 
 // safe-area insets: return zero insets so components that read
 // useSafeAreaInsets render without a SafeAreaProvider wrapper.

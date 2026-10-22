@@ -42,8 +42,7 @@ const TXNS = [{
 function renderScreen(client = makeClient()) {
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Accounts)));
 }
-const rc = () => pullControl();
-const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
+const pull = async () => { await act(async () => { pullControl().props.onRefresh(); }); };
 
 describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-212 gaps)', () => {
   beforeEach(() => {
@@ -90,7 +89,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();
     await pull();
-    await waitFor(() => expect(rc().props.refreshing).toBe(false));
+    await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
     expect(server.sent('POST', '/transactions/sync')).toHaveLength(1);
     expect(mockShowToast.mock.calls).toEqual([['Still syncing with your bank. Pull again in a couple of minutes.']]);
   });
@@ -134,20 +133,20 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
 
     // First pull: live call rejects.
     const live1 = server.hold(REFRESH);
-    await act(async () => { rc().props.onRefresh(); });
-    expect(rc().props.refreshing).toBe(true);                    // spinner up mid-pull
+    await act(async () => { pullControl().props.onRefresh(); });
+    expect(pullControl().props.refreshing).toBe(true);                    // spinner up mid-pull
     await act(async () => { live1.fail('POST'); });
-    await waitFor(() => expect(rc().props.refreshing).toBe(false)); // cleared despite the failure
+    await waitFor(() => expect(pullControl().props.refreshing).toBe(false)); // cleared despite the failure
     expect(mockShowToast).toHaveBeenCalledTimes(1);
 
     // Second pull: not latched — spins again, applies its fresh number, clears again.
     const live2 = server.hold(REFRESH);
     server.once('POST', REFRESH, { body: LIVE });
-    await act(async () => { rc().props.onRefresh(); });
-    expect(rc().props.refreshing).toBe(true);                    // proves the flag reset
+    await act(async () => { pullControl().props.onRefresh(); });
+    expect(pullControl().props.refreshing).toBe(true);                    // proves the flag reset
     await act(async () => { live2.release(); });
     expect(await screen.findByText('$250.00')).toBeTruthy();    // 2nd pull's live number reached the card
-    await waitFor(() => expect(rc().props.refreshing).toBe(false));
+    await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
     expect(server.sent('POST', REFRESH)).toHaveLength(2);
   });
 

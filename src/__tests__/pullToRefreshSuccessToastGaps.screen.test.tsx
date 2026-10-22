@@ -35,8 +35,7 @@ const TXNS = [{
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 }];
 
-const rc = () => pullControl();
-const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
+const pull = async () => { await act(async () => { pullControl().props.onRefresh(); }); };
 
 beforeEach(() => {
   resetAuth();

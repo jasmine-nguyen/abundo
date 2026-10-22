@@ -42,7 +42,7 @@ afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 it('[A10] dropped connections before a dismiss still count after the sheet is reopened', async () => {
   drop(jobPath('job-1'), 5);
 
-  const r = await (await renderHook(() => useAppContext(), { wrapper })).result;
+  const r = (await renderHook(() => useAppContext(), { wrapper })).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(3); // 3 of the 5 allowed drops
@@ -61,7 +61,7 @@ it('[A11] a new job after a network give-up starts its dropped-connection count 
   drop(jobPath('job-1'), 5);
   drop(jobPath('job-2'), 5); // the retry's fresh job
 
-  const r = await (await renderHook(() => useAppContext(), { wrapper })).result;
+  const r = (await renderHook(() => useAppContext(), { wrapper })).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(5);
