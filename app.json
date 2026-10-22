@@ -1,6 +1,7 @@
 {
   "expo": {
     "scheme": "acme",
+    "orientation": "portrait",
     "icon": "./assets/abundo-icon-ios.png",
     "plugins": [
       "expo-router",

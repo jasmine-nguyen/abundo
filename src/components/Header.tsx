@@ -6,9 +6,10 @@ import { HeaderIconButton } from './ui';
 import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
 
 export function Header({
-  title, right, divider,
+  title, right, divider, back = true,
 }: {
   title: string;
+  back?: boolean;
   right?: React.ReactNode;
   divider?: boolean;
 }) {
@@ -17,7 +18,7 @@ export function Header({
     <View testID="header-wrap" style={[styles.wrap, divider && styles.divider]}>
       <View style={styles.row}>
         <View style={styles.side}>
-          <HeaderIconButton icon="back" accessibilityLabel="Back" onPress={() => router.back()} />
+          {back && <HeaderIconButton icon="back" accessibilityLabel="Back" onPress={() => router.back()} />}
         </View>
         <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{title}</Text>
         <View style={[styles.side, { alignItems: 'flex-end' }]}>{right}</View>

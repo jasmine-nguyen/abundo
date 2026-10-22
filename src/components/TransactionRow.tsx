@@ -18,12 +18,15 @@ import type { Transaction, Category } from '../types';
 // props didn't change. Callers pass a stable onToggleSelect; it receives the row's transaction id.
 export const TransactionRow = memo(TransactionRowView);
 
-function TransactionRowView({ t, category, selectable = false, selected = false, onToggleSelect }: {
+// ABU-110: `onOpen` replaces opening the detail page (the wide-screen pane); `selected` without
+// `selectable` marks the row whose detail that pane shows.
+function TransactionRowView({ t, category, selectable = false, selected = false, onToggleSelect, onOpen }: {
   t: Transaction;
   category: (id: string | null) => Category | undefined;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (transactionId: string) => void;
+  onOpen?: (transaction: Transaction) => void;
 }) {
   const s = useAppContext();
   const router = useRouter();
@@ -33,14 +36,17 @@ function TransactionRowView({ t, category, selectable = false, selected = false,
   const amount = (
     <Text style={[styles.amount, large && styles.amountStacked, { color: v.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.amountLabel}</Text>
   );
-  const openDetail = () => router.push(`/transaction/${t.transaction_id}`);
+  const openDetail = () => {
+    if (onOpen) return onOpen(t);
+    router.push(`/transaction/${t.transaction_id}`);
+  };
   const onPress = () => {
     if (selectable) return onToggleSelect?.(t.transaction_id);
     if (v.tappable) return s.openPicker(t.transaction_id);
     openDetail();
   };
   return (
-    <View style={[styles.row, selectable && selected && styles.rowSelected]}>
+    <View style={[styles.row, selected && styles.rowSelected]}>
       {selectable && (
         <Pressable
           onPress={() => onToggleSelect?.(t.transaction_id)}

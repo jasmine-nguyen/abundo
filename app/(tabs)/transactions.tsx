@@ -20,7 +20,12 @@ import { SearchField } from '../../src/components/SearchField';
 import { useFirstFilingSeen } from '../../src/hooks/useFirstFilingSeen';
 import { HeaderTextButton } from '../../src/components/ui';
 import { toggleIn } from '../../src/setutil';
+import { TwoPane } from '../../src/components/TwoPane';
+import { useOpenDetail } from '../../src/hooks/useOpenDetail';
+import { TransactionDetailView } from '../../src/screens/TransactionDetailView';
 import type { Transaction } from '../../src/types';
+
+const detailHref = (transaction: Transaction) => `/transaction/${transaction.transaction_id}`;
 
 type Tab = 'all' | 'uncategorized';
 
@@ -171,15 +176,19 @@ export default function Transactions() {
       <DayHeading label={section.key} dayTotal={section.dayTotal} />
     </View>
   ), []);
+  // ABU-110: on a wide screen a row's detail opens in the pane beside the list.
+  const pane = useOpenDetail(detailHref);
+  const paneId = pane.selected?.transaction_id;
   const renderItem = useCallback(({ item }: { item: Transaction }) => (
     <TransactionRow
       t={item}
       category={category}
       selectable={selectionMode}
-      selected={selected.has(item.transaction_id)}
+      selected={selectionMode ? selected.has(item.transaction_id) : item.transaction_id === paneId}
       onToggleSelect={toggleSelect}
+      onOpen={pane.open}
     />
-  ), [category, selectionMode, selected, toggleSelect]);
+  ), [category, selectionMode, selected, toggleSelect, paneId, pane.open]);
 
   const footer = (
     <>
@@ -261,7 +270,7 @@ export default function Transactions() {
     </>
   );
 
-  return (
+  const list = (
     <View style={{ flex: 1 }}>
     <ScrollChromeHeader
       title="Transactions"
@@ -377,6 +386,14 @@ export default function Transactions() {
       </View>
     )}
     </View>
+  );
+
+  return (
+    <TwoPane
+      list={list}
+      detail={paneId && <TransactionDetailView id={paneId} embedded onClose={pane.close} />}
+      empty={<EmptyState icon={<Glyph name="search" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Select a transaction" sub="Its details show here." />}
+    />
   );
 }
 
