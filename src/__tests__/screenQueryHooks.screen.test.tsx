@@ -151,8 +151,10 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // (the screen holds the spinner), then true once it lands. FAIL-ON-REVERT: hard-coding true skips
   // the false phase and this first assertion fails.
   it('categoriesReady is false while the taxonomy loads, then true once it lands', async () => {
+    const held = server.hold('/categories'); // v14's awaited render can otherwise let the read land first
     const { result } = await renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     expect(result.current.categoriesReady).toBe(false);       // cold: categories still fetching
+    await act(async () => { held.release(); });
     await waitFor(() => expect(result.current.categoriesReady).toBe(true));
   });
 
