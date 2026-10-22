@@ -15,7 +15,8 @@ import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { removeFromAllCopies } from '../transactionCache';
 import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
 import { TwoPane } from '../components/TwoPane';
-import { hostsOfType } from './support/layout';
+import { hostsOfType, styleOf } from './support/layout';
+import { View } from 'react-native';
 
 let mockWide = true;
 jest.mock('../hooks/useWideLayout', () =>
@@ -199,4 +200,14 @@ it('switching between narrow and wide keeps the list mounted', async () => {
   await view.rerender(<TwoPane list={<Probe />} />);
 
   expect(mounts).toBe(1);
+});
+
+// ABU-117: on a wide screen the list and the detail are equal halves; the list has no width cap.
+it('wide screen: the list and detail panes split the width evenly', async () => {
+  await render(<TwoPane list={<View testID="list-probe" />} detail={<View testID="detail-probe" />} />);
+
+  const listWrapper = screen.getByTestId('list-probe').parent!;
+  const detailWrapper = screen.getByTestId('detail-probe').parent!;
+  expect(styleOf(listWrapper).maxWidth).toBeUndefined();
+  expect(styleOf(listWrapper)).toEqual(styleOf(detailWrapper));
 });

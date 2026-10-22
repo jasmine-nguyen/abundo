@@ -27,6 +27,7 @@
     "ios": {
       "bundleIdentifier": "com.jasminenguyen.abundo",
       "icon": "./assets/abundo-icon-ios.png",
+      "requireFullScreen": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
