@@ -4,7 +4,7 @@
 // Real screen + AppProvider over the fake server; only the window-width check is switched.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
@@ -14,6 +14,7 @@ import { routerSpies, setFocused } from './support/routerMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { removeFromAllCopies } from '../transactionCache';
 import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
+import { TwoPane } from '../components/TwoPane';
 
 let mockWide = true;
 jest.mock('../hooks/useWideLayout', () =>
@@ -179,4 +180,21 @@ it('narrow screen: tapping a row opens its detail page, as today', async () => {
 
   expect(routerSpies.push).toHaveBeenCalledWith('/transaction/t1');
   expect(detailShown()).toBe(false);
+});
+
+// Folding or unfolding keeps the same list (and its scroll position): it must not be rebuilt.
+it('switching between narrow and wide keeps the list mounted', () => {
+  let mounts = 0;
+  function Probe() {
+    React.useEffect(() => { mounts += 1; }, []);
+    return null;
+  }
+  mockWide = false;
+  const view = render(<TwoPane list={<Probe />} />);
+  mockWide = true;
+  view.rerender(<TwoPane list={<Probe />} />);
+  mockWide = false;
+  view.rerender(<TwoPane list={<Probe />} />);
+
+  expect(mounts).toBe(1);
 });

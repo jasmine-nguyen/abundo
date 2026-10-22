@@ -29,13 +29,13 @@ const NOTE_MAX_LEN = 500;
 const TAG_MAX_LEN = 50;
 const TAG_MAX_COUNT = 20;
 
-// ABU-110: `embedded` = shown in the wide-screen pane beside the list — no back arrow, and a
+// ABU-110: `onClose` given = shown in the wide-screen pane beside the list — no back arrow, and a
 // delete (or the charge leaving every list) calls `onClose` instead of going back.
-export function TransactionDetailView({ id, embedded = false, onClose }: {
+export function TransactionDetailView({ id, onClose }: {
   id: string;
-  embedded?: boolean;
   onClose?: () => void;
 }) {
+  const embedded = onClose !== undefined;
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { openPicker, deleteTransaction } = useAppContext();

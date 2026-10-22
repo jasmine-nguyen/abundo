@@ -391,7 +391,7 @@ export default function Transactions() {
   return (
     <TwoPane
       list={list}
-      detail={paneId && <TransactionDetailView id={paneId} embedded onClose={pane.close} />}
+      detail={paneId && <TransactionDetailView id={paneId} onClose={pane.close} />}
       empty={<EmptyState icon={<Glyph name="search" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Select a transaction" sub="Its details show here." />}
     />
   );
