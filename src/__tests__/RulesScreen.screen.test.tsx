@@ -42,9 +42,9 @@ const rulesReads = () => server.sent('GET', '/rules');
 // WHIT-354: the search filter is debounced (250ms), so a filter assertion after
 // changeText/clear must first advance the fake clock. settle() does exactly that.
 const settle = () => act(() => { jest.advanceTimersByTime(250); });
-function search(text: string) {
-  fireEvent.changeText(screen.getByLabelText('Search rules'), text);
-  settle();
+async function search(text: string) {
+  await fireEvent.changeText(screen.getByLabelText('Search rules'), text);
+  await settle();
 }
 
 // The query library hands its screen updates over on a timer, which the fake clock holds back:
@@ -54,7 +54,7 @@ const alerts = spyOnAlert();
 // Tap a rule's trash button and answer Delete on the pop-up, then let the real deleteRule's DELETE
 // and its follow-up reads land.
 async function deleteRule(id: string) {
-  fireEvent.press(screen.getByTestId(`delete-rule-${id}`));
+  await fireEvent.press(screen.getByTestId(`delete-rule-${id}`));
   pressAlertButton(alerts, 'Delete');
   await waitFor(() => expect(server.sent('DELETE', `/rules/${id}`)).toHaveLength(1));
   await settleQueries();
@@ -80,7 +80,7 @@ it('shows an error with a retry that refetches', async () => {
   const retry = screen.getByTestId('rules-retry');
   expect(retry.props.accessibilityRole).toBe('button');
   expect(rulesReads()).toHaveLength(1);
-  fireEvent.press(retry);
+  await fireEvent.press(retry);
   await waitFor(() => expect(rulesReads()).toHaveLength(2));
   await settleQueries();
 });
@@ -108,7 +108,7 @@ describe('ABU-85: the trash button asks before deleting', () => {
   it('shows a Cancel / Delete pop-up, and Cancel sends no delete', async () => {
     server.seed('/rules', [NETFLIX]);
     await renderWithApp(<Rules />);
-    fireEvent.press(screen.getByTestId('delete-rule-e1'));
+    await fireEvent.press(screen.getByTestId('delete-rule-e1'));
     await settleQueries();
 
     expectConfirmDeletePopUp(alerts, 'Delete this rule?');
@@ -122,21 +122,21 @@ describe('ABU-85: the trash button asks before deleting', () => {
 it('tapping a rule body opens the edit sheet with its id', async () => {
   server.seed('/rules', [NETFLIX]);
   await renderWithApp(<Rules />);
-  fireEvent.press(screen.getByTestId('edit-rule-e1'));
+  await fireEvent.press(screen.getByTestId('edit-rule-e1'));
   expect(currentSheet()).toEqual({ mode: 'addrule', ruleId: 'e1' });
 });
 
 it('the header "+" button opens the add-rule sheet (WHIT-711)', async () => {
   server.seed('/rules', [NETFLIX]);
   await renderWithApp(<Rules />);
-  fireEvent.press(screen.getByLabelText('Add rule'));
+  await fireEvent.press(screen.getByLabelText('Add rule'));
   expect(currentSheet()).toEqual({ mode: 'addrule' });
 });
 
 it('typing in the search box filters rows and hides the emptied group', async () => {
   server.seed('/rules', TWO_RULES);
   await renderWithApp(<Rules />);
-  search('netflix');
+  await search('netflix');
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(screen.getByText('Subscriptions')).toBeTruthy();
   // The coffee group and its rule are gone.
@@ -147,7 +147,7 @@ it('typing in the search box filters rows and hides the emptied group', async ()
 it('search matches a category name, keeping a rule whose pattern does not match', async () => {
   server.seed('/rules', TWO_RULES);
   await renderWithApp(<Rules />);
-  search('coffee');
+  await search('coffee');
   // STARBUCKS's pattern has no "coffee", but its category "Cafes & Coffee" does.
   expect(screen.getByText('STARBUCKS')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
@@ -167,7 +167,7 @@ it('degrades gracefully when the taxonomy is cold: rules list under Uncategorize
   expect(screen.getByText('Uncategorised')).toBeTruthy();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   // still editable + deletable
-  fireEvent.press(screen.getByTestId('edit-rule-e1'));
+  await fireEvent.press(screen.getByTestId('edit-rule-e1'));
   expect(currentSheet()).toEqual({ mode: 'addrule', ruleId: 'e1' });
   await deleteRule('e1');
   expect(screen.queryByText('NETFLIX')).toBeNull();

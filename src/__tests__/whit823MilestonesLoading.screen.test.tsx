@@ -37,7 +37,7 @@ beforeEach(() => {
 it('Home loan: no milestones invite while milestones are still loading', async () => {
   seedGoal(server, { homeLoan: HOME_LOAN });
   const held = server.hold('/milestones');
-  drawHeld(<Mortgage />);
+  await drawHeld(<Mortgage />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText(INVITE)).toBeNull();
   expect(screen.getByTestId('milestones-loading')).toBeTruthy();
@@ -71,7 +71,7 @@ it('Milestone detail: a failed milestones read shows Retry, not the empty state'
 it('Milestone detail: no empty state while milestones are still loading', async () => {
   seedGoal(server, { homeLoan: HOME_LOAN });
   const held = server.hold('/milestones');
-  drawHeld(<Milestone />);
+  await drawHeld(<Milestone />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText(DETAIL_EMPTY)).toBeNull();
   expect(screen.getByTestId('milestone-plan-loading')).toBeTruthy();
@@ -83,7 +83,7 @@ it('Milestone detail: Retry after a failed milestones read brings back the plan'
   seedGoal(server, { homeLoan: HOME_LOAN });
   server.once('GET', '/milestones', { status: 500 });
   await renderWithQueries(<Milestone />);
-  await act(async () => { fireEvent.press(screen.getByTestId('milestone-plan-retry')); });
+  await fireEvent.press(screen.getByTestId('milestone-plan-retry'));
   await settle();
   expect(screen.queryByTestId('milestone-plan-retry')).toBeNull();
   expect(screen.getByText('Your payoff plan')).toBeTruthy();

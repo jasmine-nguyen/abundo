@@ -39,7 +39,7 @@ it('user can pull down on Goals to reload, and a goal added elsewhere appears on
 
   seedHubWith(server, { goals: [EMERGENCY, HOLIDAY] });
   const held = server.hold('/goals');
-  act(() => { pullControl().props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(pullControl().props.refreshing).toBe(true));
 
   held.release();

@@ -23,6 +23,7 @@ import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 import { applyRulesJob, applyRulesReport } from './support/applyRulesReport';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -63,7 +64,7 @@ beforeEach(() => {
 it('promotes the background sweep to primary over the per-run cap', async () => {
   await mountWith(null, report({ matched: 512 }));
 
-  fireEvent.press(screen.getByTestId('apply-rules-apply-all'));
+  await fireEvent.press(screen.getByTestId('apply-rules-apply-all'));
   expect(fns.fileCharges).toHaveBeenCalledTimes(1);
   expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'sweep' }, { matched: 512 });
   // The one-round instant file is NOT the background sweep.
@@ -77,7 +78,7 @@ it('shows a progress bar keyed on the job matched, and leaves it running on canc
 
   expect(screen.getByText(/Filed 450 of 900 charges/)).toBeTruthy();
 
-  fireEvent.press(screen.getByTestId('apply-rules-cancel'));
+  await fireEvent.press(screen.getByTestId('apply-rules-cancel'));
   expect(fns.setSheet).toHaveBeenCalledWith(null); // the job keeps running server-side
 });
 
@@ -91,7 +92,7 @@ it('shows the stall hint + Try again on a stalled running job, and Try again run
 
   expect(screen.getByTestId('apply-rules-job-stalled')).toBeTruthy();
   expect(screen.queryByTestId('apply-rules-job-running')).toBeNull();
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-job-stalled-retry')); });
+  await startTaps(screen.getByTestId('apply-rules-job-stalled-retry'));
   expect(fns.retryApplyRulesJob).toHaveBeenCalledTimes(1);
 });
 
@@ -100,7 +101,7 @@ it('offers retry on failure, re-running the same job variant', async () => {
   await mountWith(applyRulesJob({ status: 'failed', error: 'network' }));
 
   expect(screen.getByTestId('apply-rules-job-failed')).toBeTruthy();
-  fireEvent.press(screen.getByTestId('apply-rules-job-retry'));
+  await fireEvent.press(screen.getByTestId('apply-rules-job-retry'));
   // Retry goes through the provider's variant-aware retry, NOT a plain sweep.
   expect(fns.retryApplyRulesJob).toHaveBeenCalledTimes(1);
   expect(fns.fileCharges).not.toHaveBeenCalled();
@@ -148,7 +149,7 @@ describe('inline variants', () => {
     await mountFileByShop(null, g);
 
     expect(screen.getByTestId('file-by-shop-confirm-apply-all')).toBeTruthy();
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply-all')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply-all'));
     expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'shop', group: g, categoryId: 'groceries' }, { matched: OVER });
     expect(fns.fileCharges).not.toHaveBeenCalledWith(expect.anything(), { now: true }); // NOT the one-round sync path
   });
@@ -166,7 +167,7 @@ describe('inline variants', () => {
     await mountAddRule(null, true);
 
     expect(screen.getByTestId('add-rule-confirm-file-all')).toBeTruthy();
-    await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file-all')); });
+    await startTaps(screen.getByTestId('add-rule-confirm-file-all'));
     expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: true }, { matched: OVER });
     expect(fns.fileCharges).not.toHaveBeenCalledWith(expect.anything(), { now: true });
   });
@@ -179,7 +180,7 @@ describe('inline variants', () => {
     fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: true });
     await open();
 
-    await act(async () => { fireEvent.press(screen.getByTestId(button)); });
+    await startTaps(screen.getByTestId(button));
     expect(fns.showToast).toHaveBeenCalledWith(toast);
   });
 });

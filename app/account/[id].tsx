@@ -125,7 +125,7 @@ export default function AccountDetail() {
             loading={isLoadingMore}
             accessibilityLabel="Load older transactions for this account"
           />
-        ) : null}
+        ) : undefined}
         initialNumToRender={SECTION_LIST_FIRST_DRAW}
         stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}

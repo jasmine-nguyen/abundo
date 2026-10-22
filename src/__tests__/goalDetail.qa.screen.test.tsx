@@ -14,6 +14,7 @@ import { pinToday } from './support/clock';
 import { seedHubWith } from './support/goalsScreen';
 import { GOAL_TODAY, GOAL_START, growGoal } from './support/goalPace';
 import { setParams, resetRouter } from './support/routerMock';
+import { startTaps } from './support/tap';
 import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -85,7 +86,7 @@ describe('goal page follows the cache', () => {
     seedHubWith(server, { goals: [CARD] });
     const held = server.hold('/goals');
     setParams({ id: 'card' });
-    render(<WithQueries><GoalDetail /></WithQueries>);
+    await render(<WithQueries><GoalDetail /></WithQueries>);
     expect(screen.getByTestId('goal-detail-loading')).toBeTruthy();
     expect(screen.queryByTestId('goal-detail-missing')).toBeNull();
     expect(screen.queryByText('Credit card')).toBeNull();
@@ -153,7 +154,7 @@ describe('goal page load gate', () => {
     expect(screen.queryByTestId('goal-detail-missing')).toBeNull();
     expect(screen.queryByTestId('goal-detail-edit')).toBeNull();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('goal-detail-retry')); });
+    await startTaps(screen.getByTestId('goal-detail-retry'));
     await waitFor(() => expect(screen.getByText('Holiday')).toBeTruthy());
     expect(screen.queryByTestId('goal-detail-error')).toBeNull();
   });
@@ -163,7 +164,7 @@ describe('goal page load gate', () => {
     seedHubWith(server, { goals: [HOLIDAY] });
     const held = server.hold('/paycycle');
     setParams({ id: 'g1' });
-    render(<WithQueries><GoalDetail /></WithQueries>);
+    await render(<WithQueries><GoalDetail /></WithQueries>);
     await waitFor(() => expect(queryClient.getQueryData(goalsKey)).toBeTruthy());
     expect(screen.getByTestId('goal-detail-loading')).toBeTruthy();
     expect(screen.queryByText('Holiday')).toBeNull();

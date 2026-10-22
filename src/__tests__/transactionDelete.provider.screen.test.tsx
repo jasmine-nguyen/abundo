@@ -45,7 +45,7 @@ type Feed = { pages: FeedPage[] };
 const uncategorizedIds = () => ids(queryClient.getQueryData<Feed>(['uncategorizedFeed'])?.pages.flatMap((p) => p.transactions));
 const recentIds = () => ids(queryClient.getQueryData<Transaction[]>(['transactionsRecent']));
 
-function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
+async function mount() { return (await renderHook(() => useAppContext(), { wrapper })).result; }
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
@@ -53,7 +53,7 @@ afterEach(() => { queryClient.clear(); });
 it('removes the charge from the feed, search and the budget and category lists, and refreshes the totals', async () => {
   seedEveryCopy();
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteTransaction('dup'); });
@@ -72,7 +72,7 @@ it('removes the charge from the feed, search and the budget and category lists, 
 it('a failed delete puts the charge back everywhere and warns', async () => {
   seedEveryCopy();
   server.fail('/transactions/dup', 500);
-  const result = mount();
+  const result = await mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteTransaction('dup'); });
@@ -87,7 +87,7 @@ it('a failed delete puts the charge back everywhere and warns', async () => {
 
 it('drops the charge from the uncategorized feed, the recent window and a deep feed page, keeping page shape', async () => {
   seedPagedFeeds();
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.deleteTransaction('dup'); });
 
   expect(ids(readTransactionsCache(queryClient))).toEqual(['keep', 'older']);
@@ -99,10 +99,10 @@ it('drops the charge from the uncategorized feed, the recent window and a deep f
 it('removes the charge at once, before the server answers', async () => {
   seedPagedFeeds();
   const held = server.hold('/transactions/dup');
-  const result = mount();
+  const result = await mount();
 
   let pending!: Promise<boolean>;
-  act(() => { pending = result.current.deleteTransaction('dup'); });
+  await act(() => { pending = result.current.deleteTransaction('dup'); });
   expect(ids(readTransactionsCache(queryClient))).toEqual(['keep', 'older']);
   expect(uncategorizedIds()).toEqual(['keep']);
   expect(recentIds()).toEqual(['keep']);
@@ -115,7 +115,7 @@ it('removes the charge at once, before the server answers', async () => {
 it('success refreshes the totals and the scoped lists, never the paged feeds (no refetch storm)', async () => {
   seedPagedFeeds();
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.deleteTransaction('dup'); });
 
   const refreshed = invalidatedKeys(invalidate);
@@ -129,10 +129,10 @@ it('a rollback after the caches were cleared (signed out mid-delete) does not br
   seedPagedFeeds();
   server.fail('/transactions/dup', 500);
   const held = server.hold('/transactions/dup');
-  const result = mount();
+  const result = await mount();
 
   let pending!: Promise<boolean>;
-  act(() => { pending = result.current.deleteTransaction('dup'); });
+  await act(() => { pending = result.current.deleteTransaction('dup'); });
   queryClient.clear();
   held.release();
   await act(async () => { await pending; });

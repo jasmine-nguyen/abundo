@@ -39,7 +39,7 @@ export async function refreshInAct(refresh: () => unknown) {
     await act(async () => {
       await refresh();
     });
-    act(() => {
+    await act(() => {
       jest.advanceTimersByTime(0);
     });
     return;
@@ -62,7 +62,7 @@ export const loaded = (queryKey: readonly unknown[]) =>
 
 /** Render inside WithQueries, wait until the first reads have settled, then flush their redraw. */
 export async function renderWithQueries(ui: React.ReactElement) {
-  const view = render(<WithQueries>{ui}</WithQueries>);
+  const view = await render(<WithQueries>{ui}</WithQueries>);
   await settle();
   return view;
 }
@@ -84,10 +84,10 @@ export async function releaseAndSettle(held: { release: () => void }) {
  * `Wrapper` must include WithQueries (support/renderWithApp's WithApp does).
  */
 export async function renderLoaded(ui: React.ReactElement, Wrapper: React.ComponentType<{ children: React.ReactNode }> = WithQueries) {
-  const view = render(<Wrapper><React.Fragment key="loading">{ui}</React.Fragment></Wrapper>);
+  const view = await render(<Wrapper><React.Fragment key="loading">{ui}</React.Fragment></Wrapper>);
   await settle();
   await act(async () => {
-    view.rerender(<Wrapper><React.Fragment key="loaded">{ui}</React.Fragment></Wrapper>);
+    await view.rerender(<Wrapper><React.Fragment key="loaded">{ui}</React.Fragment></Wrapper>);
   });
   await settle();
   return view;

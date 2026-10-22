@@ -37,7 +37,7 @@ installFakeServer();
 
 // Sign out in PRODUCTION order: clear the cache, THEN broadcast 'anon' — which the context's
 // subscription turns into the sessionEpoch bump.
-function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
+async function signOut() { await act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
 
 beforeEach(() => { mockStatus = 'authed'; mockListeners.clear(); queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
@@ -47,13 +47,13 @@ afterEach(() => { queryClient.clear(); });
 // the sign-out (exactly how app/category/edit.tsx re-reads s.getSessionEpoch() across the await).
 // Fail-on-revert: make getSessionEpoch capture a snapshot instead of reading .current (e.g.
 // `useCallback(() => 0, [])`) → the post-sign-out read stays equal to `before` → this test fails.
-it('getSessionEpoch() reflects the live session stamp across a sign-out, even via a stale reference', () => {
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+it('getSessionEpoch() reflects the live session stamp across a sign-out, even via a stale reference', async () => {
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   const s = result.current;               // the stale reference the screen holds across an await
   const before = s.getSessionEpoch();
 
-  signOut();
+  await signOut();
 
   // The SAME captured reference, re-read after the bump, must report the new live value.
   expect(s.getSessionEpoch()).not.toBe(before);
@@ -64,13 +64,13 @@ it('getSessionEpoch() reflects the live session stamp across a sign-out, even vi
 // subscription's `getStatus() !== 'anon'` guard skips the bump and getSessionEpoch() is UNCHANGED
 // — a save spanning a lock/unlock of the SAME account still completes (WHIT-282 only aborts on a
 // genuine session swap). Documents WHY lock does not abort the category-edit save.
-it('getSessionEpoch() does NOT change on a lock broadcast (same-session lock is not an abort)', () => {
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+it('getSessionEpoch() does NOT change on a lock broadcast (same-session lock is not an abort)', async () => {
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   const s = result.current;
   const before = s.getSessionEpoch();
 
-  act(() => { mockSetStatus('locked'); });
+  await act(() => { mockSetStatus('locked'); });
 
   expect(s.getSessionEpoch()).toBe(before);
 });

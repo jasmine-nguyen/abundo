@@ -72,8 +72,8 @@ describe('earnedVsSpent message names the selected cycle', () => {
 });
 
 describe('EarnedVsSpent (render)', () => {
-  it('draws both bars and the surplus headline', () => {
-    render(<EarnedVsSpent earned={6389} spent={1723} cycle={0} testID="evs" />);
+  it('draws both bars and the surplus headline', async () => {
+    await render(<EarnedVsSpent earned={6389} spent={1723} cycle={0} testID="evs" />);
     expect(screen.getByText('$6,389')).toBeTruthy();
     expect(screen.getByText('$1,723')).toBeTruthy();
     expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');            // larger → full
@@ -81,15 +81,15 @@ describe('EarnedVsSpent (render)', () => {
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$4,666 surplus');
   });
 
-  it('a tiny spend against a large income floors to a visible nub, not a hairline', () => {
-    render(<EarnedVsSpent earned={6389} spent={30} cycle={0} testID="evs" />);
+  it('a tiny spend against a large income floors to a visible nub, not a hairline', async () => {
+    await render(<EarnedVsSpent earned={6389} spent={30} cycle={0} testID="evs" />);
     // 30/6389 ≈ 0.47% would be near-invisible → floored to the 3% minimum.
     expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('3%');
     expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');
   });
 
-  it('a zero-spend bar stays empty (the floor never fills a $0 bar)', () => {
-    render(<EarnedVsSpent earned={2975} spent={0} cycle={0} testID="evs" />);
+  it('a zero-spend bar stays empty (the floor never fills a $0 bar)', async () => {
+    await render(<EarnedVsSpent earned={2975} spent={0} cycle={0} testID="evs" />);
     expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('0%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$2,975 surplus');
   });
@@ -99,13 +99,13 @@ describe('EarnedVsSpent (render)', () => {
     ['surplus', 3000, 1000, C.textMid],
     ['broke even', 1000, 1000, C.textMid],
     ['deficit', 1000, 3000, C.bad],
-  ])('the Spent bar colour on a %s', (_case, earned, spent, color) => {
-    render(<EarnedVsSpent earned={earned} spent={spent} cycle={0} testID="evs" />);
+  ])('the Spent bar colour on a %s', async (_case, earned, spent, color) => {
+    await render(<EarnedVsSpent earned={earned} spent={spent} cycle={0} testID="evs" />);
     expect(styleOf(screen.getByTestId('spent-bar')).backgroundColor).toBe(color);
   });
 
-  it('renders nothing when there was neither income nor spend', () => {
-    render(<EarnedVsSpent earned={0} spent={0} cycle={0} testID="evs" />);
+  it('renders nothing when there was neither income nor spend', async () => {
+    await render(<EarnedVsSpent earned={0} spent={0} cycle={0} testID="evs" />);
     expect(screen.queryByTestId('evs')).toBeNull();
     expect(screen.queryByTestId('earned-bar')).toBeNull();
   });

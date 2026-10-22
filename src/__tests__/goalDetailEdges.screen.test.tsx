@@ -11,6 +11,7 @@ import { pinToday } from './support/clock';
 import { seedHubWith } from './support/goalsScreen';
 import { GOAL_TODAY, growGoal } from './support/goalPace';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
+import { startTaps } from './support/tap';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
@@ -49,7 +50,7 @@ describe('goal page edges', () => {
     expect(screen.queryByTestId('goal-detail-edit')).toBeNull();
     expect(screen.queryByText('Holiday')).toBeNull();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('goal-detail-retry')); });
+    await startTaps(screen.getByTestId('goal-detail-retry'));
     await waitFor(() => expect(screen.getByText('Holiday')).toBeTruthy());
     expect(screen.getByTestId('goal-detail-edit')).toBeTruthy();
   });
@@ -60,7 +61,7 @@ describe('goal page edges', () => {
     await renderWithQueries(<GoalDetail />);
     expect(screen.getByText('Past your date — pick a new one?')).toBeTruthy();
     expect(screen.queryByText(/each payday/)).toBeNull();
-    fireEvent.press(screen.getByTestId('goal-pastdue-late'));
+    await fireEvent.press(screen.getByTestId('goal-pastdue-late'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=late');
   });
 });

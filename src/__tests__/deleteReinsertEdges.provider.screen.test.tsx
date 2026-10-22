@@ -18,7 +18,7 @@ import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const mountAppContext = () => renderHook(() => useAppContext(), { wrapper }).result;
+const mountAppContext = async () => (await renderHook(() => useAppContext(), { wrapper })).result;
 
 const goal = (id: string): GoalRecord => ({
   id, name: id, icon: 'star', direction: 'grow',
@@ -42,7 +42,7 @@ describe('deleteGoal — one succeeds + one fails concurrently', () => {
     // successor-anchor lands it correctly at [g2,g3,g4]. This is the fail-on-revert case.
     failGoalDeletes('g3');
     queryClient.setQueryData<GoalRecord[]>(['goals'], ['g1', 'g2', 'g3', 'g4'].map(goal));
-    const result = mountAppContext();
+    const result = await mountAppContext();
     let returns: boolean[] = [];
     await act(async () => {
       returns = await Promise.all([result.current.deleteGoal('g3'), result.current.deleteGoal('g1')]);
@@ -57,7 +57,7 @@ describe('deleteGoal — failure edges', () => {
 
   it('a failed delete of the ONLY element restores [g1] and returns false + toasts', async () => {
     queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1')]);
-    const result = mountAppContext();
+    const result = await mountAppContext();
     let ret: boolean | undefined;
     await act(async () => { ret = await result.current.deleteGoal('g1'); });
     expect(ret).toBe(false);
@@ -85,9 +85,9 @@ describe('failed delete with the cache EVICTED mid-flight leaves the cache empty
     // Held reply so we can wipe the cache between the optimistic remove and the rollback.
     const held = server.hold(path);
     seed();
-    const result = mountAppContext();
+    const result = await mountAppContext();
     let p!: Promise<unknown>;
-    act(() => { p = run(result.current); });
+    await act(() => { p = run(result.current); });
     await refreshInAct(() => queryClient.removeQueries({ queryKey: key }));
     await act(async () => {
       held.fail('DELETE', { status: 500 });

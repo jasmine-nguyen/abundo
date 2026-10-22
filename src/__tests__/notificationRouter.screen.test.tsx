@@ -30,46 +30,46 @@ beforeEach(() => {
 });
 
 describe('NotificationRouter (WHIT-321)', () => {
-  it('navigates to /mortgage for a repayment tap', () => {
+  it('navigates to /mortgage for a repayment tap', async () => {
     mockLastResponse = responseWith({ type: 'repayment' });
-    render(<NotificationRouter />);
+    await render(<NotificationRouter />);
     expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing when there is no tap response', () => {
+  it('does nothing when there is no tap response', async () => {
     mockLastResponse = null;
-    render(<NotificationRouter />);
+    await render(<NotificationRouter />);
     expect(routerSpies.push).not.toHaveBeenCalled();
   });
 
-  it('waits for the navigator: no nav while root state is null, then navigates once ready', () => {
+  it('waits for the navigator: no nav while root state is null, then navigates once ready', async () => {
     mockNavState = null; // navigator not mounted yet
     mockLastResponse = responseWith({ type: 'repayment' });
-    const { rerender } = render(<NotificationRouter />);
+    const { rerender } = await render(<NotificationRouter />);
     expect(routerSpies.push).not.toHaveBeenCalled();
 
     mockNavState = { key: 'root' }; // navigator mounts
-    rerender(<NotificationRouter />);
+    await rerender(<NotificationRouter />);
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates only once for the same tap across re-renders (the hook returns it repeatedly)', () => {
+  it('navigates only once for the same tap across re-renders (the hook returns it repeatedly)', async () => {
     mockLastResponse = responseWith({ type: 'repayment' }, 'tap-1');
-    const { rerender } = render(<NotificationRouter />);
-    rerender(<NotificationRouter />);
-    rerender(<NotificationRouter />);
+    const { rerender } = await render(<NotificationRouter />);
+    await rerender(<NotificationRouter />);
+    await rerender(<NotificationRouter />);
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates again for a distinct later tap (repeated warm taps each route)', () => {
+  it('navigates again for a distinct later tap (repeated warm taps each route)', async () => {
     mockLastResponse = responseWith({ type: 'repayment' }, 'tap-1');
-    const { rerender } = render(<NotificationRouter />);
+    const { rerender } = await render(<NotificationRouter />);
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
 
     // A second, different repayment tap while the app runs → navigate again.
     mockLastResponse = responseWith({ type: 'repayment' }, 'tap-2');
-    rerender(<NotificationRouter />);
+    await rerender(<NotificationRouter />);
     expect(routerSpies.push).toHaveBeenCalledTimes(2);
   });
 });
@@ -78,9 +78,9 @@ describe('NotificationRouter (WHIT-321)', () => {
 // End-to-end for a built route: the component navigates to the budget screen through the real
 // routeForNotificationData. Mock byte-identical to above.
 describe('NotificationRouter — new deep-link types (WHIT-322)', () => {
-  it('[A42] a budget tap carrying a category navigates to that category screen', () => {
+  it('[A42] a budget tap carrying a category navigates to that category screen', async () => {
     mockLastResponse = responseWith({ type: 'budget', category: 'groceries' });
-    render(<NotificationRouter />);
+    await render(<NotificationRouter />);
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/groceries');
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
   });

@@ -77,8 +77,8 @@ beforeEach(() => {
 });
 
 it('[A10] tapping a parent reveals its (indented) subs; tapping again hides them', async () => {
-  renderInsights();
-  fireEvent.press(await screen.findByText('Food'));
+  await renderInsights();
+  await fireEvent.press(await screen.findByText('Food'));
   // both direct children appear...
   expect(await screen.findByText('Groceries')).toBeTruthy();
   expect(screen.getByText('Restaurants')).toBeTruthy();
@@ -87,45 +87,45 @@ it('[A10] tapping a parent reveals its (indented) subs; tapping again hides them
   // the OTHER tree stays collapsed — only Food was toggled
   expect(screen.queryByText('Daily')).toBeNull();
 
-  fireEvent.press(screen.getByText('Food'));
+  await fireEvent.press(screen.getByText('Food'));
   expect(screen.queryByText('Groceries')).toBeNull();
   expect(screen.queryByText('Restaurants')).toBeNull();
 });
 
 it('[A11] a grandchild stays hidden until BOTH ancestors are expanded', async () => {
-  renderInsights();
+  await renderInsights();
   // expand Car → Daily shows, Petrol (grandchild) still hidden
-  fireEvent.press(await screen.findByText('Car'));
+  await fireEvent.press(await screen.findByText('Car'));
   expect(await screen.findByText('Daily')).toBeTruthy();
   expect(screen.queryByText('Petrol')).toBeNull();
   // expand Daily → the grandchild finally shows
-  fireEvent.press(screen.getByText('Daily'));
+  await fireEvent.press(screen.getByText('Daily'));
   expect(await screen.findByText('Petrol')).toBeTruthy();
   // collapse the TOP ancestor → the whole chain (Daily + Petrol) disappears,
   // even though Daily is still in the expanded set (chain gate, not per-row)
-  fireEvent.press(screen.getByText('Car'));
+  await fireEvent.press(screen.getByText('Car'));
   expect(screen.queryByText('Daily')).toBeNull();
   expect(screen.queryByText('Petrol')).toBeNull();
 });
 
 it('[A12] the hero shows the TOP-LEVEL count, not the flat row count', async () => {
-  renderInsights();
+  await renderInsights();
   // 2 top-level trees (Food, Car) — NOT the 3 leaves / 5 total rows
   expect(await screen.findByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 2 categories\b/);
   // expanding must NOT change the headline count
-  fireEvent.press(screen.getByText('Food'));
+  await fireEvent.press(screen.getByText('Food'));
   await screen.findByText('Groceries');
   expect(screen.getByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 2 categories\b/);
 });
 
 it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => {
-  renderInsights();
+  await renderInsights();
   await screen.findByText('Food');
   const foodBtns = screen.getAllByRole('button', { name: /Food/i });
   // the parent row is the button whose a11y state exposes `expanded`
   const foodRow = foodBtns.find((b: any) => b.props.accessibilityState && 'expanded' in b.props.accessibilityState)!;
   expect(foodRow.props.accessibilityState.expanded).toBe(false);
-  fireEvent.press(screen.getByText('Food'));
+  await fireEvent.press(screen.getByText('Food'));
   await screen.findByText('Groceries');
   const foodRow2 = screen.getAllByRole('button', { name: /Food/i })
     .find((b: any) => b.props.accessibilityState && 'expanded' in b.props.accessibilityState)!;
@@ -150,7 +150,7 @@ describe('cycle-independent hero', () => {
   });
 
   it('paints the hero from the breakdown alone', async () => {
-    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
+    await render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 
     expect(await screen.findByTestId('insights-hero-sub')).toHaveTextContent(/^spent across 1 category\b/); // hero painted from breakdown
     expect(screen.queryByText('Loading…')).toBeNull();

@@ -5,7 +5,7 @@
 // the search requests the screen sends. Fake timers drive the typing pause.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
-import { RefreshControl } from 'react-native';
+import { pullControl } from './support/pull';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 jest.mock('../context', () =>
@@ -58,9 +58,9 @@ afterEach(() => { jest.useRealTimers(); });
 describe('asking the server', () => {
   it('asks once, after typing pauses — not on every keystroke', async () => {
     await draw();
-    type('s');
-    type('st');
-    type('steven');
+    await type('s');
+    await type('st');
+    await type('steven');
     await act(async () => { jest.advanceTimersByTime(299); });
     expect(searches()).toEqual([]);
     await pauseTyping();
@@ -73,7 +73,7 @@ describe('what the list shows', () => {
     seedFeedPage(server, FEED, [COLES], 'c1');
     seedSearch([STEVEN_DEEP]);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
@@ -81,7 +81,7 @@ describe('what the list shows', () => {
 
   it('narrows instantly from the loaded rows before the server answers', async () => {
     await draw();
-    type('steven');
+    await type('steven');
     expect(screen.getByText('−\u2060$11.00')).toBeTruthy();
     expect(screen.queryByText('−\u2060$12.50')).toBeNull();
     expect(screen.getByTestId('transactions-searching')).toBeTruthy();
@@ -91,10 +91,10 @@ describe('what the list shows', () => {
     seedFeedPage(server, FEED, []);
     seedSearch([STEVEN_DEEP, row('stephanie', 'Stephanie', -5)]);
     await draw();
-    type('ste');
+    await type('ste');
     await pauseTyping();
     expect(await screen.findByText('−\u2060$5.00')).toBeTruthy();
-    type('steven');
+    await type('steven');
     expect(screen.queryByText('−\u2060$5.00')).toBeNull();
     expect(screen.getByText('−\u2060$77.00')).toBeTruthy();
   });
@@ -103,7 +103,7 @@ describe('what the list shows', () => {
     seedFeedPage(server, FEED, [COLES], 'c1');
     await draw();
     const held = server.hold(SEARCH);
-    type('steven');
+    await type('steven');
     await pauseTyping();
     await waitFor(() => expect(searches()).toHaveLength(1));
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
@@ -117,7 +117,7 @@ describe('what the list shows', () => {
     seedSearch([STEVEN_DEEP]);
     await draw();
     expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
-    type('steven');
+    await type('steven');
     expect(screen.queryByTestId('transactions-load-more')).toBeNull();
   });
 
@@ -125,7 +125,7 @@ describe('what the list shows', () => {
     seedFeedPage(server, FEED, []);
     seedSearch([STEVEN_DEEP], true);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
   });
@@ -137,7 +137,7 @@ describe('match summary', () => {
     server.seed(SEARCH, { transactions: [STEVEN_LOADED, refund, STEVEN_DEEP], truncated: false, matchCount: 3, matchTotal: -85.5 });
     await draw();
 
-    type('steven');
+    await type('steven');
     expect(screen.getByText('−\u2060$11.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
 
@@ -145,7 +145,7 @@ describe('match summary', () => {
     expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('3 matches · −⁠$85.50');
 
     server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 340, matchTotal: -18302 });
-    type('steve');
+    await type('steve');
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
@@ -156,21 +156,21 @@ describe('match summary', () => {
     const pay = { ...row('steven-pay', 'Steven Nguyen', 100, '2026-06-01'), category: 'income' };
     seedSearch([pay, STEVEN_DEEP]);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('2 matches · +$23');
 
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     await waitFor(() => expect(screen.getByTestId('transactions-search-summary')).toHaveTextContent('1 match · −⁠$77'));
 
-    fireEvent.press(screen.getByLabelText('Clear search'));
+    await fireEvent.press(screen.getByLabelText('Clear search'));
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
   });
 
   it('a delete while cut off re-asks the server, hiding the old figures until the new ones land', async () => {
     server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 340, matchTotal: -18302 });
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('340 matches · −⁠$18,302');
 
@@ -191,7 +191,7 @@ describe('match summary', () => {
   ])('%s', async (_name, answer, expected) => {
     server.seed(SEARCH, answer);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     await waitFor(() => expect(screen.getByText('−\u2060$77.00')).toBeTruthy());
     if (expected === null) {
@@ -208,11 +208,11 @@ describe('when the server search fails', () => {
     seedFeedPage(server, FEED, [COLES], 'c1');
     server.fail(SEARCH, 500);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-error')).toBeTruthy();
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
-    fireEvent.press(screen.getByLabelText('Retry searching your full history'));
+    await fireEvent.press(screen.getByLabelText('Retry searching your full history'));
     await waitFor(() => expect(searches()).toEqual([
       '/transactions/search?tab=all&q=steven',
       '/transactions/search?tab=all&q=steven',
@@ -222,7 +222,7 @@ describe('when the server search fails', () => {
   it('keeps showing the loaded matches', async () => {
     server.fail(SEARCH, 500);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-error')).toBeTruthy();
     expect(screen.getByText('−\u2060$11.00')).toBeTruthy();
@@ -233,10 +233,10 @@ describe('when the server search fails', () => {
     seedFeedPage(server, FEED, [COLES], 'c1');
     server.fail(SEARCH, 500);
     await draw();
-    type('stev');
+    await type('stev');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-error')).toBeTruthy();
-    type('steven');
+    await type('steven');
     expect(screen.queryByTestId('transactions-search-error')).toBeNull();
     expect(screen.getByTestId('transactions-searching')).toBeTruthy();
   });
@@ -245,17 +245,17 @@ describe('when the server search fails', () => {
 describe('search transitions', () => {
   beforeEach(() => server.seed('/categories', [GROCERIES_TOP]));
 
-  const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
+  const refreshControl = () => pullControl();
 
   it('[A1] the previous query\'s answer never produces "No matches" for newer live text', async () => {
     seedFeedPage(server, FEED, [COLES], 'c1');
     seedSearch([STEVEN_DEEP]);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
 
-    type('stevenx'); // the screen still holds the "steven" answer until typing pauses
+    await type('stevenx'); // the screen still holds the "steven" answer until typing pauses
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
     expect(screen.getByTestId('transactions-searching')).toBeTruthy();
   });
@@ -264,12 +264,12 @@ describe('search transitions', () => {
     seedFeedPage(server, FEED, [COLES], 'c1');
     seedSearch([STEVEN_DEEP], true);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
     expect(screen.queryByTestId('transactions-load-more')).toBeNull();
 
-    fireEvent.press(screen.getByLabelText('Clear search'));
+    await fireEvent.press(screen.getByLabelText('Clear search'));
     expect(screen.getByText('−\u2060$12.50')).toBeTruthy();
     expect(screen.queryByText('−\u2060$77.00')).toBeNull();
     expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
@@ -286,8 +286,8 @@ describe('search transitions', () => {
     server.seed('/transactions/uncategorized/count', { count: 2 });
     seedSearch([STEVEN_DEEP, filed]);
     await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    type('steven');
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
     expect(searches()).toEqual(['/transactions/search?tab=uncategorized&q=steven']);
@@ -298,7 +298,7 @@ describe('search transitions', () => {
     seedFeedPage(server, FEED, []);
     seedSearch([STEVEN_DEEP]);
     await draw();
-    type('steven');
+    await type('steven');
     await pauseTyping();
     expect(await screen.findByText('−\u2060$77.00')).toBeTruthy();
 
@@ -317,9 +317,9 @@ describe('search transitions', () => {
     server.seed('/transactions/uncategorized/count', { count: 4 }); // unfiled charges exist deeper in history
     seedFeedPage(server, '/transactions/uncategorized/feed', [row('filed', 'Coles', -12.5, '2026-07-01', 'groceries')], 'c1');
     await draw();
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByTestId('transactions-uncategorized-more')).toBeTruthy();
-    type('$');
+    await type('$');
     await pauseTyping();
     expect(searches()).toEqual([]);
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();

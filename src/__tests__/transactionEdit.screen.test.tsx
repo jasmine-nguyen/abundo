@@ -50,8 +50,8 @@ const withTags = (count: number) => seedRow({ tags: Array.from({ length: count }
 it('saves an edited note when Save note is tapped', async () => {
   await draw();
   const note = screen.getByTestId('note-input');
-  fireEvent.changeText(note, 'new note');
-  fireEvent.press(screen.getByTestId('note-save'));
+  await fireEvent.changeText(note, 'new note');
+  await fireEvent.press(screen.getByTestId('note-save'));
   expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'new note' });
 });
 
@@ -59,10 +59,10 @@ it('saves an edited note when Save note is tapped', async () => {
 it('Save note only shows once the note is edited', async () => {
   await draw();
   expect(screen.queryByTestId('note-save')).toBeNull();
-  fireEvent.changeText(screen.getByTestId('note-input'), 'new note');
+  await fireEvent.changeText(screen.getByTestId('note-input'), 'new note');
   expect(screen.getByTestId('note-save')).toBeTruthy();
   // [A3] typed back to the saved note (bar stray spaces) → nothing to save, so it hides again
-  fireEvent.changeText(screen.getByTestId('note-input'), ' old note ');
+  await fireEvent.changeText(screen.getByTestId('note-input'), ' old note ');
   expect(screen.queryByTestId('note-save')).toBeNull();
 });
 
@@ -73,9 +73,9 @@ it.each([
   { case: 'an unchanged note is not saved', typed: [], saved: null },
 ])('leaving the details screen: $case', async ({ typed, saved }) => {
   const view = await draw();
-  for (const text of typed) fireEvent.changeText(screen.getByTestId('note-input'), text);
+  for (const text of typed) await fireEvent.changeText(screen.getByTestId('note-input'), text);
 
-  view.unmount();
+  await view.unmount();
 
   if (saved === null) {
     expect(mockEdit).not.toHaveBeenCalled();
@@ -90,14 +90,14 @@ it.each([
 it('adds a tag on submit, appending to the existing tags', async () => {
   await draw();
   const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, 'travel');
-  fireEvent(input, 'submitEditing');
+  await fireEvent.changeText(input, 'travel');
+  await fireEvent(input, 'submitEditing');
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: ['work', 'travel'] });
 });
 
 it('adds a tag on a trailing comma', async () => {
   await draw();
-  fireEvent.changeText(screen.getByTestId('tag-input'), 'travel,');
+  await fireEvent.changeText(screen.getByTestId('tag-input'), 'travel,');
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: ['work', 'travel'] });
 });
 
@@ -110,8 +110,8 @@ it.each([
 ])('pasted tags: $case', async ({ seed, typed, tags, left }) => {
   seedRow({ tags: seed });
   await draw();
-  if (seed.length === 0) fireEvent.press(screen.getByTestId('tag-add'));
-  fireEvent.changeText(screen.getByTestId('tag-input'), typed);
+  if (seed.length === 0) await fireEvent.press(screen.getByTestId('tag-add'));
+  await fireEvent.changeText(screen.getByTestId('tag-input'), typed);
   expect(mockEdit).toHaveBeenCalledTimes(1);
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags });
   expect(screen.getByTestId('tag-input').props.value).toBe(left);
@@ -132,8 +132,8 @@ it.each([
   expect(screen.queryByTestId('tag-add') !== null).toBe(!tagsOpen);
   if (noteOpen) expect(screen.getByTestId('note-input').props.autoFocus).toBe(false);
 
-  if (!noteOpen) fireEvent.press(screen.getByTestId('note-add'));
-  if (!tagsOpen) fireEvent.press(screen.getByTestId('tag-add'));
+  if (!noteOpen) await fireEvent.press(screen.getByTestId('note-add'));
+  if (!tagsOpen) await fireEvent.press(screen.getByTestId('tag-add'));
   if (!noteOpen) expect(screen.getByTestId('note-input').props.autoFocus).toBe(true);
   if (!tagsOpen) expect(screen.getByTestId('tag-input').props.autoFocus).toBe(true);
 });
@@ -141,14 +141,14 @@ it.each([
 it('ignores a duplicate tag (case-insensitive)', async () => {
   await draw();
   const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, 'WORK');
-  fireEvent(input, 'submitEditing');
+  await fireEvent.changeText(input, 'WORK');
+  await fireEvent(input, 'submitEditing');
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
 it('removes a tag via its ✕ button', async () => {
   await draw();
-  fireEvent.press(screen.getByLabelText('Remove tag work'));
+  await fireEvent.press(screen.getByLabelText('Remove tag work'));
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [] });
 });
 
@@ -157,8 +157,8 @@ it('at 20 tags, a new tag is refused with a friendly toast and is not saved', as
   withTags(20);
   await draw();
   const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, 'overflow');
-  fireEvent(input, 'submitEditing');
+  await fireEvent.changeText(input, 'overflow');
+  await fireEvent(input, 'submitEditing');
   expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
   expect(mockEdit).not.toHaveBeenCalled();
 });
@@ -167,7 +167,7 @@ it('at 20 tags, a new tag is refused with a friendly toast and is not saved', as
 it('a pasted list near the cap saves up to 20 tags and toasts once', async () => {
   withTags(18);
   await draw();
-  fireEvent.changeText(screen.getByTestId('tag-input'), 'x,y,z,w,');
+  await fireEvent.changeText(screen.getByTestId('tag-input'), 'x,y,z,w,');
   expect(mockEdit).toHaveBeenCalledTimes(1);
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [...Array.from({ length: 18 }, (_, i) => `t${i}`), 'x', 'y'] });
   expect(mockToast).toHaveBeenCalledTimes(1);
@@ -180,14 +180,14 @@ const withExcluded = (excluded?: boolean) => seedRow({ budget_excluded: excluded
 it('tapping the toggle when off requests exclusion', async () => {
   withExcluded(undefined);
   await draw();
-  fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
+  await fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
   expect(mockEdit).toHaveBeenCalledWith('t1', { budget_excluded: true });
 });
 
 it('tapping the toggle when on requests re-inclusion', async () => {
   withExcluded(true);
   await draw();
-  fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
+  await fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
   expect(mockEdit).toHaveBeenCalledWith('t1', { budget_excluded: false });
 });
 
@@ -220,16 +220,16 @@ it('shows the plain "not counted" line, not the manual toggle, when the bank aut
 it('does NOT commit a whitespace-only tag on submit, or a bare comma', async () => { // [A16]
   await draw();
   const input = screen.getByTestId('tag-input');
-  fireEvent.changeText(input, '   ');
-  fireEvent(input, 'submitEditing');
+  await fireEvent.changeText(input, '   ');
+  await fireEvent(input, 'submitEditing');
   // A lone "," commits an empty candidate → trimmed-empty → dropped.
-  fireEvent.changeText(input, ',');
+  await fireEvent.changeText(input, ',');
   expect(mockEdit).not.toHaveBeenCalled(); // trimmed-empty tags are dropped, not persisted
 });
 
 it('Save trims surrounding whitespace before persisting', async () => { // [A20]
   await draw();
-  fireEvent.changeText(screen.getByTestId('note-input'), '  padded note  ');
-  fireEvent.press(screen.getByTestId('note-save'));
+  await fireEvent.changeText(screen.getByTestId('note-input'), '  padded note  ');
+  await fireEvent.press(screen.getByTestId('note-save'));
   expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'padded note' });
 });

@@ -55,7 +55,7 @@ function Probe() {
 async function mountOpen() {
   const view = await renderWithQueries(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
   await flush();
-  act(() => chat.openChat());
+  await act(() => chat.openChat());
   return view;
 }
 
@@ -63,7 +63,7 @@ async function mountOpen() {
 async function askAndAnswer() {
   server.once('GET', '/ai/chat/jobs/chat-1', { body: { jobId: 'chat-1', status: 'succeeded', reply: REPLY } });
   jest.useFakeTimers();
-  act(() => chat.send('Average eating out?'));
+  await act(() => chat.send('Average eating out?'));
   await flush();
   await act(async () => { jest.advanceTimersByTime(1000); });
   await flush();
@@ -89,19 +89,19 @@ describe('consent', () => {
     expect(screen.getByTestId('chat-consent')).toBeTruthy();
     expect(screen.queryByTestId('chat-prompt-0')).toBeNull();
 
-    fireEvent.press(screen.getByTestId('chat-consent-continue'));
+    await fireEvent.press(screen.getByTestId('chat-consent-continue'));
     await flush();
     expect(screen.queryByTestId('chat-consent')).toBeNull();
     expect(screen.getByText('What do you want to know about your spending?')).toBeTruthy();
 
-    first.unmount();
+    await first.unmount();
     await mountOpen();
     expect(screen.queryByTestId('chat-consent')).toBeNull();
   });
 
   it('Not now closes the sheet without saving consent', async () => {
     await mountOpen();
-    fireEvent.press(screen.getByTestId('chat-consent-not-now'));
+    await fireEvent.press(screen.getByTestId('chat-consent-not-now'));
     expect(chat.open).toBe(false);
     expect(await AsyncStorage.getItem(CHAT_CONSENT_KEY)).toBeNull();
   });
@@ -112,7 +112,7 @@ describe('with consent given', () => {
 
   it('a suggested prompt is sent straight away', async () => {
     await mountOpen();
-    fireEvent.press(screen.getByTestId('chat-prompt-1'));
+    await fireEvent.press(screen.getByTestId('chat-prompt-1'));
     await flush();
     expect(chatPosts().map((request) => request.body)).toEqual([
       { messages: [{ role: 'user', text: 'Average Eating Out over the last 3 months' }] },
@@ -123,8 +123,8 @@ describe('with consent given', () => {
   it('typing and sending uses the text box; the send button is off while it is empty', async () => {
     await mountOpen();
     expect(screen.getByTestId('chat-send').props.accessibilityState?.disabled).toBe(true);
-    fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
-    fireEvent.press(screen.getByTestId('chat-send'));
+    await fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
+    await fireEvent.press(screen.getByTestId('chat-send'));
     await flush();
     expect(chatPosts().map((request) => request.body)).toEqual([{ messages: [{ role: 'user', text: 'How much on coffee?' }] }]);
     expect(screen.getByTestId('chat-stop')).toBeTruthy();
@@ -134,7 +134,7 @@ describe('with consent given', () => {
     await mountOpen();
     await askAndAnswer();
     expect(styleOf(screen.getByTestId('chat-card-dot')).backgroundColor).toBe(chartCategoryColor('eatingout', { slot: 5 }));
-    fireEvent.press(screen.getByTestId('chat-action-0'));
+    await fireEvent.press(screen.getByTestId('chat-action-0'));
     expect(chat.open).toBe(false);
     expect(routerSpies.push).toHaveBeenCalledWith('/category/eatingout?from=2026-07-30&to=2026-09-09');
   });
@@ -142,7 +142,7 @@ describe('with consent given', () => {
   it('a prompt chip sends its question', async () => {
     await mountOpen();
     await askAndAnswer();
-    fireEvent.press(screen.getByTestId('chat-action-1'));
+    await fireEvent.press(screen.getByTestId('chat-action-1'));
     await flush();
     const posts = chatPosts();
     expect(posts).toHaveLength(2);
@@ -155,7 +155,7 @@ describe('with consent given', () => {
     await mountOpen();
     expect(screen.queryByTestId('chat-new')).toBeNull();
     await askAndAnswer();
-    fireEvent.press(screen.getByTestId('chat-new'));
+    await fireEvent.press(screen.getByTestId('chat-new'));
     expect(chat.messages).toEqual([]);
     expect(screen.queryByTestId('chat-new')).toBeNull();
   });
@@ -163,10 +163,10 @@ describe('with consent given', () => {
   it('an error shows the message with a Retry chip', async () => {
     server.once('POST', '/ai/chat', 'dropped');
     await mountOpen();
-    fireEvent.press(screen.getByTestId('chat-prompt-0'));
+    await fireEvent.press(screen.getByTestId('chat-prompt-0'));
     await flush();
     expect(screen.getByText("Couldn't reach the assistant. Try again.")).toBeTruthy();
-    fireEvent.press(screen.getByTestId('chat-retry'));
+    await fireEvent.press(screen.getByTestId('chat-retry'));
     await flush();
     expect(chatPosts()).toHaveLength(2);
   });
@@ -185,7 +185,7 @@ describe('the answer card difference colour', () => {
     { target: 'an Income target', categoryId: 'salary', amount: 200, over: C.chatUnder, under: C.bad },
   ])('over and under $target', async ({ categoryId, amount, over, under }) => {
     expect(await deltaColor(categoryId, amount)).toBe(over);
-    screen.unmount();
+    await screen.unmount();
     expect(await deltaColor(categoryId, -amount)).toBe(under);
   });
 });
@@ -204,7 +204,7 @@ describe('the answer card budget line', () => {
   const LENGTH_PROPS = ['width', 'height', 'x', 'y', 'x1', 'y1', 'x2', 'y2'];
 
   const expectNoPercentLengths = () => {
-    for (const node of screen.UNSAFE_root.findAll(() => true)) {
+    for (const node of screen.container.queryAll(() => true)) {
       for (const prop of LENGTH_PROPS) {
         const value = node.props[prop];
         if (typeof value === 'string') expect(value).not.toMatch(/%$/);
@@ -217,19 +217,19 @@ describe('the answer card budget line', () => {
   });
 
   const dashedLine = () => screen.getByTestId('chat-card-budget-line')
-    .find((node) => node.props.strokeDasharray === '5 4');
+    .queryAll((node) => node.props.strokeDasharray === '5 4')[0];
 
   it('draws a dashed line the measured width of the plot, with no % lengths', async () => {
     await renderWithQueries(<ChatAnswer text="ok" reply={REPLY} onAction={() => {}} />);
     expectNoPercentLengths();
 
-    layout(300);
+    await layout(300);
     const line = dashedLine();
     expect(line.props).toMatchObject({ x1: 0, x2: 300 });
     expect(line.parent?.props).toMatchObject({ width: 300, height: 2 });
     expectNoPercentLengths();
 
-    layout(200);
+    await layout(200);
     expect(dashedLine().props.x2).toBe(200);
   });
 });

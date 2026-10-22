@@ -46,7 +46,7 @@ export function WithApp({ children }: { children: React.ReactNode }) {
 
 /** Render inside the real AppProvider, wait until the first reads have settled, then flush their redraw. */
 export async function renderWithApp(ui: React.ReactElement) {
-  const view = render(<WithApp>{ui}</WithApp>);
+  const view = await render(<WithApp>{ui}</WithApp>);
   await settle();
   return view;
 }

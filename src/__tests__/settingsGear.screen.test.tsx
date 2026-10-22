@@ -49,7 +49,7 @@ describe.each([
   it('renders a "Settings" header button that opens /settings', async () => {
     await renderWithQueries(ui);
     const btn = screen.getByLabelText('Settings');
-    fireEvent.press(btn);
+    await fireEvent.press(btn);
     expect(routerSpies.push).toHaveBeenCalledWith('/settings');
   });
 });

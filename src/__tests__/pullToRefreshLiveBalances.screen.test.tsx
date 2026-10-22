@@ -9,7 +9,7 @@
 // Real ../api over the fake server; ../auth + expo-router mocked; ../context PARTIALLY mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { RefreshControl } from 'react-native';
+import { pullControl } from './support/pull';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
@@ -42,8 +42,7 @@ const TXNS = [{
 function renderScreen(client = makeClient()) {
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Accounts)));
 }
-const rc = () => screen.UNSAFE_getByType(RefreshControl);
-const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
+const pull = async () => { await act(async () => { pullControl().props.onRefresh(); }); };
 
 describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-212 gaps)', () => {
   beforeEach(() => {
@@ -60,7 +59,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // and the card stays -$100.00 → the -$250.00 findBy never resolves → RED.
   it('[G1] a successful live pull updates the rendered Accounts card old→new', async () => {
     server.once('POST', REFRESH, { body: LIVE });
-    renderScreen();
+    await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();    // card loaded, stored balance shown
 
     await pull();
@@ -76,7 +75,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // hook) → no toast fires on success → RED.
   it('[G2] a successful live pull toasts "Balances up to date"', async () => {
     server.once('POST', REFRESH, { body: LIVE });
-    renderScreen();
+    await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();
     await pull();
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
@@ -87,10 +86,10 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // sync is still running, the gentle "still syncing" toast shows instead of "Balances up to date".
   it('[A7] an Accounts pull whose bank sync is still running shows only the still-syncing toast', async () => {
     server.once('POST', '/transactions/sync', { body: { status: 'syncing' } });
-    renderScreen();
+    await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();
     await pull();
-    await waitFor(() => expect(rc().props.refreshing).toBe(false));
+    await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
     expect(server.sent('POST', '/transactions/sync')).toHaveLength(1);
     expect(mockShowToast.mock.calls).toEqual([['Still syncing with your bank. Pull again in a couple of minutes.']]);
   });
@@ -101,7 +100,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // setQueryData(accountBalancesKey, undefined/[]) on failure → the card blanks to "—" → RED.
   it('[G3] an offline live pull keeps the exact prior card number and toasts', async () => {
     server.once('POST', REFRESH, 'dropped');
-    renderScreen();
+    await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();
 
     await pull();
@@ -116,7 +115,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // failed pull → the call-count assertion reddens.
   it('[G4] the list still refetches when the live balance call fails', async () => {
     server.fail(REFRESH, 502);
-    renderScreen();
+    await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();
     const feedCallsBefore = server.sentUnder('GET', '/transactions/feed').length;
 
@@ -129,25 +128,25 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // the `pulling` flag is not latched by the first failure. Fail-on-revert: drop the `.finally` clear
   // → the 2nd pull's spinner never comes up / never clears → the mid-pull `true` or final `false` reddens.
   it('[G5] a second pull after a FAILED first re-fires the live call and clears the spinner', async () => {
-    renderScreen();
+    await renderScreen();
     expect(await screen.findByText('$100.00')).toBeTruthy();
 
     // First pull: live call rejects.
     const live1 = server.hold(REFRESH);
-    await act(async () => { rc().props.onRefresh(); });
-    expect(rc().props.refreshing).toBe(true);                    // spinner up mid-pull
+    await act(async () => { pullControl().props.onRefresh(); });
+    expect(pullControl().props.refreshing).toBe(true);                    // spinner up mid-pull
     await act(async () => { live1.fail('POST'); });
-    await waitFor(() => expect(rc().props.refreshing).toBe(false)); // cleared despite the failure
+    await waitFor(() => expect(pullControl().props.refreshing).toBe(false)); // cleared despite the failure
     expect(mockShowToast).toHaveBeenCalledTimes(1);
 
     // Second pull: not latched — spins again, applies its fresh number, clears again.
     const live2 = server.hold(REFRESH);
     server.once('POST', REFRESH, { body: LIVE });
-    await act(async () => { rc().props.onRefresh(); });
-    expect(rc().props.refreshing).toBe(true);                    // proves the flag reset
+    await act(async () => { pullControl().props.onRefresh(); });
+    expect(pullControl().props.refreshing).toBe(true);                    // proves the flag reset
     await act(async () => { live2.release(); });
     expect(await screen.findByText('$250.00')).toBeTruthy();    // 2nd pull's live number reached the card
-    await waitFor(() => expect(rc().props.refreshing).toBe(false));
+    await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
     expect(server.sent('POST', REFRESH)).toHaveLength(2);
   });
 
@@ -164,7 +163,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     // otherwise echo the stored -100).
     server.once('POST', REFRESH, { body: LIVE });
 
-    renderScreen();
+    await renderScreen();
     // Card up (feed resolved); balances GET still pending → the pending dash.
     expect(await screen.findByText('—')).toBeTruthy();
 

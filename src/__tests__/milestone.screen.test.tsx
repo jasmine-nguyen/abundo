@@ -95,7 +95,7 @@ it('does NOT show a balance error when only repayment/loanFacts failed (balance 
 
 it('navigates to /milestone from the mortgage screen Sprint summary', async () => {
   await renderWithQueries(<Mortgage />);
-  fireEvent.press(screen.getByTestId('milestone-link'));
+  await fireEvent.press(screen.getByTestId('milestone-link'));
   expect(routerSpies.push).toHaveBeenCalledWith('/milestone');
 });
 
@@ -112,7 +112,7 @@ it('equity card shows real progress toward the deposit target when one is set', 
 it('[A10] (P0) Mortgage "Set deposit target →" still opens the loan form', async () => {
   seedGoal(server, { homeLoan: { balance: 566000, asOf: AS_OF } });
   await renderWithQueries(<Mortgage />);
-  fireEvent.press(screen.getByText('Set deposit target →'));
+  await fireEvent.press(screen.getByText('Set deposit target →'));
   expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
@@ -165,7 +165,7 @@ it('milestone screen shows an equity set-up prompt when the property value is un
 
 it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts load', async () => {
   const held = server.hold('/loanfacts');
-  drawHeld(<Milestone />);
+  await drawHeld(<Milestone />);
   await screen.findByText('Your payoff plan'); // the balance has landed; only the facts are held
   expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
   await releaseAndSettle(held);
@@ -254,7 +254,7 @@ describe('WHIT-377 milestone editor', () => {
 
   it('delete removes a row', async () => {
     await renderWithQueries(<MilestoneEdit />);
-    fireEvent.press(screen.getByTestId('milestone-delete-1')); // remove 'Midway'
+    await fireEvent.press(screen.getByTestId('milestone-delete-1')); // remove 'Midway'
     expect(milestoneLabelAt(0)).toBe('Start');
     expect(milestoneLabelAt(1)).toBe('Payoff');
     expect(screen.queryByTestId('milestone-label-2')).toBeNull();
@@ -273,13 +273,13 @@ describe('WHIT-377 milestone editor', () => {
     // false here, so an isLoading-based guard would wrongly let this save through).
     server.fail('/milestones', 500);
     await renderWithQueries(<MilestoneEdit />);
-    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
     expect(saveMilestonesSpy).not.toHaveBeenCalled();
   });
 
   it('the down arrow swaps a row with its neighbour', async () => {
     await renderWithQueries(<MilestoneEdit />);
-    fireEvent.press(screen.getByTestId('milestone-down-0')); // Start ↓ past Midway
+    await fireEvent.press(screen.getByTestId('milestone-down-0')); // Start ↓ past Midway
     expect(milestoneLabelAt(0)).toBe('Midway');
     expect(milestoneLabelAt(1)).toBe('Start');
   });
@@ -288,9 +288,9 @@ describe('WHIT-377 milestone editor', () => {
     await renderWithQueries(<MilestoneEdit />);
     // Swapping the first two rows leaves Start (300k, 2026) BELOW Midway (200k, 2027): the second
     // row now rises in balance → out of order.
-    fireEvent.press(screen.getByTestId('milestone-down-0'));
+    await fireEvent.press(screen.getByTestId('milestone-down-0'));
     expect(screen.getByText(/out of order/i)).toBeTruthy(); // live inline warning
-    fireEvent.press(screen.getByTestId('milestone-save'));
+    await fireEvent.press(screen.getByTestId('milestone-save'));
     expect(showToastSpy).toHaveBeenCalledWith(expect.stringMatching(/lower balance and a later date/i));
     expect(saveMilestonesSpy).not.toHaveBeenCalled();
   });
@@ -298,7 +298,7 @@ describe('WHIT-377 milestone editor', () => {
   it('a valid save hands the full plan to saveMilestones and navigates back', async () => {
     await renderWithQueries(<MilestoneEdit />);
     // Flush the in-flight guard's async action.
-    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
     expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
     const sent = saveMilestonesSpy.mock.calls[0][0];
     expect(sent.map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
@@ -311,21 +311,21 @@ describe('WHIT-377 milestone editor', () => {
   describe('cold-cache hydrate race', () => {
     it('while the read is still loading: shows one blank row and blocks save', async () => {
       const held = server.hold('/milestones');      // cold cache — nothing resolved yet
-      drawHeld(<MilestoneEdit />);
+      await drawHeld(<MilestoneEdit />);
 
       // One blank row — NOT the old hardcoded default plan (removed).
       expect(milestoneLabelAt(0)).toBe('');
       expect(screen.queryByTestId('milestone-label-1')).toBeNull();  // exactly one row
 
       // Save is blocked while unloaded: pressing it must NOT write a plan.
-      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+      await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
       expect(saveMilestonesSpy).not.toHaveBeenCalled();
       await releaseAndSettle(held);
     });
 
     it('when the real saved plan resolves: the seeded latch re-seeds the rows AND unblocks save', async () => {
       const held = server.hold('/milestones');
-      drawHeld(<MilestoneEdit />);
+      await drawHeld(<MilestoneEdit />);
       expect(milestoneLabelAt(0)).toBe(''); // one blank row first (no hardcoded default)
 
       // The read resolves with the user's actual plan.
@@ -337,7 +337,7 @@ describe('WHIT-377 milestone editor', () => {
       expect(milestoneLabelAt(2)).toBe('Payoff');
 
       // And save now goes through (a valid plan) — the block lifted with the load.
-      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+      await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
       expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
       expect(saveMilestonesSpy.mock.calls[0][0].map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
     });
@@ -347,8 +347,8 @@ describe('WHIT-377 milestone editor', () => {
   describe('target balance box', () => {
     it('user can type a new target balance and save it', async () => {
       await renderWithQueries(<MilestoneEdit />);
-      fireEvent.changeText(screen.getByTestId('milestone-balance-0'), '600000');
-      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+      await fireEvent.changeText(screen.getByTestId('milestone-balance-0'), '600000');
+      await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
       expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
       const sent = saveMilestonesSpy.mock.calls[0][0];
       expect(sent.map((m) => m.targetBalance)).toEqual([600000, 200000, 100000]);
@@ -391,9 +391,9 @@ describe('WHIT-459 suggested-plan gaps (editor)', () => {
   it('"Use a suggested plan" then Save persists the 5 template rows via saveMilestones', async () => {
     server.seed('/milestones', []);
     await renderWithQueries(<MilestoneEdit />);
-    fireEvent.press(screen.getByTestId('milestone-use-template'));
+    await fireEvent.press(screen.getByTestId('milestone-use-template'));
     expect(milestoneLabelAt(0)).toBe('Kickoff');
-    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
     expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
     const sent = saveMilestonesSpy.mock.calls[0][0];
     expect(sent.map((m: { label: string }) => m.label)).toEqual(['Kickoff', 'Quarter way', 'Halfway', 'Three-quarters', 'Target']);
@@ -408,7 +408,7 @@ describe('WHIT-459 suggested-plan gaps (editor)', () => {
   it('does NOT offer the suggested-plan button during a cold load (saved undefined)', async () => {
     server.seed('/milestones', []);
     const held = server.hold('/milestones');
-    drawHeld(<MilestoneEdit />);
+    await drawHeld(<MilestoneEdit />);
     expect(screen.queryByTestId('milestone-use-template')).toBeNull();
     // Once the empty plan lands, the button appears: the cold load alone was hiding it.
     await releaseAndSettle(held);
@@ -430,7 +430,7 @@ describe('WHIT-459 blank-seed save guard (editor)', () => {
     server.seed('/milestones', []);
     await renderWithQueries(<MilestoneEdit />);
     expect(milestoneLabelAt(0)).toBe('');                                   // opens blank, not a default plan
-    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    await act(async () => { await fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
     expect(saveMilestonesSpy).not.toHaveBeenCalled();
     expect(showToastSpy).toHaveBeenCalledWith(expect.stringMatching(/name|target|date/i));
   });
@@ -441,7 +441,7 @@ describe('the mortgage and milestone screens over the fake server', () => {
   it('[A5] mortgage hero waits (no error, no balance) while the first balance read is held, then shows it', async () => {
     seedGoal(server, { homeLoan: { balance: 432900, asOf: AS_OF } });
     const held = server.hold('/homeloan');
-    render(<WithQueries><Mortgage /></WithQueries>);
+    await render(<WithQueries><Mortgage /></WithQueries>);
     await waitFor(() => expect(screen.getByText("We'll show your payoff progress once your balance loads.")).toBeTruthy());
     expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
     expect(screen.queryByText('$67,100')).toBeNull();
@@ -496,7 +496,7 @@ describe('the milestone editor over the fake server', () => {
     server.seed('/milestones', SAVED_MILESTONES);
     await renderWithQueries(<MilestoneEdit />);
     expect(milestoneLabelAt(0)).toBe('Start');
-    fireEvent.changeText(screen.getByTestId('milestone-label-0'), 'Typed');
+    await fireEvent.changeText(screen.getByTestId('milestone-label-0'), 'Typed');
 
     server.seed('/milestones', [{ id: 'z', label: 'Server', targetBalance: 50000, targetDate: '2030-01-01' }]);
     await refreshInAct(() => queryClient.refetchQueries());

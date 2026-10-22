@@ -56,7 +56,7 @@ beforeEach(() => {
 
 it('submitting calls updateRule with the id, not saveManualRule', async () => {
   await openEdit();
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
@@ -64,14 +64,14 @@ it('submitting calls updateRule with the id, not saveManualRule', async () => {
 // WHIT-558: the "keep out of budget" toggle threads its value into updateRule (edit path).
 it('toggling "keep out of budget" passes budgetExcluded:true to updateRule', async () => {
   await openEdit();
-  fireEvent.press(screen.getByTestId('rule-budget-excluded'));
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByTestId('rule-budget-excluded'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
 });
 
 it('prefills the toggle from the edited rule (budgetExcluded:true stays on and is submitted)', async () => {
   await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
 });
 
@@ -79,16 +79,16 @@ it('prefills the toggle from the edited rule (budgetExcluded:true stays on and i
 // object must not drop it when a sibling field changes).
 it('editing only the pattern preserves the prefilled budgetExcluded:true', async () => {
   await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
-  fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'NETFLIX AU');
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'NETFLIX AU');
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX AU', 'subs', true);
 });
 
 // The toggle is genuinely two-way, not write-once.
 it('turning an inherited exclusion OFF submits budgetExcluded:false', async () => {
   await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
-  fireEvent.press(screen.getByTestId('rule-budget-excluded'));
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByTestId('rule-budget-excluded'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
 });
 
@@ -99,20 +99,20 @@ const openNew = (over: Record<string, unknown> = {}, rules: unknown[] = [], cate
 
 it('[WHIT-284] a DEAD prefilled categoryId (its category was deleted) keeps the save button disabled', async () => {
   await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'ghost' }]);
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).not.toHaveBeenCalled(); // dead id dropped → canSave false → no submit
 });
 
 it('[WHIT-284] a DEAD restored draft categoryId (WHIT-277 unlock) keeps the save button disabled', async () => {
   await openNew({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
 it('[WHIT-284] the LAST category was deleted → loaded-but-EMPTY list still drops the dead id (disabled)', async () => {
   // The case a `cats.length > 0` guard would miss: empty list, but LOADED (not loading).
   await openNew({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) }, [], []);
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
@@ -124,13 +124,13 @@ it('[WHIT-284] a valid restored id survives the LOADING window: save is held dis
   server.seed('/categories', CATS);
   const held = server.hold('/categories');
   setMockState({ sheet: { mode: 'addrule' }, toast: null, ...fns, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) } as unknown as AppContext);
-  render(overlaysTree()); // the sheet opens while the categories reply is still held back
-  fireEvent.press(screen.getByText('Add rule'));
+  await render(overlaysTree()); // the sheet opens while the categories reply is still held back
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled(); // loading → id unverifiable → save disabled
 
   await act(async () => held.release());
   await screen.findByText('Subscriptions'); // the list has arrived
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByText('Add rule'));
   // WHIT-538: valid id kept through load → submit now reaches the confirm step.
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
 });
@@ -140,23 +140,23 @@ const NETFLIX_SUBS = { id: 'b1', value: 'NETFLIX', categoryId: 'subs' };
 
 it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', async () => {
   await openNew({}, [NETFLIX_SUBS]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-  fireEvent.press(screen.getByText('Groceries')); // different category → conflict
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  await fireEvent.press(screen.getByText('Groceries')); // different category → conflict
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(screen.getByTestId('rule-conflict')).toBeTruthy();
   expect(fns.saveManualRule).not.toHaveBeenCalled(); // nothing minted yet
 
-  fireEvent.press(screen.getByTestId('rule-conflict-replace'));
+  await fireEvent.press(screen.getByTestId('rule-conflict-replace'));
   expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false); // retarget the surviving rule
   expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
 });
 
 it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submit button', async () => {
   await openNew({}, [NETFLIX_SUBS]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-  fireEvent.press(screen.getByText('Groceries'));
-  fireEvent.press(screen.getByText('Add rule'));
-  fireEvent.press(screen.getByTestId('rule-conflict-cancel'));
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  await fireEvent.press(screen.getByText('Groceries'));
+  await fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId('rule-conflict-cancel'));
   expect(fns.updateRule).not.toHaveBeenCalled();
   expect(fns.saveManualRule).not.toHaveBeenCalled();
   expect(screen.getByTestId('rule-submit')).toBeTruthy(); // back to the normal form
@@ -164,12 +164,12 @@ it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submi
 
 it('[WHIT-355] an exact DUPLICATE on create no-ops (no rule minted) and closes on OK', async () => {
   await openNew({}, [NETFLIX_SUBS]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-  fireEvent.press(screen.getByText('Subscriptions')); // same category → duplicate
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  await fireEvent.press(screen.getByText('Subscriptions')); // same category → duplicate
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(screen.getByText('You already have a rule for “NETFLIX”.')).toBeTruthy();
   expect(fns.saveManualRule).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByTestId('rule-conflict-ok'));
+  await fireEvent.press(screen.getByTestId('rule-conflict-ok'));
   expect(fns.setSheet).toHaveBeenCalledWith(null);
 });
 
@@ -178,27 +178,27 @@ it('[WHIT-355] editing a rule INTO a clash warns with no Replace and writes noth
     { id: 'e1', value: 'OLD', categoryId: 'subs' },
     { id: 'b1', value: 'NETFLIX', categoryId: 'groceries' },
   ]);
-  fireEvent.changeText(screen.getByDisplayValue('OLD'), 'NETFLIX'); // edit e1's pattern onto b1
-  fireEvent.press(screen.getByText('Update rule'));
+  await fireEvent.changeText(screen.getByDisplayValue('OLD'), 'NETFLIX'); // edit e1's pattern onto b1
+  await fireEvent.press(screen.getByText('Update rule'));
   expect(screen.getByTestId('rule-conflict')).toBeTruthy();
   expect(screen.queryByTestId('rule-conflict-replace')).toBeNull(); // edit path: warn only, no Replace
   expect(fns.updateRule).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByTestId('rule-conflict-ok'));
+  await fireEvent.press(screen.getByTestId('rule-conflict-ok'));
   expect(fns.updateRule).not.toHaveBeenCalled();
 });
 
 it('[WHIT-355] editing the pattern after a warning clears it and restores the submit button', async () => {
   await openNew({}, [NETFLIX_SUBS]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-  fireEvent.press(screen.getByText('Groceries'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  await fireEvent.press(screen.getByText('Groceries'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(screen.getByTestId('rule-conflict')).toBeTruthy();
   // Change the pattern to something unique → the stale warning must clear, no Replace lingering.
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'SPOTIFY');
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'SPOTIFY');
   expect(screen.queryByTestId('rule-conflict')).toBeNull();
   expect(screen.getByTestId('rule-submit')).toBeTruthy();
   // And submitting now opens the confirm step for the new rule, never touching the existing NETFLIX one.
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'groceries', budgetExcluded: false });
   expect(fns.updateRule).not.toHaveBeenCalled();
 });
@@ -206,10 +206,10 @@ it('[WHIT-355] editing the pattern after a warning clears it and restores the su
 it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pattern', async () => {
   // Existing rule stored lowercase; user types upper-case + a different category.
   await openNew({}, [{ id: 'b1', value: 'netflix', categoryId: 'subs' }]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-  fireEvent.press(screen.getByText('Groceries'));
-  fireEvent.press(screen.getByText('Add rule'));
-  fireEvent.press(screen.getByTestId('rule-conflict-replace'));
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  await fireEvent.press(screen.getByText('Groceries'));
+  await fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.press(screen.getByTestId('rule-conflict-replace'));
   expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false); // raw NEW pattern, not 'netflix'
 });
 
@@ -246,7 +246,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
   it('[WHIT-284] a DEAD restored id is re-cleaned out of the persisted draft (written back as null)', async () => {
     await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) }));
     expect(lastDraftCategoryId()).toBeNull(); // effect cleared it, not left at 'ghost'
-    fireEvent.press(screen.getByText('Add rule'));
+    await fireEvent.press(screen.getByText('Add rule'));
     expect(fns.saveManualRule).not.toHaveBeenCalled();
   });
 
@@ -265,7 +265,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
     await refreshInAct(() => queryClient.refetchQueries({ queryKey: categoriesKey }));
     await screen.findByText('Subscriptions'); // the list has arrived
     expect(lastDraftCategoryId()).toBe('subs');
-    fireEvent.press(screen.getByText('Add rule'));
+    await fireEvent.press(screen.getByText('Add rule'));
     // WHIT-538: recovered → submit reaches the confirm step.
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
   });
@@ -283,7 +283,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
     await waitFor(() => expect(screen.queryByText('Subscriptions')).toBeNull()); // the new list is on screen
 
     await waitFor(() => expect(lastDraftCategoryId()).toBeNull());   // selection dropped & draft re-cleaned
-    fireEvent.press(screen.getByText('Add rule'));
+    await fireEvent.press(screen.getByText('Add rule'));
     expect(fns.saveManualRule).not.toHaveBeenCalled(); // save now disabled
   });
 });
@@ -323,12 +323,12 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
   // `rule-submit` assertion (and `rule-conflict` being gone) fails.
   it('[WHIT-355] changing the category after a warning dismisses it and restores submit', async () => {
     await openCreate([NETFLIX_SUBS]);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-    fireEvent.press(screen.getByText('Groceries'));
-    fireEvent.press(screen.getByText('Add rule'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+    await fireEvent.press(screen.getByText('Groceries'));
+    await fireEvent.press(screen.getByText('Add rule'));
     expect(screen.getByTestId('rule-conflict')).toBeTruthy();
 
-    fireEvent.press(screen.getByText('Coffee')); // re-pick category while the warning is up
+    await fireEvent.press(screen.getByText('Coffee')); // re-pick category while the warning is up
     expect(screen.queryByTestId('rule-conflict')).toBeNull();     // warning dismissed
     expect(screen.queryByTestId('rule-conflict-replace')).toBeNull();
     expect(screen.getByTestId('rule-submit')).toBeTruthy();        // back to the normal form
@@ -342,8 +342,8 @@ it('[A6] a child category from the server can be picked and is saved by its own 
     ...CATS,
     { id: 'takeaway', name: 'Takeaway', icon: 'coffee', bucket: 'Living', parent: 'groceries' },
   ]);
-  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'MENULOG');
-  fireEvent.press(screen.getByText('Takeaway'));
-  fireEvent.press(screen.getByText('Add rule'));
+  await fireEvent.changeText(screen.getByTestId('rule-value-0'), 'MENULOG');
+  await fireEvent.press(screen.getByText('Takeaway'));
+  await fireEvent.press(screen.getByText('Add rule'));
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'MENULOG', categoryId: 'takeaway', budgetExcluded: false });
 });

@@ -10,6 +10,7 @@ import { resetAuth } from './support/authMock';
 import { seedInsights, renderInsights, resetAi } from './support/insightsScreen';
 import { shareCycleExport } from '../cycleShare';
 import { COFFEE } from './support/categories';
+import { startTaps } from './support/tap';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
@@ -34,15 +35,15 @@ it('user can export this cycle, then last cycle, from the Insights header', asyn
   await renderInsights();
   await screen.findByText('Cafes & Coffee');
 
-  fireEvent.press(screen.getByTestId('insights-export'));
+  await fireEvent.press(screen.getByTestId('insights-export'));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
   expect(share.mock.calls[0][0]).toBe(0);
   expect(share.mock.calls[0][1]('coffee')?.name).toBe('Cafes & Coffee');
   await screen.findByText('Export');
 
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   await screen.findByText('LAST PAY CYCLE');
-  fireEvent.press(screen.getByTestId('insights-export'));
+  await fireEvent.press(screen.getByTestId('insights-export'));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
   expect(share.mock.calls[1][0]).toBe(1);
 });
@@ -53,13 +54,14 @@ it('a second tap while an export is running does not start another', async () =>
   await renderInsights();
   await screen.findByText('Cafes & Coffee');
 
-  fireEvent.press(screen.getByTestId('insights-export'));
-  fireEvent.press(screen.getByTestId('insights-export'));
+  const exportButton = () => screen.getByTestId('insights-export');
+  const first = await startTaps(exportButton(), exportButton());
   await waitFor(() => expect(screen.queryByText('Export')).toBeNull());
-  fireEvent.press(screen.getByTestId('insights-export'));
+  const later = await startTaps(exportButton());
   expect(share).toHaveBeenCalledTimes(1);
 
   await act(async () => finish());
+  await Promise.all([first.settled, later.settled]);
   await screen.findByText('Export');
 });
 
@@ -69,7 +71,7 @@ it('a failed export shows an error alert', async () => {
   await renderInsights();
   await screen.findByText('Cafes & Coffee');
 
-  fireEvent.press(screen.getByTestId('insights-export'));
+  await fireEvent.press(screen.getByTestId('insights-export'));
   await waitFor(() => expect(alert).toHaveBeenCalledWith("Couldn't export", 'Please try again.'));
   alert.mockRestore();
 });

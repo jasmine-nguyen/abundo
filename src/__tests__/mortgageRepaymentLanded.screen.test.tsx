@@ -49,7 +49,7 @@ it('a new repayment lands as a "Just landed" card with a banner, then settles ba
   expect(plainRow()).toBeNull();
   expect(await savedRepaymentNote()).toBe('2026-07-01@1440');
 
-  first.unmount();
+  await first.unmount();
   await renderWithQueries(<Mortgage />);
   expect(screen.queryByTestId('repayment-landed')).toBeNull();
   expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();

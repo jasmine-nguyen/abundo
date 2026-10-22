@@ -13,7 +13,7 @@
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
-import type { ReactTestInstance } from 'react-test-renderer';
+import type { TestInstance } from 'test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from '../../../app/(tabs)/budgets';
 import { makeClient } from './queryClient';
@@ -25,12 +25,12 @@ import { seedBudgetsTab } from './budgetsTab';
 
 export { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
-export function renderBudgets(client: QueryClient = makeClient()) {
-  return { client, ...render(<QueryClientProvider client={client}><Budgets /></QueryClientProvider>) };
+export async function renderBudgets(client: QueryClient = makeClient()) {
+  return { client, ...(await render(<QueryClientProvider client={client}><Budgets /></QueryClientProvider>)) };
 }
 
 export async function renderLoadedBudgets(client?: QueryClient) {
-  const view = renderBudgets(client);
+  const view = await renderBudgets(client);
   await screen.findByText('Cafes & Coffee');
   return view;
 }
@@ -65,7 +65,7 @@ export function heroTotals() {
 }
 
 // A node's effective left/right padding.
-function sidePaddingOf(node: ReactTestInstance) {
+function sidePaddingOf(node: TestInstance) {
   const style = styleOf(node);
   return {
     left: style.paddingLeft ?? style.paddingHorizontal ?? style.padding,
@@ -74,10 +74,9 @@ function sidePaddingOf(node: ReactTestInstance) {
 }
 
 // WHIT-737: host ancestors (node up to the root) that pad the right more than the left — a lane.
-export function rightOnlyGaps(node: ReactTestInstance) {
+export function rightOnlyGaps(node: TestInstance) {
   const gaps: { testID?: string; left?: unknown; right?: unknown }[] = [];
-  for (let host: ReactTestInstance | null = node; host; host = host.parent) {
-    if (typeof host.type !== 'string') continue;
+  for (let host: TestInstance | null = node; host; host = host.parent) {
     const { left, right } = sidePaddingOf(host);
     if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
   }

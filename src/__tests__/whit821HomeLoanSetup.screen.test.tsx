@@ -32,7 +32,7 @@ it('Home loan not set up: one set-up button on the top card that opens the loan 
   expect(screen.queryByText('Add loan details →')).toBeNull();
   expect(screen.queryByTestId('hero-no-home-loan')).toBeNull();
 
-  fireEvent.press(screen.getByRole('button', { name: 'Set up loan details →' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Set up loan details →' }));
   expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
@@ -84,7 +84,7 @@ it('Home loan with facts set + no balance → the waiting copy and the other car
 it.each(['/homeloan', '/repayment'])('Home loan with facts unset, %s still loading → no set-up or "no home loan" flash', async (path) => {
   seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS });
   const held = server.hold(path);
-  drawHeld(<Mortgage />);
+  await drawHeld(<Mortgage />);
   await refreshInAct(() => undefined);
 
   expect(screen.getByTestId('hero-facts-loading')).toBeTruthy();

@@ -58,7 +58,7 @@ beforeEach(() => {
 describe('a lasting failure on every focus-wired composite sends a bounded number of requests', () => {
   it.each(COMPOSITES)('%s: each read is asked for once, then it stops (WHIT-668) [A1]', async (_name, useData) => {
     READ_PATHS.forEach((path) => server.fail(path, 503));
-    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(FocusedScreen, { useData })));
+    await render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(FocusedScreen, { useData })));
     await waitFor(() => expect(latestIsError).toBe(true));
     await pause(200);
     const paths = reads().map((r) => r.path.split('?')[0]);
@@ -69,7 +69,7 @@ describe('a lasting failure on every focus-wired composite sends a bounded numbe
 
 describe('a refetchStale captured early still reads the latest query state', () => {
   it('composite: a first-render refetchStale skips reads that have since loaded fresh [A4]', async () => {
-    const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient({ staleTime: Infinity })) });
+    const { result } = await renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient({ staleTime: Infinity })) });
     const early = result.current.refetchStale; // captured while every read was still pending (stale)
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     const before = reads().length;
@@ -79,7 +79,7 @@ describe('a refetchStale captured early still reads the latest query state', () 
   });
 
   it('composite: a first-render refetchStale re-checks reads that have since gone stale [A5]', async () => {
-    const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
+    const { result } = await renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
     const early = result.current.refetchStale;
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(server.sent('GET', '/rules')).toHaveLength(1);
@@ -88,12 +88,12 @@ describe('a refetchStale captured early still reads the latest query state', () 
   });
 
   it('Transactions: a pre-search refetchStale refreshes the SEARCH (not the feed) once a search is active [A6]', async () => {
-    const { result, rerender } = renderHook(({ q }: { q: string }) => useTransactionsScreenData('all', q), {
+    const { result, rerender } = await renderHook(({ q }: { q: string }) => useTransactionsScreenData('all', q), {
       wrapper: wrapper(makeClient({ staleTime: 0 })), initialProps: { q: '' },
     });
     const early = result.current.refetchStale;
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    rerender({ q: 'woolies' });
+    await rerender({ q: 'woolies' });
     await waitFor(() => expect(result.current.search.answered).toBe(true));
     const feedBefore = server.sentUnder('GET', '/transactions/feed').length;
     const searchBefore = server.sentUnder('GET', '/transactions/search').length;
@@ -106,7 +106,7 @@ describe('a refetchStale captured early still reads the latest query state', () 
 describe('after a lasting failure, a real focus / Retry still asks again', () => {
   it('a focus (refetchStale) re-asks the errored read exactly once [A8]', async () => {
     server.fail('/breakdown', 503);
-    const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     await pause(100);
     expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
@@ -118,7 +118,7 @@ describe('after a lasting failure, a real focus / Retry still asks again', () =>
 
   it('Retry (refetch) fires every read, even fresh ones [A9]', async () => {
     server.fail('/breakdown', 503);
-    const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     await act(async () => { result.current.refetch(); });
     await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(2));

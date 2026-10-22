@@ -32,8 +32,8 @@ import TabsLayout from '../../app/(tabs)/_layout';
 
 beforeEach(() => { captured = undefined; });
 
-it('keeps inactive tab screens attached so the fade never leaves a blank scene', () => {
+it('keeps inactive tab screens attached so the fade never leaves a blank scene', async () => {
   mockReduceMotion = false;
-  render(<TabsLayout />);
+  await render(<TabsLayout />);
   expect(captured?.detachInactiveScreens).toBe(false);
 });

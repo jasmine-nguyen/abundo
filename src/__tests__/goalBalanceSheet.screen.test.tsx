@@ -18,6 +18,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { renderedPickerProps } from './support/mockDatePicker';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -66,8 +67,8 @@ beforeEach(() => {
 
 it('Save resends the FULL manual record with the new balance + as-of today, then closes', async () => {
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await startTaps(screen.getByTestId('goal-balance-save'));
 
   expect(fns.saveGoal).toHaveBeenCalledTimes(1);
   const [id, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
@@ -88,21 +89,20 @@ it('a double-tap on Save while the save is in flight saves once', async () => {
   let resolveSave: (v: boolean) => void = () => {};
   fns.saveGoal.mockImplementation(() => new Promise<boolean>((res) => { resolveSave = res; }));
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
 
-  await act(async () => {
-    fireEvent.press(screen.getByTestId('goal-balance-save'));
-    fireEvent.press(screen.getByTestId('goal-balance-save'));   // same frame, save still pending
-  });
+  const save = screen.getByTestId('goal-balance-save');
+  const taps = await startTaps(save, save);   // same frame, save still pending
   expect(fns.saveGoal).toHaveBeenCalledTimes(1);
   await act(async () => { resolveSave(true); });
+  await taps.settled;
   expect(fns.setSheet).toHaveBeenCalledTimes(1);
 });
 
 it('a $0 balance is valid (a paid-off manual debt)', async () => {
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '0');
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '0');
+  await startTaps(screen.getByTestId('goal-balance-save'));
   expect(fns.showToast).not.toHaveBeenCalled();
   const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
   expect(body).toMatchObject({ manual_balance: 0 });
@@ -110,8 +110,8 @@ it('a $0 balance is valid (a paid-off manual debt)', async () => {
 
 it.each(['12abc', '-5', ''])('rejects a bad balance (%p) with a toast and no save', async (input) => {
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), input);
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), input);
+  await startTaps(screen.getByTestId('goal-balance-save'));
   expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
   expect(fns.saveGoal).not.toHaveBeenCalled();
 });
@@ -119,8 +119,8 @@ it.each(['12abc', '-5', ''])('rejects a bad balance (%p) with a toast and no sav
 it('a failed save keeps the sheet OPEN (does not navigate/close)', async () => {
   fns.saveGoal.mockImplementation(async () => false);
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await startTaps(screen.getByTestId('goal-balance-save'));
   expect(fns.saveGoal).toHaveBeenCalledTimes(1);
   await act(async () => {});
   expect(fns.setSheet).not.toHaveBeenCalled();
@@ -134,9 +134,9 @@ it('renders nothing when the goal is absent (deleted elsewhere / cold cache)', a
 
 it('picking a date backdates manual_as_of to the chosen ISO date', async () => {
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
-  fireEvent.press(screen.getByTestId('mock-datepicker')); // the mock fires 2026-06-20
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await fireEvent.press(screen.getByTestId('mock-datepicker')); // the mock fires 2026-06-20
+  await startTaps(screen.getByTestId('goal-balance-save'));
   const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
   expect(body.manual_as_of).toBe('2026-06-20');
 });
@@ -161,7 +161,7 @@ describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
     const { rerender } = await openSheet();
     expect(screen.getByDisplayValue('12000')).toBeTruthy(); // g2
     mockState = sheetState('g5');
-    await act(async () => { rerender(overlaysTree()); });
+    await act(async () => { await rerender(overlaysTree()); });
     expect(screen.getByDisplayValue('300')).toBeTruthy();   // g5 — not the stale 12000
     expect(screen.queryByDisplayValue('12000')).toBeNull();
   });
@@ -179,8 +179,8 @@ it('Save carries a saved checkpoint ladder through untouched', async () => {
     ],
   }];
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+  await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await startTaps(screen.getByTestId('goal-balance-save'));
 
   const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
   expect(body.checkpoints).toEqual([

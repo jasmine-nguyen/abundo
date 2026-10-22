@@ -22,6 +22,7 @@ import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { applyRulesReport } from './support/applyRulesReport';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -96,7 +97,7 @@ it('files on tap, then closes and toasts on a clean run', async () => {
     dryRun: false, matched: 4, filed: [1, 2, 3, 4].map((n) => ({ id: `t${n}`, category: 'groceries' })), remaining: 0,
   })));
 
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+  await startTaps(screen.getByTestId('apply-rules-apply'));
 
   expect(fns.fileCharges).toHaveBeenCalledTimes(1);
   expect(fns.setSheet).toHaveBeenCalledWith(null);
@@ -110,10 +111,7 @@ it('files once on a same-frame double tap', async () => {
   fns.fileCharges.mockResolvedValue(filed(report({ dryRun: false, filed: [{ id: 't1', category: 'groceries' }], remaining: 0 })));
 
   const button = screen.getByTestId('apply-rules-apply');
-  await act(async () => {
-    fireEvent.press(button);
-    fireEvent.press(button);
-  });
+  await (await startTaps(button, button)).settled;
 
   expect(fns.fileCharges).toHaveBeenCalledTimes(1);
 });
@@ -129,7 +127,7 @@ it('keeps the sheet open with the work left, counting failed rows too', async ()
     filed: Array.from({ length: 298 }, (_, n) => ({ id: `t${n}`, category: 'groceries' })),
   })));
 
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+  await startTaps(screen.getByTestId('apply-rules-apply'));
 
   expect(screen.getByText(/202 still to go/)).toBeTruthy();
   expect(screen.getByText(/2 we couldn't save/)).toBeTruthy();
@@ -146,7 +144,7 @@ it('renders a write result from a server that does not send alreadyFiled', async
   delete (withoutField as { alreadyFiled?: string[] }).alreadyFiled;
   fns.fileCharges.mockResolvedValue(filed(withoutField));
 
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+  await startTaps(screen.getByTestId('apply-rules-apply'));
 
   expect(screen.getByText(/2 still to go/)).toBeTruthy();
 });
@@ -161,15 +159,15 @@ it('counts the whole job across rounds, not just the last one', async () => {
   });
 
   fns.fileCharges.mockResolvedValueOnce(filed(round(300, 339)));
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+  await startTaps(screen.getByTestId('apply-rules-apply'));
   expect(screen.getByText('Filed 300 charges so far')).toBeTruthy();
 
   fns.fileCharges.mockResolvedValueOnce(filed(round(300, 39)));
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+  await startTaps(screen.getByTestId('apply-rules-continue'));
   expect(screen.getByText('Filed 600 charges so far')).toBeTruthy();
 
   fns.fileCharges.mockResolvedValueOnce(filed(round(39, 0)));
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+  await startTaps(screen.getByTestId('apply-rules-continue'));
   expect(fns.showToast).toHaveBeenCalledWith('Filed 639 charges with your rules.');
 });
 
@@ -191,7 +189,7 @@ it('offers a retry when the preview fails, and the retry re-previews', async () 
   expect(screen.getByText('Nothing has been changed. Please try again.')).toBeTruthy();
 
   fns.previewFiling.mockResolvedValue(filed(report({ matched: 4 })));
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-retry')); });
+  await startTaps(screen.getByTestId('apply-rules-retry'));
 
   expect(fns.previewFiling).toHaveBeenCalledTimes(2);
   expect(screen.getByTestId('apply-rules-apply')).toBeTruthy();
@@ -207,11 +205,12 @@ it('runs one preview even when Try again is double-tapped', async () => {
   const pending = deferred<FilingResult>();
   fns.previewFiling.mockReturnValue(pending.promise);
   const retry = screen.getByTestId('apply-rules-retry');
-  await act(async () => { fireEvent.press(retry); fireEvent.press(retry); });
+  const taps = await startTaps(retry, retry);
 
   expect(fns.previewFiling).toHaveBeenCalledTimes(2);   // one retry, not two
 
   await act(async () => { pending.resolve(filed(report({ matched: 4 }))); });
+  await taps.settled;
   expect(screen.getByText('File 4 charges')).toBeTruthy();
 });
 
@@ -222,7 +221,7 @@ it('says the outcome is uncertain when the write fails', async () => {
   await mountWithPreview(report({ matched: 4 }));
   fns.fileCharges.mockResolvedValue(FAILED);
 
-  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+  await startTaps(screen.getByTestId('apply-rules-apply'));
 
   expect(screen.getByText("Couldn't finish")).toBeTruthy();
   expect(screen.getByText(/Some charges may already have been filed/)).toBeTruthy();
@@ -249,7 +248,7 @@ describe('rounds', () => {
     fns.fileCharges.mockResolvedValueOnce(filed(roundReport({
       dryRun: false, matched: 512, filed: filedRows(300), remaining: 212,
     })));
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+    await startTaps(screen.getByTestId('apply-rules-apply'));
   }
 
   // --- [A12] the mount effect ---------------------------------------------------
@@ -263,7 +262,7 @@ describe('rounds', () => {
     expect(fns.previewFiling).toHaveBeenCalledTimes(1);
 
     mockState = { ...mockState, toast: 'Saved' } as unknown as AppContext;
-    await act(async () => { view.rerender(overlaysTree()); });
+    await act(async () => { await view.rerender(overlaysTree()); });
 
     expect(fns.previewFiling).toHaveBeenCalledTimes(1);
     expect(screen.getByText('File 4 charges')).toBeTruthy();   // the same plan, undisturbed
@@ -280,10 +279,7 @@ describe('rounds', () => {
 
     fns.fileCharges.mockResolvedValue(filed(roundReport({ dryRun: false, filed: filedRows(212, 'b'), remaining: 0 })));
     const button = screen.getByTestId('apply-rules-continue');
-    await act(async () => {
-      fireEvent.press(button);
-      fireEvent.press(button);
-    });
+    await (await startTaps(button, button)).settled;
 
     expect(fns.fileCharges).toHaveBeenCalledTimes(2);   // round 1 + ONE round 2
   });
@@ -298,7 +294,7 @@ describe('rounds', () => {
     await firstRound();
 
     fns.fileCharges.mockResolvedValueOnce(FAILED);
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+    await startTaps(screen.getByTestId('apply-rules-continue'));
 
     expect(screen.getByText("Couldn't finish")).toBeTruthy();
     expect(screen.queryByText('Filed 300 charges so far')).toBeNull();
@@ -322,7 +318,7 @@ describe('rounds', () => {
       dryRun: false, matched: 4, filed: [], failed: ['t1', 't2', 't3', 't4'], remaining: 0,
     })));
 
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+    await startTaps(screen.getByTestId('apply-rules-apply'));
 
     expect(fns.setSheet).not.toHaveBeenCalledWith(null);
     expect(fns.showToast).not.toHaveBeenCalled();
@@ -343,11 +339,11 @@ describe('rounds', () => {
     });
 
     fns.fileCharges.mockResolvedValueOnce(filed(stalledRound));
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+    await startTaps(screen.getByTestId('apply-rules-apply'));
     expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();   // one retry is fair
 
     fns.fileCharges.mockResolvedValueOnce(filed(stalledRound));       // identical result
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+    await startTaps(screen.getByTestId('apply-rules-continue'));
 
     expect(screen.getByText("Something's stopping these")).toBeTruthy();
     expect(screen.queryByTestId('apply-rules-continue')).toBeNull();   // no fourth tap offered
@@ -362,7 +358,7 @@ describe('rounds', () => {
     fns.fileCharges.mockResolvedValueOnce(filed(roundReport({
       dryRun: false, matched: 512, filed: filedRows(200, 'b'), remaining: 12,
     })));
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+    await startTaps(screen.getByTestId('apply-rules-continue'));
 
     expect(screen.getByText('Filed 500 charges so far')).toBeTruthy();
     expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();
@@ -383,7 +379,7 @@ describe('rounds', () => {
       alreadyFiled: ['t1', 't2', 't3', 't4'], remaining: 0,
     })));
 
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+    await startTaps(screen.getByTestId('apply-rules-apply'));
 
     expect(fns.setSheet).toHaveBeenCalledWith(null);
     // Honest: this round filed nothing itself, so it must not claim a number it did not write.
@@ -403,7 +399,7 @@ describe('rounds', () => {
       dryRun: false, matched: 512, filed: [], failed: [],
       alreadyFiled: Array.from({ length: 100 }, (_, i) => `x${i}`), remaining: 112,
     })));
-    await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+    await startTaps(screen.getByTestId('apply-rules-continue'));
 
     expect(screen.queryByText("Something's stopping these")).toBeNull();
     expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();   // still worth another tap

@@ -29,9 +29,9 @@ beforeEach(() => {
 });
 
 // [M1] auth still required — the backlog gate is additive, not a replacement.
-it('does NOT fetch while signed out, even with enabled=true', () => {
+it('does NOT fetch while signed out, even with enabled=true', async () => {
   setAuthStatusQuietly('anon');
-  const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
+  const { result } = await renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(merchantRequests()).toHaveLength(0);
   expect(result.current.merchants).toBeUndefined();
 });

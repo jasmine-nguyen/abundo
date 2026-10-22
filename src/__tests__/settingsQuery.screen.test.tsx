@@ -74,26 +74,27 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   });
 
   it('shows the category count and "Edit" loan status from the query', async () => {
-    renderSettings();
+    await renderSettings();
     expect(await screen.findByText('3')).toBeTruthy(); // 3 categories
     expect(screen.getByText('Edit')).toBeTruthy(); // ready loan facts
   });
 
   it('shows "Set up" when loan facts are not filled in', async () => {
     server.seed(LOAN_FACTS, EMPTY_FACTS);
-    renderSettings();
+    await renderSettings();
     await screen.findByText('3');
     expect(screen.getByText('Set up')).toBeTruthy();
   });
 
   it('shows "…" (not "0") while first-loading, then the real count', async () => {
-    const heldCats = server.hold(CATEGORIES);
-    renderSettings();
+    // Hold all three reads: v14's awaited render can let an unheld one land before the check.
+    const held = [server.hold(CATEGORIES), server.hold(LOAN_FACTS), server.hold(RULES)];
+    await renderSettings();
     // All three query-backed rows — categories count, loan status, AND the Automation-rules
     // count (WHIT-198) — show "…" while first-loading; none flashes a misleading "0".
     expect(screen.getAllByText('…').length).toBe(3);
     expect(screen.queryByText('0')).toBeNull(); // fail-on-revert for the rules-row "0" flash
-    await act(async () => { heldCats.release(); });
+    await act(async () => { held.forEach((h) => h.release()); });
     expect(await screen.findByText('3')).toBeTruthy();
   });
 
@@ -104,14 +105,14 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   // Fail-on-revert: change settings.tsx to always-"…" or `rulesLoading || rules.length === 0 ? '…'`
   // (a wrong "fix" that also hides the real empty state) → "0" never appears → this fails.
   it('shows a genuine "0" once the rules read settles empty (the gate does not hide a real 0)', async () => {
-    renderSettings();
+    await renderSettings();
     await screen.findByText('3'); // categories settled → load is past first paint
     expect(await screen.findByText('0')).toBeTruthy(); // Automation rules: real empty state, not a stuck "…"
   });
 
   it('does not fetch before login, then fires on auth flip to authed', async () => {
     setAuthStatusQuietly('anon');
-    renderSettings();
+    await renderSettings();
     expect(categoryReads()).toBe(0);
     expect(loanReads()).toBe(0);
 
@@ -152,7 +153,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     // Reverting settings.tsx to `String(categoriesCount)` brings the "0" back and fails this.
     it('Settings renders "—" + a Retry (not the misleading "0") once the read has hard-failed', async () => {
       server.fail(CATEGORIES, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
+      await render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       // loan facts still resolve → "Edit" lets us wait past first paint deterministically.
       expect(await screen.findByText('Edit')).toBeTruthy();
@@ -168,7 +169,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     it('press Retry → categories + loan facts refetch and the rows recover', async () => {
       server.fail(CATEGORIES, 500);
       server.fail(LOAN_FACTS, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
+      await render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await waitFor(() => expect(screen.getAllByText('—').length).toBe(2)); // both rows honestly unknown
@@ -176,7 +177,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
       // re-arm both reads to succeed (a queued reply goes out ahead of the failure), then retry
       server.once('GET', CATEGORIES, { body: CATS });
       server.once('GET', LOAN_FACTS, { body: READY_FACTS });
-      fireEvent.press(retry);
+      await fireEvent.press(retry);
 
       await waitFor(() => expect(screen.queryByText('—')).toBeNull()); // rows recovered
       expect(screen.getByText('2')).toBeTruthy(); // real categories count
@@ -187,7 +188,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
   describe('cache-first: a background-refetch failure keeps the last-good value (WHIT-198)', () => {
     it('does NOT surface categoriesError once a real count has been cached', async () => {
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
+      const { result } = await renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
       await waitFor(() => expect(result.current.categoriesCount).toBe(2)); // first load succeeded
 
       // the NEXT read fails — but we already hold a cached count
@@ -208,7 +209,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   describe('rules-row hard failure', () => {
     it('rules read fails → Automation rules shows "—" + the setup retry, others keep their values', async () => {
       server.fail(RULES, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
+      await render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy(); // categories loaded (2), unaffected
       expect(screen.getByText('Edit')).toBeTruthy(); // loan loaded, unaffected
@@ -219,13 +220,13 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
     it('the setup Retry re-reads the failed rules query too (fan-out includes rules)', async () => {
       server.fail(RULES, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
+      await render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await screen.findByText('—'); // rules failed → "—"
 
       server.once('GET', RULES, { body: ONE_RULE }); // re-arm the rules read
-      fireEvent.press(retry);
+      await fireEvent.press(retry);
 
       expect(await screen.findByText('1')).toBeTruthy(); // rules recovered to its real count
       expect(screen.queryByText('—')).toBeNull();
@@ -268,7 +269,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   describe('loan-row-ONLY hard failure (categories fine)', () => {
     it('loan shows "—" + retry, categories keeps its real count (no fake "Set up")', async () => {
       server.fail(LOAN_FACTS, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
+      await render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy();        // categories count intact
       expect(screen.getByText('—')).toBeTruthy();               // loan row honestly unknown
@@ -285,7 +286,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   describe('non-server rows stay usable during a categories outage', () => {
     it('profile, Automation rules, Pay cycle, Log out all render + Log out still fires', async () => {
       server.fail(CATEGORIES, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
+      await render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       await screen.findByTestId('settings-setup-error');    // outage is live
       expect(await screen.findByText('Edit')).toBeTruthy(); // the OTHER server row (loan) settled fine
@@ -294,7 +295,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
       expect(screen.getByText('Fortnightly')).toBeTruthy(); // Pay cycle name unaffected
       expect(screen.getByText('Log out')).toBeTruthy();
 
-      fireEvent.press(screen.getByTestId('settings-logout')); // Log out still works mid-outage
+      await fireEvent.press(screen.getByTestId('settings-logout')); // Log out still works mid-outage
       expect(mockSignOut).toHaveBeenCalledTimes(1);
       expect(routerSpies.replace).toHaveBeenCalledWith('/');
     });

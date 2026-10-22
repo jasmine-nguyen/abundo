@@ -16,8 +16,9 @@ import { screen } from '@testing-library/react-native';
 import { toISODate } from '../../dateutil';
 
 // The props the screen passed to its one rendered picker (whichever mock is installed).
+// Both mocks keep those props on their drawn element as `pickerProps`.
 export const renderedPickerProps = (): Record<string, unknown> =>
-  screen.UNSAFE_getByType(require('@react-native-community/datetimepicker').default).props;
+  screen.getByTestId('mock-datepicker').props.pickerProps;
 
 // A date always comfortably in the future regardless of when the suite runs. Relative to the real
 // clock on purpose: the date guards are date-sensitive, so a hardcoded year would rot.
@@ -29,14 +30,15 @@ let pickedDate: Date = FUTURE;
 export const setPickedDate = (date: Date) => { pickedDate = date; };
 export const resetPickedDate = () => { pickedDate = FUTURE; };
 
-// The jest.mock factory body — returns a lightweight picker that emits the current pickedDate
-// through onChange using the real (event, date) signature (the Date is the SECOND arg).
-export function mockDatePickerModule() {
+// The jest.mock factory body — returns a lightweight picker that emits `fixedDate` (the global
+// jest.setup mock) or the current pickedDate through onChange using the real (event, date)
+// signature (the Date is the SECOND arg).
+export function mockDatePickerModule(fixedDate?: Date) {
   const React = require('react');
   const { Pressable, Text } = require('react-native');
   const MockPicker = (props: any) => React.createElement(
     Pressable,
-    { testID: 'mock-datepicker', onPress: () => props.onChange && props.onChange({ type: 'set' }, pickedDate) },
+    { testID: 'mock-datepicker', pickerProps: props, onPress: () => props.onChange && props.onChange({ type: 'set' }, fixedDate ?? pickedDate) },
     React.createElement(Text, null, 'picker'),
   );
   return { __esModule: true, default: MockPicker };

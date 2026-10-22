@@ -67,7 +67,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
 
   it('refetchStale REFETCHES a STALE single-page cache (focus refresh re-checks the newest page)', async () => {
     const client = makeClient({ staleTime: 0 }); // immediately stale
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     expect(feedReads()).toHaveLength(1);
 
@@ -83,7 +83,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // longer passed to invalidateQueries and the assertion fails.
     const client = makeClient({ staleTime: Infinity });
     const spy = jest.spyOn(client, 'invalidateQueries');
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
 
     await act(async () => { await result.current.refetchList(); });
@@ -100,7 +100,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // skipped by design here, not merely because it happened to be fresh.
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
     const client = makeClient({ staleTime: 0 }); // everything immediately stale
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
     expect(balanceReads()).toHaveLength(1);
     expect(feedReads()).toHaveLength(1);
@@ -116,12 +116,12 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // keeps the last-good balance (no card blanks mid-refetch).
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]); // initial load OK
     const client = makeClient({ staleTime: Infinity }); // retry:false
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
     expect(result.current.isError).toBe(false);
 
     server.fail(BALANCES, 503); // the pull-forced refetch fails
-    act(() => { result.current.refetch(); });
+    await act(() => { result.current.refetch(); });
     await waitFor(() => expect(balanceReads()).toHaveLength(2)); // Retry forced the re-read
     await waitFor(() => expect(client.getQueryState(accountBalancesKey)?.status).toBe('error')); // it truly failed
     expect(result.current.isError).toBe(false);           // ...yet the list status is unaffected
@@ -132,7 +132,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
   it('isError surfaces when ONLY the categories read fails (transactions still populated)', async () => {
     server.fail('/categories', 500);
     const client = makeClient({ staleTime: Infinity }); // retry:false
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.transactions.length).toBe(1); // tx loaded despite categories failing
   });
@@ -162,7 +162,7 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
     server.once('GET', FEED, page([tx('t1')], 'cur1'));
     server.once('GET', FEED, page([tx('t2')], 'cur2')); // page 2
     server.once('GET', FEED, page([tx('t1')], 'cur1')); // pull → page 1 fresh
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     await act(async () => { result.current.loadMore(); });
     await waitFor(() => expect(result.current.transactions.length).toBe(2)); // 2 pages loaded
@@ -178,7 +178,7 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
     // focus refetch re-fetches BOTH loaded pages by their own cursors:
     server.once('GET', FEED, page([tx('t1')], 'cur1'));
     server.once('GET', FEED, page([tx('t2')], null));
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) }); // stale
+    const { result } = await renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) }); // stale
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     await act(async () => { result.current.loadMore(); });
     await waitFor(() => expect(result.current.transactions.length).toBe(2)); // 2 pages
@@ -192,7 +192,7 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
   it('the bounded recent hook reads its OWN endpoint, not the feed (Decision 2 separation)', async () => {
     seedFeedPage(server, FEED, [tx('f1')]);
     server.seed('/transactions', [tx('r1')]);
-    const { result } = renderHook(() => useRecentTransactionsScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useRecentTransactionsScreenData(), { wrapper: wrapper(makeClient()) });
 
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     expect(result.current.transactions[0].transaction_id).toBe('r1'); // from fetchTransactions, not the feed
@@ -220,7 +220,7 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
   it('drives the list from the uncategorized feed, not the plain feed', async () => {
     seedFeedPage(server, FEED, [tx('plain1')]);
     seedFeedPage(server, UNCATEGORIZED_FEED, [tx('u1'), tx('u2')]);
-    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
 
     await waitFor(() => expect(result.current.transactions.length).toBe(2));
     expect(ids(result.current.transactions)).toEqual(['u1', 'u2']); // uncategorized feed, not 'plain1'
@@ -230,7 +230,7 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
   it('Load More pages the uncategorized feed via its OWN cursor', async () => {
     server.once('GET', UNCATEGORIZED_FEED, page([tx('u1')], 'ucur1'));
     server.once('GET', UNCATEGORIZED_FEED, page([tx('u2')], null));
-    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
 
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     expect(result.current.hasMore).toBe(true);
@@ -246,7 +246,7 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
     // uncategorized rows sit deeper. hasMore keys off the cursor, not the row count, so Load More stays.
     server.once('GET', UNCATEGORIZED_FEED, page([], 'ucur1'));
     server.once('GET', UNCATEGORIZED_FEED, page([tx('deep')], null));
-    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.transactions.length).toBe(0); // sparse first page
@@ -262,7 +262,7 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
     // the already-loaded plain feed and be false.)
     const heldUncategorized = server.hold(UNCATEGORIZED_FEED);
     server.once('GET', UNCATEGORIZED_FEED, page([tx('u1')], null));
-    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
 
     await waitFor(() => expect(result.current.isLoading).toBe(true));
     await act(async () => { heldUncategorized.release(); });
@@ -282,7 +282,7 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
   ])('Load More on $feed sends its cursor URL-encoded, on its own path', async ({ path, otherPath, useFeed, firstPage, cursor, nextPath, loaded }) => {
     server.once('GET', path, page(firstPage, cursor));
     server.once('GET', path, page([tx('p2')], null));
-    const { result } = renderHook(() => useFeed(true), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useFeed(true), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.hasNextPage).toBe(true));
 
     await act(async () => { await result.current.fetchNextPage(); });
@@ -312,21 +312,21 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
   });
 
   it("each date heading shows that day's total (WHIT-847)", async () => {
-    renderTransactions();
+    await renderTransactions();
     expect(await screen.findByText(/ · \$42 spent$/)).toBeTruthy();
   });
 
   // [A4] a day with nothing that counts shows the bare date, no " · " suffix
   it('a date heading with nothing that counts shows just the date (WHIT-847)', async () => {
     seedFeedPage(server, FEED, [{ ...TXNS[0], amount: 900, category: 'income' }]);
-    renderTransactions();
+    await renderTransactions();
     expect(await screen.findByText('+$900.00')).toBeTruthy();
     expect(screen.getByText('Wed 1 Jul')).toBeTruthy();
   });
 
   it('a transient 5xx retries and self-heals — no error shown', async () => {
     server.once('GET', FEED, { status: 503 });
-    renderTransactions(makeClient({ retry: 2 }));
+    await renderTransactions(makeClient({ retry: 2 }));
     expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-error')).toBeNull();
     expect(feedReads()).toHaveLength(2);
@@ -334,19 +334,19 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   it('a sustained feed failure sends a bounded number of requests, and Retry recovers (WHIT-668)', async () => {
     server.fail(FEED, 503);
-    renderTransactions(makeClient());
+    await renderTransactions(makeClient());
     expect(await screen.findByTestId('transactions-error')).toBeTruthy();
     await pause(200);
     expect(feedReads()).toHaveLength(1);
 
     server.once('GET', FEED, { body: { transactions: TXNS, nextCursor: null } }); // ahead of the failure
-    fireEvent.press(screen.getByTestId('transactions-retry'));
+    await fireEvent.press(screen.getByTestId('transactions-retry'));
     expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
   });
 
   it('does not fetch before login, then fires on auth flip to authed', async () => {
     setAuthStatusQuietly('anon');
-    renderTransactions();
+    await renderTransactions();
     expect(feedReads()).toHaveLength(0);
 
     await act(async () => {
@@ -369,7 +369,7 @@ describe('useTransactionDetailScreenData (WHIT-614)', () => {
 
   it('never creates a search query in the cache', async () => {
     const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(client.getQueryCache().findAll({ queryKey: transactionsSearchKey })).toHaveLength(0);
   });
@@ -377,7 +377,7 @@ describe('useTransactionDetailScreenData (WHIT-614)', () => {
   it('isError surfaces when the feed read fails', async () => {
     server.fail(FEED, 500);
     const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });

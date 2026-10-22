@@ -5,6 +5,7 @@
 // (not a stuck spinner). ../../src/auth + expo-router mocked (mirrors the base suite).
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { startTaps } from './support/tap';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
@@ -20,9 +21,9 @@ jest.mock('../../src/auth', () => ({
 import Login from '../../app/index';
 
 /** Fill the fields so the Log in button is enabled (canSubmit). */
-function fill(getByTestId: (id: string) => unknown) {
-  fireEvent.changeText(getByTestId('login-email') as never, 'me@x.com');
-  fireEvent.changeText(getByTestId('login-password') as never, 'secret');
+async function fill(getByTestId: (id: string) => unknown) {
+  await fireEvent.changeText(getByTestId('login-email') as never, 'me@x.com');
+  await fireEvent.changeText(getByTestId('login-password') as never, 'secret');
 }
 
 beforeEach(() => {
@@ -31,19 +32,19 @@ beforeEach(() => {
   mockSignInWithGoogle.mockReset();
 });
 
-it('Log in does nothing while the fields are empty (disabled)', () => {
-  const { getByTestId } = render(<Login />);
-  fireEvent.press(getByTestId('login-submit'));
+it('Log in does nothing while the fields are empty (disabled)', async () => {
+  const { getByTestId } = await render(<Login />);
+  await fireEvent.press(getByTestId('login-submit'));
   expect(mockSignInWithPassword).not.toHaveBeenCalled();
 });
 
 it('double-tapping Log in only starts ONE password sign-in (busy latch)', async () => {
   mockSignInWithPassword.mockReturnValue(new Promise<never>(() => {})); // never resolves
-  const { getByTestId } = render(<Login />);
-  fill(getByTestId);
-  fireEvent.press(getByTestId('login-submit'));
-  fireEvent.press(getByTestId('login-submit'));
-  fireEvent.press(getByTestId('login-submit'));
+  const { getByTestId } = await render(<Login />);
+  await fill(getByTestId);
+  await startTaps(getByTestId('login-submit'));
+  await startTaps(getByTestId('login-submit'));
+  await startTaps(getByTestId('login-submit'));
   await waitFor(() => expect(mockSignInWithPassword).toHaveBeenCalledTimes(1));
 });
 
@@ -53,19 +54,19 @@ it.each([
 ] as const)('%s is ignored while the other sign-in is mid-flight', async (_case, first, firstCall, second, secondCall) => {
   mockSignInWithPassword.mockReturnValue(new Promise<never>(() => {}));
   mockSignInWithGoogle.mockReturnValue(new Promise<never>(() => {}));
-  const { getByTestId } = render(<Login />);
-  fill(getByTestId);
-  fireEvent.press(getByTestId(first));
+  const { getByTestId } = await render(<Login />);
+  await fill(getByTestId);
+  await startTaps(getByTestId(first));
   await waitFor(() => expect(firstCall).toHaveBeenCalledTimes(1));
-  fireEvent.press(getByTestId(second));
+  await startTaps(getByTestId(second));
   expect(secondCall).not.toHaveBeenCalled();
 });
 
 it('the keyboard "go" key (onSubmitEditing) submits the password sign-in', async () => {
   mockSignInWithPassword.mockResolvedValue({ ok: true });
-  const { getByTestId } = render(<Login />);
-  fill(getByTestId);
-  fireEvent(getByTestId('login-password'), 'submitEditing');
+  const { getByTestId } = await render(<Login />);
+  await fill(getByTestId);
+  await fireEvent(getByTestId('login-password'), 'submitEditing');
   await waitFor(() => expect(mockSignInWithPassword).toHaveBeenCalledWith('me@x.com', 'secret'));
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
@@ -74,11 +75,11 @@ it('clears an earlier error once a retry succeeds', async () => {
   mockSignInWithPassword
     .mockResolvedValueOnce({ ok: false, error: 'Incorrect email or password.' })
     .mockResolvedValueOnce({ ok: true });
-  const { getByTestId, findByText, queryByText } = render(<Login />);
-  fill(getByTestId);
-  fireEvent.press(getByTestId('login-submit'));
+  const { getByTestId, findByText, queryByText } = await render(<Login />);
+  await fill(getByTestId);
+  await fireEvent.press(getByTestId('login-submit'));
   expect(await findByText('Incorrect email or password.')).toBeTruthy();
-  fireEvent.press(getByTestId('login-submit'));
+  await fireEvent.press(getByTestId('login-submit'));
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
   expect(queryByText('Incorrect email or password.')).toBeNull();
 });
@@ -87,11 +88,11 @@ it('a THROWN auth call clears busy and shows a generic error (not a stuck spinne
   // signInWithPassword is never-throw by contract; the try/catch is belt-and-braces.
   // Fail-on-revert: removing it leaves busy stuck and no error box.
   mockSignInWithPassword.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({ ok: true });
-  const { getByTestId, findByText } = render(<Login />);
-  fill(getByTestId);
-  fireEvent.press(getByTestId('login-submit'));
+  const { getByTestId, findByText } = await render(<Login />);
+  await fill(getByTestId);
+  await fireEvent.press(getByTestId('login-submit'));
   expect(await findByText(/something went wrong/i)).toBeTruthy();
   // busy cleared → a retry actually runs and navigates (proves not stuck).
-  fireEvent.press(getByTestId('login-submit'));
+  await fireEvent.press(getByTestId('login-submit'));
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });

@@ -27,7 +27,7 @@ afterEach(() => { jest.restoreAllMocks(); });
 
 it('user sees the saved summary, can generate a new one (with spinner) and retry a failed one, and refresh keeps data on failure', async () => {
   server.seed('/insights/ai', insights('saved summary'));
-  const { result } = renderHook(() => useAiInsights(), { wrapper });
+  const { result } = await renderHook(() => useAiInsights(), { wrapper });
 
   await waitFor(() => expect(result.current.insights?.summary).toBe('saved summary'));
   expect(result.current.isLoading).toBe(false);
@@ -45,7 +45,7 @@ it('user sees the saved summary, can generate a new one (with spinner) and retry
   const held = server.hold('/insights/ai');
   server.once('POST', '/insights/ai', { body: insights('fresh summary') });
   let pending!: Promise<unknown>;
-  act(() => { pending = result.current.generate(GOAL); });
+  await act(() => { pending = result.current.generate(GOAL); });
   await waitFor(() => expect(result.current.isLoading).toBe(true));
   expect(result.current.isError).toBe(false);
   await act(async () => { held.release(); await pending; });
@@ -68,24 +68,24 @@ it('user sees the saved summary, can generate a new one (with spinner) and retry
 
 it('sign-out clears the summary and spinner, and a generate answering after re-sign-in is thrown away', async () => {
   server.seed('/insights/ai', insights('old account summary'));
-  const { result } = renderHook(() => useAiInsights(), { wrapper });
+  const { result } = await renderHook(() => useAiInsights(), { wrapper });
   await waitFor(() => expect(result.current.insights?.summary).toBe('old account summary'));
 
   const held = server.hold('/insights/ai');
   server.once('POST', '/insights/ai', { body: insights('late old account summary') });
   let pending!: Promise<unknown>;
-  act(() => { pending = result.current.generate(null); });
+  await act(() => { pending = result.current.generate(null); });
   await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
   await waitFor(() => expect(result.current.isLoading).toBe(true));
 
-  signOut();
+  await signOut();
   await waitFor(() => expect(result.current.insights).toBeNull());
   expect(result.current.isLoading).toBe(false);
   expect(result.current.isError).toBe(false);
 
   // A new account signs in before the old generate answers.
   server.seed('/insights/ai', insights(null));
-  act(() => { setAuthStatus('authed'); });
+  await act(() => { setAuthStatus('authed'); });
   await act(async () => { held.release(); await pending; });
   await settle();
 
@@ -96,16 +96,16 @@ it('sign-out clears the summary and spinner, and a generate answering after re-s
 
 it("a stale generate failing after re-sign-in neither stops the new session's spinner nor shows an error", async () => {
   server.seed('/insights/ai', insights(null));
-  const { result } = renderHook(() => useAiInsights(), { wrapper });
+  const { result } = await renderHook(() => useAiInsights(), { wrapper });
   const heldA = server.hold('/insights/ai');
   let pendingA!: Promise<unknown>;
-  act(() => { pendingA = result.current.generate(null); });
+  await act(() => { pendingA = result.current.generate(null); });
   await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
 
-  signOut();
-  act(() => { setAuthStatus('authed'); });
+  await signOut();
+  await act(() => { setAuthStatus('authed'); });
   const heldB = server.hold('/insights/ai');
-  act(() => { void result.current.generate(null); });
+  await act(() => { void result.current.generate(null); });
   await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(2));
   await waitFor(() => expect(result.current.isLoading).toBe(true));
 
@@ -118,16 +118,16 @@ it("a stale generate failing after re-sign-in neither stops the new session's sp
 
 it('a generate settling during a Face ID lock (same session) is kept', async () => {
   server.seed('/insights/ai', insights(null));
-  const { result } = renderHook(() => useAiInsights(), { wrapper });
+  const { result } = await renderHook(() => useAiInsights(), { wrapper });
   const held = server.hold('/insights/ai');
   server.once('POST', '/insights/ai', { body: insights('my insights') });
   let pending!: Promise<unknown>;
-  act(() => { pending = result.current.generate(null); });
+  await act(() => { pending = result.current.generate(null); });
   await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
 
-  act(() => { setAuthStatus('locked'); });
+  await act(() => { setAuthStatus('locked'); });
   await act(async () => { held.release(); await pending; });
-  act(() => { setAuthStatus('authed'); });
+  await act(() => { setAuthStatus('authed'); });
 
   await waitFor(() => expect(result.current.insights?.summary).toBe('my insights'));
 });
@@ -142,15 +142,15 @@ it('the analyse spinner survives the coach card unmounting and remounting while 
   }
   const Screen = ({ showCard }: { showCard: boolean }) => wrapper({ children: showCard ? <CoachCard /> : null });
 
-  const view = render(<Screen showCard />);
+  const view = await render(<Screen showCard />);
   await settle();
   const held = server.hold('/insights/ai');
   server.once('POST', '/insights/ai', { body: insights('fresh') });
-  act(() => { void latest.generate(null); });
+  await act(() => { void latest.generate(null); });
   await waitFor(() => expect(latest.isLoading).toBe(true));
 
-  view.rerender(<Screen showCard={false} />); // switch to last cycle
-  view.rerender(<Screen showCard />); // back to this cycle, request still running
+  await view.rerender(<Screen showCard={false} />); // switch to last cycle
+  await view.rerender(<Screen showCard />); // back to this cycle, request still running
 
   expect(latest.isLoading).toBe(true);
   await act(async () => { held.release(); });
@@ -162,12 +162,12 @@ it('the analyse spinner survives the coach card unmounting and remounting while 
 it('a refresh landing after a generate does not overwrite the generated summary', async () => {
   server.seed('/insights/ai', insights('saved'));
   const fetchSpy = jest.spyOn(api, 'fetchAiInsights');
-  const { result } = renderHook(() => useAiInsights(), { wrapper });
+  const { result } = await renderHook(() => useAiInsights(), { wrapper });
   await waitFor(() => expect(result.current.insights?.summary).toBe('saved'));
 
   let answerRefresh!: (value: api.AiInsights) => void;
   fetchSpy.mockImplementationOnce(() => new Promise((resolve) => { answerRefresh = resolve; }));
-  act(() => { void result.current.refresh(); });
+  await act(() => { void result.current.refresh(); });
   await waitFor(() => expect(answerRefresh).toBeDefined());
 
   server.once('POST', '/insights/ai', { body: insights('generated') });
@@ -182,11 +182,11 @@ it('a refresh landing after a generate does not overwrite the generated summary'
 it('reads nothing while signed out, then reads the summary once signed in', async () => {
   setAuthStatusQuietly('anon');
   server.seed('/insights/ai', insights('mine'));
-  const { result } = renderHook(() => useAiInsights(), { wrapper });
+  const { result } = await renderHook(() => useAiInsights(), { wrapper });
   await settle();
   expect(server.sent('GET', '/insights/ai')).toHaveLength(0);
   expect(result.current.insights).toBeNull();
 
-  act(() => { setAuthStatus('authed'); });
+  await act(() => { setAuthStatus('authed'); });
   await waitFor(() => expect(result.current.insights?.summary).toBe('mine'));
 });

@@ -48,7 +48,7 @@ describe('Accounts tab', () => {
     // Recover: the next feed read answers (a queued reply wins over the standing failure).
     server.once('GET', '/transactions/feed', { body: { transactions: [ROW], nextCursor: null } });
     const balanceReads = server.sent('GET', '/accounts/balances').length;
-    fireEvent.press(screen.getByTestId('accounts-retry'));
+    await fireEvent.press(screen.getByTestId('accounts-retry'));
     expect(await screen.findByText('ANZ')).toBeTruthy();
     expect(screen.queryByTestId('accounts-error')).toBeNull();
     // Retry also re-reads the STORED balances (cheap, no live bank call).
@@ -99,7 +99,7 @@ describe('Account detail', () => {
     await renderWithApp(<AccountDetail />);
     expect(screen.getByTestId('account-error')).toBeTruthy();
     server.once('GET', '/transactions/feed', { body: { transactions: [ROW], nextCursor: null } });
-    fireEvent.press(screen.getByTestId('account-retry'));
+    await fireEvent.press(screen.getByTestId('account-retry'));
     expect(await screen.findByText('Woolworths')).toBeTruthy();
     expect(screen.queryByTestId('account-error')).toBeNull();
     await settle();
@@ -114,7 +114,7 @@ describe('Rules', () => {
     await renderWithApp(<Rules />);
     expect(screen.getByText('Could not load your rules.')).toBeTruthy();
     server.once('GET', '/rules', { body: [{ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' }] });
-    fireEvent.press(screen.getByTestId('rules-retry'));
+    await fireEvent.press(screen.getByTestId('rules-retry'));
     expect(await screen.findByText('NETFLIX')).toBeTruthy();
     expect(screen.getByText('Subscriptions')).toBeTruthy();
     expect(screen.queryByText('Could not load your rules.')).toBeNull();

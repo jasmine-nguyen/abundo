@@ -39,19 +39,19 @@ afterEach(() => {
 
 // WHIT-192: seed the ['transactions'] + ['categories'] caches applyCategory reads (the
 // provider no longer eager-loads), then mount.
-function mount(transactions: Transaction[] = [txn('t1'), txn('t2')]) {
+async function mount(transactions: Transaction[] = [txn('t1'), txn('t2')]) {
   seedTransactionsCache(queryClient, transactions);
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   // ['budgets', cycleLen] caches the RAW Record<categoryId, BudgetRollup> (select maps it).
   queryClient.setQueryData(['budgets', 14], {});
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
 it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but NOT the feed', async () => {
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -63,18 +63,18 @@ it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but
 
 it('applyCategory(one) rolls the cache back on failure', async () => {
   server.fail('/transactions/t1', 500);
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('one'); });
 
   expect(cachedCategory('t1')).toBeNull(); // query cache reverted
 });
 
 it('applyCategory(all) writes every same-merchant charge into the cache + invalidates', async () => {
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
   await act(async () => { await result.current.applyCategory('all'); });
 
@@ -88,9 +88,9 @@ it('applyCategory(all) writes every same-merchant charge into the cache + invali
 it('applyCategory(all) rolls back ONLY the failed ids in the cache (partial)', async () => {
   // t2's save comes back not-updated → only t2 reverts; t1 stays categorised.
   server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
-  const result = mount();
+  const result = await mount();
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(cachedCategory('t1')).toBe('groceries'); // saved → stays
@@ -104,10 +104,10 @@ it('applyCategory(all) rolls back ONLY the failed ids in the cache (partial)', a
 it('applyCategory(all) re-files the tapped charge even when it is already categorised', async () => {
   // t1 already sits under Dining; t2 is uncategorised. Re-filing "all" as Groceries must move
   // BOTH — the tapped t1 (which the sweep filter would otherwise skip) and the swept t2.
-  const result = mount([{ ...txn('t1'), category: 'dining' }, txn('t2')]);
+  const result = await mount([{ ...txn('t1'), category: 'dining' }, txn('t2')]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(cachedCategory('t1')).toBe('groceries'); // tapped charge re-filed despite prior category
@@ -116,10 +116,10 @@ it('applyCategory(all) re-files the tapped charge even when it is already catego
 
 it('applyCategory(all) reverts a failed tapped charge to its PREVIOUS category (not null)', async () => {
   server.once('PATCH', '/transactions', { body: { results: [] } }); // every id fails to save
-  const result = mount([{ ...txn('t1'), category: 'dining' }]);
+  const result = await mount([{ ...txn('t1'), category: 'dining' }]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(cachedCategory('t1')).toBe('dining'); // failed re-file → back to its real prior category
@@ -130,10 +130,10 @@ it('applyCategory(all) reverts a failed tapped charge to its PREVIOUS category (
 const existingRule = (categoryId: string) => [{ id: 'existing', pattern: 'COLES', categoryId, isNew: false }];
 
 it('[WHIT-355] applyCategory(all) does NOT create a second rule when an identical one exists (duplicate), but still files charges', async () => {
-  const result = mount();
+  const result = await mount();
   queryClient.setQueryData(['rules'], existingRule('groceries')); // same pattern + same category
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(ruleMints()).toHaveLength(0); // no duplicate rule minted
@@ -142,11 +142,11 @@ it('[WHIT-355] applyCategory(all) does NOT create a second rule when an identica
 });
 
 it('[WHIT-355] applyCategory(all) neither creates nor changes a rule on a clash, and leaves the existing rule alone', async () => {
-  const result = mount();
+  const result = await mount();
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
   queryClient.setQueryData(['rules'], existingRule('dining')); // same pattern, DIFFERENT category
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(ruleMints()).toHaveLength(0);   // no second, fighting rule
@@ -170,10 +170,10 @@ it('[WHIT-491] applyCategory(all) mints one rule per distinct spelling of the sa
   // both (normalised match), so BOTH must get a stored rule or future Westpac charges go unfiled.
   const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
-  const result = mount([anz, westpac]);
+  const result = await mount([anz, westpac]);
   queryClient.setQueryData(['rules'], []);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(cachedCategory('t1')).toBe('groceries');
@@ -191,10 +191,10 @@ it('[WHIT-491] applyCategory(all) does NOT mint a rule from a swept no-merchant 
   // (it would carry the ref/phone tokens and match nothing). Only the tapped clean spelling mints.
   const posted = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const pendingAuth = merchantTxn('t2', 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', '');
-  const result = mount([posted, pendingAuth]);
+  const result = await mount([posted, pendingAuth]);
   queryClient.setQueryData(['rules'], []);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(cachedCategory('t2')).toBe('groceries'); // the pending auth IS swept + filed
@@ -209,10 +209,10 @@ it('[WHIT-491] applyCategory(all) dedups spellings that differ only by internal 
   const tapped = merchantTxn('t1', 'UNIFLEX MASSAGE', 'UNIFLEX MASSAGE');
   const doubleSpace = merchantTxn('t2', 'UNIFLEX  MASSAGE', 'UNIFLEX  MASSAGE'); // ws-variant of t1
   const joined = merchantTxn('t3', 'UNIFLEXMASSAGE', 'UNIFLEXMASSAGE'); // genuinely distinct
-  const result = mount([tapped, doubleSpace, joined]);
+  const result = await mount([tapped, doubleSpace, joined]);
   queryClient.setQueryData(['rules'], []);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(ruleMints()).toHaveLength(2); // ws-variant folded away
@@ -228,10 +228,10 @@ it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save f
   // Rules mint in sweep order: the ANZ spelling, then the Westpac one.
   server.once('POST', '/rules', { body: { id: 'r-anz', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' } });
   server.once('POST', '/rules', { status: 500 });
-  const result = mount([anz, westpac]);
+  const result = await mount([anz, westpac]);
   queryClient.setQueryData(['rules'], []);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
@@ -247,11 +247,11 @@ it('[WHIT-491] applyCategory(all) skips only the spelling that clashes with an e
   // the new one, skip the clashing one (never a second fighting rule), and surface the clash.
   const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
-  const result = mount([anz, westpac]);
+  const result = await mount([anz, westpac]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
   queryClient.setQueryData(['rules'], [{ id: 'existing', pattern: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'dining', isNew: false }]);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   // The new spelling mints; the clashing one does not.
@@ -266,7 +266,7 @@ it('[WHIT-491] applyCategory(all) skips only the spelling that clashes with an e
 // --- WHIT-291: applyCategoryToMany (multi-select batch re-file) ------------------------------
 
 it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + invalidates', async () => {
-  const result = mount([txn('t1'), txn('t2'), txn('t3')]);
+  const result = await mount([txn('t1'), txn('t2'), txn('t3')]);
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't3'], 'groceries'); });
@@ -281,7 +281,7 @@ it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + inv
 
 it('applyCategoryToMany reverts only the FAILED ids to their previous category (partial)', async () => {
   server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } }); // t2 not saved
-  const result = mount([{ ...txn('t1'), category: 'dining' }, { ...txn('t2'), category: 'dining' }]);
+  const result = await mount([{ ...txn('t1'), category: 'dining' }, { ...txn('t2'), category: 'dining' }]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't2'], 'groceries'); });
@@ -310,7 +310,7 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
       { transactions: [txn('p1a'), txn('p1b')], nextCursor: 'cur1' },
       { transactions: [txn('p2')], nextCursor: null },
     ]);
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.applyTransactionEdit('p2', { notes: 'hi' }); });
 
@@ -327,7 +327,7 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
   it('an edit on an OVERLAP charge patches the recent cache too, not just the feed', async () => {
     seedTransactionsPages(queryClient, [{ transactions: [txn('p1')], nextCursor: null }]);
     queryClient.setQueryData(['transactionsRecent'], [txn('p1')]); // same charge sits in both caches
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.applyTransactionEdit('p1', { notes: 'x' }); });
 
@@ -342,7 +342,7 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
   it('a write on a RECENT-ONLY charge (beyond the feed) actually fires and files it', async () => {
     seedTransactionsPages(queryClient, [{ transactions: [txn('feedOnly')], nextCursor: 'cur1' }]); // feed lacks r1
     queryClient.setQueryData(['transactionsRecent'], [txn('r1')]); // r1 lives ONLY in the recent cache
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.applyTransactionEdit('r1', { notes: 'x' }); });
 
@@ -363,10 +363,10 @@ const batches = () => batchSaves().map((r) => (r.body as { updates: { id: string
 it("applyCategory('all') files the tapped charge and mints the rule when the sweep is empty", async () => {
   server.once('POST', '/rules', { body: { id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' } });
   // Origin doesn't count to a budget -> no OTHER charge is swept; only the tapped charge is filed.
-  const result = mount([{ ...txn('t1'), counts_to_budget: false }]);
+  const result = await mount([{ ...txn('t1'), counts_to_budget: false }]);
   queryClient.setQueryData(['rules'], []);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
   expect(batches()).toEqual([[{ id: 't1', category: 'groceries', account_id: 'a1' }]]);  // the tapped charge is filed
@@ -381,7 +381,7 @@ it("applyCategory('all') files the tapped charge and mints the rule when the swe
 // must not send the same id twice. Fail-on-revert: drop the `new Set(...)` dedupe and the batch
 // would carry two {id:'t1'} rows.
 it('applyCategoryToMany dedupes repeated ids to a single batch update', async () => {
-  const result = mount([txn('t1')]);
+  const result = await mount([txn('t1')]);
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't1', 't1'], 'groceries'); });
 

@@ -33,7 +33,7 @@ function Probe() {
 async function mountOpen() {
   await renderWithQueries(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
   await flush();
-  act(() => chat.openChat());
+  await act(() => chat.openChat());
 }
 
 beforeEach(async () => {
@@ -46,8 +46,8 @@ beforeEach(async () => {
 describe('Ask Abundo send haptic', () => {
   it('pressing Send with a typed message gives one light buzz', async () => {
     await mountOpen();
-    fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
-    fireEvent.press(screen.getByTestId('chat-send'));
+    await fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
+    await fireEvent.press(screen.getByTestId('chat-send'));
     await flush();
 
     expect(server.sent('POST', '/ai/chat')).toHaveLength(1);
@@ -58,8 +58,8 @@ describe('Ask Abundo send haptic', () => {
   it('a rejected haptic still sends the message and clears the box', async () => {
     jest.mocked(Haptics.impactAsync).mockImplementationOnce(() => Promise.reject(new Error('no haptic engine')));
     await mountOpen();
-    fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
-    fireEvent.press(screen.getByTestId('chat-send'));
+    await fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
+    await fireEvent.press(screen.getByTestId('chat-send'));
     await flush();
 
     expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);

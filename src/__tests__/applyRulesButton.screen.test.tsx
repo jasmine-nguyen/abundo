@@ -33,7 +33,7 @@ const BUTTON = 'transactions-apply-rules';
 /** Render, wait for the first reads, and switch to the Uncategorized tab. */
 async function renderTab() {
   await renderWithQueries(<Transactions />);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   await settle();
 }
 
@@ -48,7 +48,7 @@ beforeEach(() => {
 describe('the "Apply my rules" button', () => {
   it('opens the apply-rules sheet when pressed', async () => {
     await renderTab();
-    fireEvent.press(screen.getByTestId(BUTTON));
+    await fireEvent.press(screen.getByTestId(BUTTON));
     expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'applyRules' });
   });
 

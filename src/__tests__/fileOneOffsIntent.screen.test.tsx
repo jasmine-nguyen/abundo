@@ -50,7 +50,7 @@ describe('WHIT-544 Transactions consumes the File-one-offs intent', () => {
     const first = await renderWithQueries(<Transactions />);
     expect(screen.getByText('Cancel')).toBeTruthy();       // consumed → selection on
     expect(mockClearSpy).toHaveBeenCalledTimes(1);
-    first.unmount();
+    await first.unmount();
 
     await renderWithQueries(<Transactions />);             // fresh mount; flag was cleared
     expect(screen.getByText('Select')).toBeTruthy();       // NOT re-armed
@@ -66,7 +66,7 @@ describe('WHIT-544 Transactions consumes the File-one-offs intent', () => {
     expect(screen.queryByText('0 selected')).toBeNull();
 
     mockPendingFlag = true;                                 // the sheet armed the jump
-    rerender(<WithQueries><Transactions /></WithQueries>);  // the overlay-driven re-render
+    await rerender(<WithQueries><Transactions /></WithQueries>);  // the overlay-driven re-render
 
     expect(screen.getByText('Cancel')).toBeTruthy();        // now in selection mode
     expect(screen.getByText('0 selected')).toBeTruthy();     // the action bar is up
@@ -79,14 +79,14 @@ describe('WHIT-544 Transactions consumes the File-one-offs intent', () => {
   // shows 'coles' again.
   it('[G2] resets the search box so a pre-jump query does not linger after Cancel', async () => {
     const { rerender } = await renderWithQueries(<Transactions />);
-    fireEvent.changeText(screen.getByLabelText('Search transactions'), 'coles');
+    await fireEvent.changeText(screen.getByLabelText('Search transactions'), 'coles');
     expect(screen.getByLabelText('Search transactions').props.value).toBe('coles'); // sanity: it stuck
 
     mockPendingFlag = true;                                 // jump armed
-    rerender(<WithQueries><Transactions /></WithQueries>);
+    await rerender(<WithQueries><Transactions /></WithQueries>);
     expect(screen.getByText('Cancel')).toBeTruthy();         // selection mode → search box hidden
 
-    fireEvent.press(screen.getByText('Cancel'));             // leave selection → search box returns
+    await fireEvent.press(screen.getByText('Cancel'));             // leave selection → search box returns
     expect(screen.getByLabelText('Search transactions').props.value).toBe(''); // NOT 'coles'
     await settle();
   });

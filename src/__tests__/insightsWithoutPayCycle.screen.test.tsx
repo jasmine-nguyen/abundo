@@ -20,7 +20,7 @@ beforeEach(() => {
 
 it('Insights loads its spending when the pay cycle fails', async () => {
   server.fail('/paycycle', 503);
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.category('coffee')?.name).toBe('Cafes & Coffee'));
   await waitFor(() => expect(result.current.isLoading).toBe(false));

@@ -66,17 +66,17 @@ it('groups the spending cards under LIVING, LIFESTYLE then UNCATEGORISED, keepin
   expectInOrder(['LIVING', 'Home', 'LIFESTYLE', 'Dining', 'UNCATEGORISED', 'Uncategorised']);
   expect(screen.queryByText('Groceries')).toBeNull();
 
-  fireEvent.press(screen.getByText('Home'));
+  await fireEvent.press(screen.getByText('Home'));
   expectInOrder(['LIVING', 'Home', 'Groceries', 'LIFESTYLE']);
   expectInOrder(['Home', 'Mortgage', 'LIFESTYLE']);
   expectInOrder(['Home', 'Repairs', 'LIFESTYLE']);
   expectInOrder(['Home', ADJUSTMENT_ROW.name, 'LIFESTYLE', 'Dining']);
 
-  fireEvent.press(screen.getByText('Home'));
+  await fireEvent.press(screen.getByText('Home'));
   expect(screen.queryByText('Groceries')).toBeNull();
   expectInOrder(['LIVING', 'Home', 'LIFESTYLE', 'Dining']);
 
-  fireEvent.press(screen.getByTestId('insights-side-earning'));
+  await fireEvent.press(screen.getByTestId('insights-side-earning'));
   expect(screen.getByText('Salary')).toBeTruthy();
   for (const heading of HEADINGS) expect(screen.queryByText(heading)).toBeNull();
 });

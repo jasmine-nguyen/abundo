@@ -46,7 +46,7 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     const client = makeClient();
     client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { description: 'BUDGET' })]);
     client.setQueryData([...categoryTransactionsKey, 'insurance', 0], [tx('bill', { description: 'CATEGORY' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
 
     await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
     expect(ids(result.current.transactions).filter((id) => id === 'bill')).toHaveLength(1); // exactly one
@@ -65,7 +65,7 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     client.setQueryData(transactionsRecentKey, []);
     const drillKey = [...categoryTransactionsKey, 'coffee', 0];
     client.setQueryData(drillKey, [tx('past', { notes: '' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
 
     await waitFor(() => expect(result.current.findTx('past')).toBeDefined());
     await refreshInAct(() => client.setQueryData(drillKey, [tx('past', { notes: 'seen' })]));
@@ -81,7 +81,7 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     client.setQueryData(transactionsKey, { pages: [{ transactions: [tx('a')], nextCursor: null }], pageParams: [undefined] });
     client.setQueryData(transactionsRecentKey, []);
     let renders = 0;
-    const { result, rerender } = renderHook(() => {
+    const { result, rerender } = await renderHook(() => {
       renders += 1;
       useTransactionsSearchQuery('all', '', false);
       return useTransactionResolver();
@@ -89,8 +89,8 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
 
     await waitFor(() => expect(result.current.findTx('a')).toBeDefined());
     const before = result.current.transactions;
-    rerender({});
-    rerender({});
+    await rerender({});
+    await rerender({});
     await act(async () => { await Promise.resolve(); });
     expect(result.current.transactions).toBe(before);
     expect(renders).toBeLessThan(10);
@@ -102,7 +102,7 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     const client = makeClient();
     client.setQueryData(transactionsKey, { pages: [{ transactions: [], nextCursor: null }], pageParams: [undefined] });
     client.setQueryData(transactionsRecentKey, []);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
     expect(result.current.transactions).toHaveLength(0);
 
     await refreshInAct(() => client.setQueryData([...transactionsSearchKey, 'all', 'deep'], { transactions: [tx('searched')], truncated: false }));

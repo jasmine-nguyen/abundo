@@ -29,6 +29,7 @@ import CategoryEdit from '../../app/category/edit';
 import { COFFEE, COFFEE_RECORD } from './support/categories';
 import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
 import { styleOf } from './support/layout';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -60,22 +61,22 @@ function resetMocks(params: { categoryId?: string }) {
   categories = [];
 }
 
-const save = async () => { await act(async () => { fireEvent.press(screen.getByText('Save category')); }); };
+const save = async () => { await startTaps(screen.getByText('Save category')); };
 
 const alerts = spyOnAlert();
 /** Tap Delete category and answer Delete on the pop-up. */
 const deleteAndConfirm = async () => {
   await act(async () => {
-    fireEvent.press(screen.getByText('Delete category'));
+    await fireEvent.press(screen.getByText('Delete category'));
     pressAlertButton(alerts, 'Delete');
   });
 };
 
 /** Queue a brand-new inline sub-category (the create half of the child writes). */
-const addNewChild = (name: string) => {
-  fireEvent.press(screen.getByText('＋ New sub-category'));
-  fireEvent.changeText(screen.getByPlaceholderText('Category name'), name);
-  fireEvent.press(screen.getByText('Add sub-category'));
+const addNewChild = async (name: string) => {
+  await fireEvent.press(screen.getByText('＋ New sub-category'));
+  await fireEvent.changeText(screen.getByPlaceholderText('Category name'), name);
+  await fireEvent.press(screen.getByText('Add sub-category'));
 };
 
 const patchBodies = (id: string) => server.sent('PATCH', `/categories/${id}`).map((request) => request.body);
@@ -89,8 +90,8 @@ describe('categoryEditSummaryToast', () => {
     setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
     await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    fireEvent.press(screen.getByTestId('attachChild-petrol'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category updated, with 2 sub-categories.']));
@@ -107,7 +108,7 @@ describe('categoryEditSummaryToast', () => {
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
     server.once('PATCH', '/categories/parking', { status: 500 }); // self ok, child fails, NO per-op toast
     await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual([
@@ -126,9 +127,9 @@ describe('categoryEditSummaryToast', () => {
     categories = [LIVING('parking', 'Parking')];
     server.once('POST', '/categories', { status: 500 }); // parent create fails
     await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
-    fireEvent.press(screen.getByText('Living'));
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
+    await fireEvent.press(screen.getByText('Living'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE]));
@@ -165,12 +166,12 @@ describe('categoryEditSubcategories', () => {
     await drawEdit();
 
     // Name the new parent + move it to Living (so the Living 'parking' becomes attachable).
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
-    fireEvent.press(screen.getByText('Living'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
+    await fireEvent.press(screen.getByText('Living'));
     // Attach the existing Living category 'parking'.
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
     // Add a brand-new inline sub 'Tolls'.
-    addNewChild('Tolls');
+    await addNewChild('Tolls');
 
     await save();
 
@@ -193,8 +194,8 @@ describe('categoryEditSubcategories', () => {
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', parent: null },
     ];
     await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
-    fireEvent.press(screen.getByText('Living'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
+    await fireEvent.press(screen.getByText('Living'));
     // Living 'parking' is attachable; Lifestyle 'coffee' is not.
     expect(screen.getByTestId('attachChild-parking')).toBeTruthy();
     expect(screen.queryByTestId('attachChild-coffee')).toBeNull();
@@ -267,7 +268,7 @@ describe('categoryEditParentPick', () => {
     // attachable sub-category below. The parent chip is the first match — pick it, then save.
     const treatsChips = screen.getAllByText('Treats');
     expect(treatsChips.length).toBe(2); // guards the assumption: parent chip + attach chip
-    fireEvent.press(treatsChips[0]);
+    await fireEvent.press(treatsChips[0]);
     await save();
 
     await waitFor(() => expect(patchBodies('coffee')).toEqual([
@@ -284,7 +285,7 @@ describe('categoryEditTransfer (ABU-83)', () => {
 
     const toggle = await screen.findByRole('switch');
     expect(toggle.props.value).toBe(true);
-    fireEvent(toggle, 'valueChange', false);
+    await fireEvent(toggle, 'valueChange', false);
     await save();
 
     await waitFor(() => expect(patchBodies('coffee')).toEqual([{ ...COFFEE_SAVED, parent: null, transfer: false }]));
@@ -340,8 +341,8 @@ describe('ABU-85: Delete category asks first', () => {
     const del = screen.getByRole('button', { name: 'Delete category' });
     const save = screen.getByText('Save category');
     expect(styleOf(del).backgroundColor).toBeUndefined();
-    expect(screen.root.findAll((n) => n === save || n === del)).toEqual([save, del]);
-    await act(async () => { fireEvent.press(del); });
+    expect(screen.container.queryAll((n) => n === save || n === del)).toEqual([save, del]);
+    await startTaps(del);
 
     expectConfirmDeletePopUp(alerts, 'Delete this category?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
@@ -372,8 +373,8 @@ describe('categoryEditReasonGaps', () => {
     it('never starts the child writes when the parent is refused with a reason', async () => {
       server.once('PATCH', '/categories/transport', { status: 400, reason: CAP });
       await drawEdit();
-      fireEvent.press(screen.getByTestId('attachChild-parking'));
-      addNewChild('Tolls');
+      await fireEvent.press(screen.getByTestId('attachChild-parking'));
+      await addNewChild('Tolls');
       await save();
 
       // WHIT-240: still exactly one toast.
@@ -391,8 +392,8 @@ describe('categoryEditReasonGaps', () => {
     it('quotes the reason when one child succeeded and one was refused', async () => {
       server.once('PATCH', '/categories/petrol', { status: 400, reason: CAP });
       await drawEdit();
-      fireEvent.press(screen.getByTestId('attachChild-parking'));
-      fireEvent.press(screen.getByTestId('attachChild-petrol'));
+      await fireEvent.press(screen.getByTestId('attachChild-parking'));
+      await fireEvent.press(screen.getByTestId('attachChild-petrol'));
       await save();
 
       await waitFor(() => expect(shownToasts()).toEqual([
@@ -414,8 +415,8 @@ describe('categoryEditChildReason', () => {
     server.once('PATCH', '/categories/parking', { status: 400, reason: CAP });
     server.once('PATCH', '/categories/petrol', { status: 400, reason: 'a sub-category must be in the same bucket as its parent' });
     await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    fireEvent.press(screen.getByTestId('attachChild-petrol'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual([
@@ -430,7 +431,7 @@ describe('categoryEditChildReason', () => {
     categories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
     server.once('PATCH', '/categories/spare', { status: 500 });  // the 'spare' attach fails, no reason
     await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-spare'));
+    await fireEvent.press(screen.getByTestId('attachChild-spare'));
     await save();
 
     // Fail-on-revert: restore the unconditional `add … from its page` tail → this reddens.
@@ -453,7 +454,7 @@ describe('categoryEditSaveThrow', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     server.once('POST', '/categories', 'dropped'); // 1st press: lost connection
     await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
 
     await save(); // fails → guard logs, submitting reset
     await save(); // only fires if re-enabled
@@ -489,7 +490,7 @@ describe('categoryEditParentReason', () => {
     categories = [];
     server.once('POST', '/categories', { status: 409, reason: 'category already exists' });
     await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category already exists.']));
@@ -513,7 +514,7 @@ describe('categoryEditSignOutGuard', () => {
     const held = server.hold('/categories/transport');
 
     await save();
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     await act(async () => { held.fail('PATCH', { status: 500 }); });
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
@@ -527,11 +528,11 @@ describe('categoryEditSignOutGuard', () => {
   it('a session change on the parent create write shows no toast and does not navigate', async () => {
     setParams({}); // no categoryId → the create path
     await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'New cat'); // canSave needs a name
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'New cat'); // canSave needs a name
     const held = server.hold('/categories');
 
     await save();
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     await act(async () => { held.fail('POST'); });
 
     expect(server.sent('POST', '/categories')).toHaveLength(1);
@@ -551,8 +552,8 @@ describe('categoryEditSignOutGuard', () => {
     const held = server.hold('/categories/transport');
 
     await save();
-    act(() => setAuthStatus('anon'));
-    act(() => setAuthStatus('authed'));
+    await act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('authed'));
     await act(async () => { held.release(); });
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
@@ -566,12 +567,12 @@ describe('categoryEditSignOutGuard', () => {
     setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
     await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
     const held = server.hold('/categories/parking');
 
     await save();
     await waitFor(() => expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1));
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     await act(async () => { held.fail('PATCH'); });
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
@@ -591,7 +592,7 @@ describe('categoryEditColdSeed', () => {
 
   const drawCold = async () => {
     const held = server.hold('/categories');
-    render(<WithApp><CategoryEdit /></WithApp>);
+    await render(<WithApp><CategoryEdit /></WithApp>);
     await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
     return held;
   };
@@ -601,7 +602,7 @@ describe('categoryEditColdSeed', () => {
     // Type a name so the ONLY thing blocking Save is the editing-unloaded guard (not an empty
     // name) — this is what gives the test teeth: without the guard, Save would fire here and
     // write the default bucket/icon over the real category.
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
     await save();
     expect(server.sentUnder('PATCH', '/categories')).toEqual([]);
     await refreshInAct(() => held.release());
@@ -637,7 +638,7 @@ describe('categoryEditWriterEdges', () => {
     const held = server.hold('/categories/coffee');
 
     await deleteAndConfirm();
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     await act(async () => { settleDelete(held); });
 
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
@@ -660,12 +661,12 @@ describe('categoryEditWriterEdges', () => {
 
   // [A4] / [A5] Two taps in one frame (before `submitting` can redraw) → exactly one request.
   // Delete's guard sits behind the pop-up, so its double-tap is on the pop-up's Delete.
-  const tapSaveTwice = () => {
-    fireEvent.press(screen.getByText('Save category'));
-    fireEvent.press(screen.getByText('Save category'));
+  const tapSaveTwice = async () => {
+    const button = screen.getByText('Save category');
+    await (await startTaps(button, button)).settled;
   };
-  const confirmDeleteTwice = () => {
-    fireEvent.press(screen.getByText('Delete category'));
+  const confirmDeleteTwice = async () => {
+    await fireEvent.press(screen.getByText('Delete category'));
     pressAlertButton(alerts, 'Delete');
     pressAlertButton(alerts, 'Delete');
   };
@@ -677,7 +678,7 @@ describe('categoryEditWriterEdges', () => {
     categories = [LIVING(id, id)];
     await drawEdit();
 
-    await act(async () => { tapTwice(); });
+    await tapTwice();
 
     await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent(method, `/categories/${id}`)).toHaveLength(1);
@@ -690,7 +691,7 @@ describe('categoryEditWriterEdges', () => {
     setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
     await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
+    await fireEvent.press(screen.getByTestId('attachChild-parking'));
     const held = server.hold('/categories/transport');
 
     await save();
@@ -708,7 +709,7 @@ describe('categoryEditWriterEdges', () => {
     setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport')];
     await drawEdit();
-    addNewChild('  Tolls  ');
+    await addNewChild('  Tolls  ');
 
     await save();
 
@@ -734,8 +735,8 @@ describe('categoryEditLoadGuards', () => {
     setParams({ categoryId: 'coffee' });
     server.fail('/categories', 500);
     await renderWithApp(<CategoryEdit />);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
-    fireEvent.press(screen.getByText('Save category'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
+    await fireEvent.press(screen.getByText('Save category'));
     await refreshInAct(() => undefined);
     expect(server.sentUnder('PATCH', '/categories')).toEqual([]);
   });
@@ -749,7 +750,7 @@ describe('categoryEditLoadGuards', () => {
     await drawEdit();
     expect(screen.getByDisplayValue('Cafes & Coffee')).toBeTruthy();
 
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
     await refreshInAct(() => queryClient.refetchQueries());
     expect(server.sent('GET', '/categories')).toHaveLength(2);
     expect(screen.getByDisplayValue('Renamed')).toBeTruthy();
@@ -778,7 +779,7 @@ describe('categoryEditLoadGuards', () => {
     setParams({ categoryId: 'parking' });
     await drawEdit();
     expect(screen.getByDisplayValue('Parking')).toBeTruthy();
-    fireEvent.press(screen.getByText('Lifestyle'));
+    await fireEvent.press(screen.getByText('Lifestyle'));
     await refreshInAct(() => undefined);
     await save();
     await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Lifestyle', icon: 'car', parent: null, transfer: false }]));
@@ -806,7 +807,7 @@ describe('categoryFullParent', () => {
     await drawEdit();
 
     expect(screen.getByText('treats · full')).toBeTruthy();     // greyed + labelled
-    fireEvent.press(screen.getByTestId('parent-treats'));        // disabled → no-op
+    await fireEvent.press(screen.getByTestId('parent-treats'));        // disabled → no-op
     await save();
 
     // Fail-on-revert: drop the `full`/disabled logic → the tap selects 'treats' → parent:'treats'.
@@ -826,8 +827,8 @@ describe('categoryFullParent', () => {
 
     expect(screen.queryByText('treats · full')).toBeNull();     // held parent is never greyed
     // Deselect then re-pick the held parent, then save: it must land back on 'treats'.
-    fireEvent.press(screen.getByText('None (top-level)'));
-    fireEvent.press(screen.getByTestId('parent-treats'));
+    await fireEvent.press(screen.getByText('None (top-level)'));
+    await fireEvent.press(screen.getByTestId('parent-treats'));
     await save();
 
     // Fail-on-revert: drop the `p.id !== heldParentId` guard → treats is greyed + disabled → the

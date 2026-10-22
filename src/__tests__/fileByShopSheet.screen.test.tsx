@@ -29,6 +29,7 @@ import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { shopPreviewReport as report } from './support/applyRulesReport';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -97,8 +98,8 @@ describe('the shop list', () => {
   it('advances to the confirm sheet with the chosen shop and category', async () => {
     const g = group();
     await mountList(merchants([g]));
-    fireEvent.press((await screen.findAllByTestId('file-by-shop-group'))[0]);
-    fireEvent.press(screen.getByText('Groceries'));   // press the row by name (siblings sort A–Z)
+    await fireEvent.press((await screen.findAllByTestId('file-by-shop-group'))[0]);
+    await fireEvent.press(screen.getByText('Groceries'));   // press the row by name (siblings sort A–Z)
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' });
   });
 
@@ -117,7 +118,7 @@ describe('the shop list', () => {
   // and getByTestId throws; drop either onPress call and its assertion fails.
   it('[A28d] "Select to file" arms the multi-select jump and closes the sheet', async () => {
     await mountList(merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }));
-    fireEvent.press(await screen.findByTestId('file-by-shop-one-offs'));
+    await fireEvent.press(await screen.findByTestId('file-by-shop-one-offs'));
     expect(fns.requestUncategorizedSelect).toHaveBeenCalledTimes(1);
     expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
@@ -142,7 +143,7 @@ describe('the confirm sheet', () => {
     fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 20, filed: [{ id: 't1', category: 'groceries' }] }) });
     await mountConfirm(g, 'groceries');
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply'));
     expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'shop', group: g, categoryId: 'groceries' }, { now: true });
   });
 
@@ -171,7 +172,7 @@ describe('the confirm sheet', () => {
     fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: false });
     await mountConfirm();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply'));
     expect(screen.getByText('You already have a rule for this')).toBeTruthy();
   });
 
@@ -211,7 +212,7 @@ describe('confirm sheet — failure arms', () => {
     expect(screen.getByText("Couldn't check this shop")).toBeTruthy();
     expect(screen.queryByTestId('file-by-shop-confirm-apply')).toBeNull();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-retry')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-retry'));
     expect(fns.previewFiling).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('file-by-shop-confirm-apply')).toBeTruthy();
   });
@@ -224,7 +225,7 @@ describe('confirm sheet — failure arms', () => {
     fns.fileCharges.mockResolvedValue({ status: 'failed', background: false });
     await mountConfirm();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply'));
     expect(screen.getByText("Couldn't finish")).toBeTruthy();
     expect(screen.queryByText('You already have a rule for this')).toBeNull();
     expect(fns.setSheet).not.toHaveBeenCalledWith({ mode: 'fileByShopList' });
@@ -239,7 +240,7 @@ describe('confirm sheet — success', () => {
     fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) });
     await mountConfirm(group(), 'groceries');
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply'));
     expect(fns.showToast).toHaveBeenCalledWith('Filed 2 charges as Groceries.');
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'fileByShopList' });
   });
@@ -253,7 +254,7 @@ describe('confirm sheet — success', () => {
     fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: over, filed: Array.from({ length: APPLY_RULES_MAX_WRITES }, (_, i) => ({ id: `t${i}`, category: 'groceries' })), remaining: 200 }) });
     await mountConfirm();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply'));
     expect(fns.showToast).toHaveBeenCalledWith(`Filed ${APPLY_RULES_MAX_WRITES} charges as Groceries — more of this shop to go, tap it again.`);
   });
 });
@@ -267,9 +268,9 @@ describe('confirm sheet — dismissed mid-write', () => {
     fns.fileCharges.mockReturnValue(pending.promise);
     const { rerender } = await mountConfirm();
 
-    await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); }); // starts the write
+    await startTaps(screen.getByTestId('file-by-shop-confirm-apply')); // starts the write
     mockState = { ...mockState, sheet: null } as unknown as AppContext;                            // dismiss
-    await act(async () => { rerender(overlaysTree()); });
+    await act(async () => { await rerender(overlaysTree()); });
     return pending;
   }
 

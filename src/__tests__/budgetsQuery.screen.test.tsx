@@ -57,7 +57,7 @@ it('a transient 5xx retries with backoff and self-heals — no error shown', asy
 
 it('a sustained failure shows the inline error, and Retry recovers', async () => {
   server.fail('/budgets', 503);
-  renderBudgets(makeClient()); // no retry → straight to the error state
+  await renderBudgets(makeClient()); // no retry → straight to the error state
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
 
   // WHIT-198: the Retry routes through the shared RetryButton, so it carries the button role +
@@ -67,13 +67,13 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
   expect(retry.props.accessibilityLabel).toBe('Retry loading your budgets');
 
   server.once('GET', '/budgets', { body: BUDGETS }); // a queued reply goes out ahead of the failure
-  fireEvent.press(retry);
+  await fireEvent.press(retry);
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
 });
 
 it('a sustained failure sends a bounded number of requests (WHIT-668)', async () => {
   server.fail('/budgets', 503);
-  renderBudgets(makeClient());
+  await renderBudgets(makeClient());
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
   await pause(200);
   expect(budgetReads()).toHaveLength(1);
@@ -81,7 +81,7 @@ it('a sustained failure sends a bounded number of requests (WHIT-668)', async ()
 
 it('does not fetch before login, then fires the moment auth flips to authed', async () => {
   setAuthStatusQuietly('anon');
-  renderBudgets();
+  await renderBudgets();
   // Disabled queries never call their fetchers.
   expect(payCycleReads()).toHaveLength(0);
   expect(budgetReads()).toHaveLength(0);
@@ -96,7 +96,7 @@ it('does not fetch before login, then fires the moment auth flips to authed', as
 
 it('the header "+" button navigates to the picker (WHIT-711)', async () => {
   await renderLoadedBudgets();
-  fireEvent.press(screen.getByLabelText('Add budget'));
+  await fireEvent.press(screen.getByLabelText('Add budget'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
 });
 
@@ -109,7 +109,7 @@ it('through the hook: a known last_pay_date renders a known "Next payday …"', 
     // last_pay_date 3 Sep, 14-day cycle, today 18 Sep → cycle started 17 Sep → next payday 1 Oct.
     // Also proves the no-leading-zero format ("1 Oct") survives a real render.
     server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-03' });
-    renderBudgets();
+    await renderBudgets();
     await waitFor(() => expect(heroTotals().payday).toBe('1 Oct'));
   } finally {
     jest.useRealTimers();
@@ -118,7 +118,7 @@ it('through the hook: a known last_pay_date renders a known "Next payday …"', 
 
 it('categories read fails → inline error (rows cannot render without their category)', async () => {
   server.fail('/categories', 500);
-  renderBudgets(makeClient());
+  await renderBudgets(makeClient());
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
   expect(screen.queryByText('Cafes & Coffee')).toBeNull();
 });
@@ -129,11 +129,11 @@ it('WHIT-713: a failed focus refresh over showing budgets shows the quiet stale 
   // Only the screen's own focus refetch may run on return — not TanStack's refetch-on-mount.
   client.setDefaultOptions({ queries: { ...client.getDefaultOptions().queries, refetchOnMount: false } });
   const first = await renderLoadedBudgets(client);
-  first.unmount();
+  await first.unmount();
 
   jest.setSystemTime(new Date('2026-09-18T09:41:00+10:00'));
   server.once('GET', '/budgets', { status: 503 });
-  renderBudgets(client);
+  await renderBudgets(client);
 
   await waitFor(() => expect(budgetReads()).toHaveLength(2));
   await waitFor(() => expect(within(screen.getByTestId('screen-header')).getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
@@ -158,7 +158,7 @@ it('authed→locked keeps cached rows and fires no new fetch (no doomed 401 retr
 // rows would load (against the DEFAULT cycle); the payCycleError signal restores the error here.
 it('sustained payCycle failure → inline error + Retry (payCycleError), never a spinner', async () => {
   server.fail('/paycycle', 503);
-  renderBudgets(makeClient());
+  await renderBudgets(makeClient());
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
   expect(screen.getByTestId('budgets-retry')).toBeTruthy();
   expect(screen.queryByTestId('budgets-loading')).toBeNull();
@@ -175,7 +175,7 @@ describe('WHIT-72 payCycleError guard', () => {
   afterEach(() => { jest.useRealTimers(); });
 
   it('BACKGROUND payCycle refetch failure over a cached cycle → payCycleError stays FALSE, rows + last-good cycle survive (cache-first)', async () => {
-    const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.budgets).toHaveLength(1));
     expect(result.current.cycleLen).toBe(30);
 
@@ -189,7 +189,7 @@ describe('WHIT-72 payCycleError guard', () => {
   });
 
   it('BACKGROUND payCycle refetch failure over a cached cycle → payCycleError stays FALSE (cache-first, same guard as Budgets)', async () => {
-    const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.budgets).toHaveLength(1));
     expect(result.current.cycleLen).toBe(30);
 
@@ -243,7 +243,7 @@ describe('WHIT-713 pull-to-refresh + quiet stale line', () => {
     expect(budgetReads()).toHaveLength(1);
 
     const held = server.hold('/budgets');
-    act(() => { pullControl().props.onRefresh(); });
+    await act(() => { pullControl().props.onRefresh(); });
     await waitFor(() => expect(budgetReads()).toHaveLength(2));
     expect(pullControl().props.refreshing).toBe(true);
 
@@ -279,7 +279,7 @@ describe('WHIT-713 pull-to-refresh + quiet stale line', () => {
 
   it('[A7] pulling down on the error card recovers the budgets', async () => {
     server.once('GET', '/budgets', { status: 503 });
-    renderBudgets();
+    await renderBudgets();
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     await pullAndSettle();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();

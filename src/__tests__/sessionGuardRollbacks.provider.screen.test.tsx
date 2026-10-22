@@ -230,13 +230,13 @@ it.each(SIGN_OUT_ROWS)(
     const [method, path] = row.send;
     const held = server.hold(path);
     if (row.fail) server.once(method, path, 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    if (row.before) act(() => row.before!(result.current));
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
+    if (row.before) await act(() => row.before!(result.current));
 
     let pending: unknown;
-    act(() => { pending = row.run(result.current); });
-    signOut();
-    act(() => setAuthStatus('authed'));
+    await act(() => { pending = row.run(result.current); });
+    await signOut();
+    await act(() => setAuthStatus('authed'));
     row.next?.();
     let returned: unknown;
     await act(async () => { held.release(); returned = await pending; await settle(); });
@@ -255,7 +255,7 @@ it.each([
   ['saveCategory(null, { name: "" })', (c: Ctx) => c.saveCategory(null, { ...FORM, name: '' }, SILENT), false, 'POST', '/categories'],
   ['saveCategory("gym", { name: "   " })', (c: Ctx) => c.saveCategory('gym', { ...FORM, name: '   ' }, SILENT), false, 'PATCH', '/categories/gym'],
 ] as const)('%s with { silent: true } resolves %s and never calls the API', async (_name, call, expected, method, path) => {
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   let returned: unknown = 'unset';
   await act(async () => {
     returned = await call(result.current).then((v) => v, (e: unknown) => ({ threw: e }));

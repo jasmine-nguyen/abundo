@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated, LayoutChangeEvent } from 'react-native';
 import { Tabs } from 'expo-router';
+import type { BottomTabBarProps } from 'expo-router/tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, PRESSED } from '../../src/theme';
 import { Glyph } from '../../src/icons';
@@ -19,15 +20,7 @@ const TABS = [
   { name: 'goals', label: 'Goals', icon: 'navGoals' },
 ] as const;
 
-type TabBarShape = {
-  state: { index: number; routes: { key: string; name: string }[] };
-  navigation: {
-    emit: (e: { type: 'tabPress'; target: string; canPreventDefault: boolean }) => { defaultPrevented: boolean };
-    navigate: (name: string) => void;
-  };
-};
-
-export function TabBar({ state, navigation }: TabBarShape) {
+export function TabBar({ state, emitter, navigateToTab }: Pick<BottomTabBarProps, 'state' | 'emitter' | 'navigateToTab'>) {
   const insets = useSafeAreaInsets();
   // WHIT-203: the tab bar is always mounted, so it owns its OWN transactions+categories
   // query for the uncategorized dot (the same keys the Transactions tab uses, so they
@@ -71,8 +64,8 @@ export function TabBar({ state, navigation }: TabBarShape) {
               // tab doesn't feel dead. Pure visual — no animation lib, no data path.
               style={({ pressed }) => [styles.item, pressed && PRESSED]}
               onPress={() => {
-                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-                if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
+                const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                if (!focused && !event.defaultPrevented) navigateToTab(route.key);
               }}
             >
               <View>
@@ -125,7 +118,7 @@ export default function TabsLayout() {
           // off when the user asked for reduced motion.
           animation: reduceMotion ? 'none' : 'fade',
         }}
-        tabBar={(props) => <TabBar {...(props as unknown as TabBarShape)} />}
+        tabBar={(props) => <TabBar {...props} />}
       >
         <Tabs.Screen name="budgets" />
         <Tabs.Screen name="transactions" />

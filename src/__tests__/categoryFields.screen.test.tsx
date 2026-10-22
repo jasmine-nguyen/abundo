@@ -12,9 +12,9 @@ import { ICON_KEYS } from '../icons';
 // renders. WHIT-247: each cell carries an `icon-<key>` testID, so we tap it directly instead of
 // walking the render tree. Fail-on-revert: mis-wire the grid (onIconChange(icon) instead of
 // onIconChange(k), or drop the handler) → red.
-it('the icon grid reports the tapped icon key via onIconChange', () => {
+it('the icon grid reports the tapped icon key via onIconChange', async () => {
   const onIconChange = jest.fn();
-  render(
+  await render(
     <CategoryFields
       variant="compact"
       name=""
@@ -34,7 +34,7 @@ it('the icon grid reports the tapped icon key via onIconChange', () => {
     />,
   );
   expect(screen.getAllByTestId(/^icon-/)).toHaveLength(ICON_KEYS.length);   // every icon renders
-  fireEvent.press(screen.getByTestId('icon-car'));
+  await fireEvent.press(screen.getByTestId('icon-car'));
   expect(onIconChange).toHaveBeenCalledWith('car');
   expect(onIconChange).toHaveBeenCalledTimes(1);
 });

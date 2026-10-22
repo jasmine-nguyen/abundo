@@ -41,7 +41,7 @@ describe('Log out and Back', () => {
   // reverting to router.replace('/') alone drops the signOut() call.
   it('Log out calls signOut() and returns to the login screen', async () => {
     await renderWithQueries(<Settings />);
-    fireEvent.press(screen.getByTestId('settings-logout'));
+    await fireEvent.press(screen.getByTestId('settings-logout'));
     expect(mockSignOut).toHaveBeenCalledTimes(1);
     expect(routerSpies.replace).toHaveBeenCalledWith('/');
   });
@@ -49,7 +49,7 @@ describe('Log out and Back', () => {
   // WHIT-495: Settings is a pushed root screen, so it carries a Back control that pops the stack.
   it('renders a Back button that pops back to the origin tab', async () => {
     await renderWithQueries(<Settings />);
-    fireEvent.press(screen.getByLabelText('Back'));
+    await fireEvent.press(screen.getByLabelText('Back'));
     expect(routerSpies.back).toHaveBeenCalledTimes(1);
   });
 });

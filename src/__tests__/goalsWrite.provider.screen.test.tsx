@@ -38,21 +38,21 @@ afterEach(() => {
 
 // The fake server saves a goal by merging the sent body over its stored row (id from the path)
 // and echoing the result, so seed it with the same goals as the cache.
-function mountWithSeededCache(goals: GoalRecord[] = [GOAL_G1]) {
+async function mountWithSeededCache(goals: GoalRecord[] = [GOAL_G1]) {
   server.seed('/goals', goals);
   queryClient.setQueryData<GoalRecord[]>(['goals'], goals);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
 // Folded from goalsWriteEdges: seeds only when goals are given, so the un-opened-hub
 // (undefined ['goals']) cases can exercise the `prev ?? []` guard.
-function mount(goals?: GoalRecord[]) {
+async function mount(goals?: GoalRecord[]) {
   if (goals) {
     server.seed('/goals', goals);
     queryClient.setQueryData<GoalRecord[]>(['goals'], goals);
   }
-  return renderHook(() => useAppContext(), { wrapper }).result;
+  return (await renderHook(() => useAppContext(), { wrapper })).result;
 }
 
 // A create mints its goal id from the (auto-mocked) random-id source; pin the next one so a
@@ -64,7 +64,7 @@ function mintNextGoalId(id: string) {
 const sentGoalBodies = () => server.sentUnder('PUT', '/goals/').map((request) => request.body as GoalWriteBody);
 
 it('saveGoal(null, body) mints an id and APPENDS the new goal, then reconciles to the server row', async () => {
-  const result = mountWithSeededCache();
+  const result = await mountWithSeededCache();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveGoal(null, NEW_BODY); });
@@ -85,7 +85,7 @@ it('saveGoal(null, body) mints an id and APPENDS the new goal, then reconciles t
 });
 
 it('saveGoal(editId, body) REPLACES the existing goal in place (no append)', async () => {
-  const result = mountWithSeededCache();
+  const result = await mountWithSeededCache();
   const edit: GoalWriteBody = { ...NEW_BODY, name: 'Bigger fund', target_amount: 20000 };
 
   await act(async () => { await result.current.saveGoal('g1', edit); });
@@ -99,7 +99,7 @@ it('saveGoal(editId, body) REPLACES the existing goal in place (no append)', asy
 it('a failed CREATE mirrors the optimistic append mid-flight, then rolls it back', async () => {
   mintNextGoalId('new-goal');
   server.fail('/goals/new-goal', 400);
-  const result = mountWithSeededCache();
+  const result = await mountWithSeededCache();
 
   // Observe the optimistic append reaching the cache MID-FLIGHT (before the reject) — without
   // the setQueryData the new goal never hits the cache and midCount stays 1, so this has teeth.
@@ -118,7 +118,7 @@ it('a failed CREATE mirrors the optimistic append mid-flight, then rolls it back
 
 it('a failed EDIT rolls the cached goal back to its prior value', async () => {
   server.fail('/goals/g1', 500);
-  const result = mountWithSeededCache();
+  const result = await mountWithSeededCache();
 
   let ok: boolean | undefined;
   await act(async () => {
@@ -130,7 +130,7 @@ it('a failed EDIT rolls the cached goal back to its prior value', async () => {
 });
 
 it('deleteGoal removes the goal from the cache on success', async () => {
-  const result = mountWithSeededCache();
+  const result = await mountWithSeededCache();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteGoal('g1'); });
@@ -144,7 +144,7 @@ it('a failed delete reinserts the goal AT ITS ORIGINAL INDEX', async () => {
   server.fail('/goals/g2', 500);
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2', name: 'Car' };
   const G3: GoalRecord = { ...GOAL_G1, id: 'g3', name: 'Roof' };
-  const result = mountWithSeededCache([GOAL_G1, G2, G3]);
+  const result = await mountWithSeededCache([GOAL_G1, G2, G3]);
 
   let midCount: number | undefined;
   let ok: boolean | undefined;
@@ -160,7 +160,7 @@ it('a failed delete reinserts the goal AT ITS ORIGINAL INDEX', async () => {
 });
 
 it('deleteGoal is a no-op false when the id is not in the cache', async () => {
-  const result = mountWithSeededCache();
+  const result = await mountWithSeededCache();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.deleteGoal('nope'); });
@@ -180,7 +180,7 @@ it('deleteGoal is a no-op false when the id is not in the cache', async () => {
 
 // [G1] create with NO ['goals'] cache entry yet (hub never opened) — the `prev ?? []` guard.
 it('saveGoal(null) into an EMPTY/undefined cache seeds a one-item list (prev ?? [])', async () => {
-  const result = mount(); // deliberately NOT seeded → getQueryData(['goals']) is undefined
+  const result = await mount(); // deliberately NOT seeded → getQueryData(['goals']) is undefined
   expect(cacheGoals()).toBeUndefined();
 
   let ok: boolean | undefined;
@@ -198,7 +198,7 @@ it('create reconciles the optimistic row to the server row by id (no duplicate, 
   // Server echoes the id but returns an authoritative row that DIFFERS from the optimistic one.
   mintNextGoalId('new-goal');
   server.once('PUT', '/goals/new-goal', { body: { id: 'new-goal', ...NEW_BODY, name: 'Server Holiday', baseline: 250 } });
-  const result = mount([GOAL_G1]);
+  const result = await mount([GOAL_G1]);
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveGoal(null, NEW_BODY); });
@@ -215,7 +215,7 @@ it('create reconciles the optimistic row to the server row by id (no duplicate, 
 // [G3] an edit whose id is concurrently REMOVED before the api rejects — rollback must NOT resurrect.
 it('a failed EDIT does NOT resurrect a goal that was concurrently deleted mid-flight', async () => {
   server.fail('/goals/g1', 500);
-  const result = mount([GOAL_G1]);
+  const result = await mount([GOAL_G1]);
 
   let ok: boolean | undefined;
   await refreshInAct(async () => {
@@ -230,7 +230,7 @@ it('a failed EDIT does NOT resurrect a goal that was concurrently deleted mid-fl
 
 // [G4] same race, but the api SUCCEEDS — the server row must also not resurrect a deleted id.
 it('a succeeded EDIT does NOT resurrect a goal that was concurrently deleted mid-flight', async () => {
-  const result = mount([GOAL_G1]);
+  const result = await mount([GOAL_G1]);
 
   let ok: boolean | undefined;
   await refreshInAct(async () => {
@@ -247,7 +247,7 @@ it('a succeeded EDIT does NOT resurrect a goal that was concurrently deleted mid
 it('two concurrent deletes both remove their goal (second delete sees the first\'s cache write)', async () => {
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
   const G3: GoalRecord = { ...GOAL_G1, id: 'g3' };
-  const result = mount([GOAL_G1, G2, G3]);
+  const result = await mount([GOAL_G1, G2, G3]);
 
   let a: boolean | undefined, b: boolean | undefined;
   await act(async () => {
@@ -267,7 +267,7 @@ it('two concurrent deletes both remove their goal (second delete sees the first\
 // the writer mints any the caller omitted (like the goal id) and sends the SAME ids on — the
 // optimistic row and the row the server saves can never disagree about them.
 it('saveGoal mints ids for id-less checkpoints, in the cache AND in the body it sends', async () => {
-  const result = mount([GOAL_G1]);
+  const result = await mount([GOAL_G1]);
 
   // Read the cache MID-FLIGHT (before the server replies) — that optimistic row is the one
   // that must already carry ids; by the time the save resolves it has been replaced.
@@ -309,7 +309,7 @@ const GOAL_WITH_LADDER: GoalRecord = {
 // would give both the same id, and the once-ever celebration marker (a later slice) keys on
 // it — one rung would silently mark the other's celebration done.
 it('mints a SEPARATE id for every id-less checkpoint', async () => {
-  const result = mount([GOAL_G1]);
+  const result = await mount([GOAL_G1]);
 
   await act(async () => {
     await result.current.saveGoal(null, {
@@ -335,7 +335,7 @@ it('reconcile replaces the optimistically minted ladder with the SERVER ladder',
       checkpoints: [{ id: 'srv-1', label: 'First', amount: 1000 }],   // server's own ids, one rung
     },
   });
-  const result = mount([GOAL_G1]);
+  const result = await mount([GOAL_G1]);
 
   await act(async () => {
     await result.current.saveGoal(null, {
@@ -358,7 +358,7 @@ it('an edit that omits checkpoints: client drops them optimistically, the server
   // does NOT carry the ladder forward, so an omitting edit blanks it in the instant on-screen
   // row. But the server keeps an omitted ladder and echoes it back, so the reconcile restores
   // it. (The fake server merges the sent body over its stored row, so an omitted ladder is kept.)
-  const result = mountWithSeededCache([GOAL_WITH_LADDER]);
+  const result = await mountWithSeededCache([GOAL_WITH_LADDER]);
 
   let midLadder: unknown;
   await act(async () => {

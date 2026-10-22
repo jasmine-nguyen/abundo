@@ -29,6 +29,7 @@ import { setPickedDate, resetPickedDate, FUTURE } from './support/mockDatePicker
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
 import { styleOf } from './support/layout';
+import { startTaps } from './support/tap';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
@@ -62,14 +63,14 @@ const balance = (account_id: string, amount: number) =>
 // Fill the target-date field: it starts unset (a "Set date" affordance, testID date-open), so
 // reveal the picker first, then tap it — the mock picker emits a fixed date. The target field
 // is the last one on screen, so its picker is the last mock-datepicker node.
-function setTargetDate() {
+async function setTargetDate() {
   // Platform-agnostic (the `screen` project resolves Platform per worker, so a test can run on
   // an iOS- OR Android-resolving worker): open the picker via the "Set date" affordance when
   // present, then tap the (last = target) mock picker, which emits a fixed date.
   const opens = screen.queryAllByTestId('date-open');
-  if (opens.length) fireEvent.press(opens[opens.length - 1]);
+  if (opens.length) await fireEvent.press(opens[opens.length - 1]);
   const pickers = screen.getAllByTestId('mock-datepicker');
-  fireEvent.press(pickers[pickers.length - 1]);
+  await fireEvent.press(pickers[pickers.length - 1]);
 }
 
 const server = installFakeServer();
@@ -87,7 +88,7 @@ function renderForm() {
 }
 
 async function press(testID: string) {
-  await act(async () => { fireEvent.press(screen.getByTestId(testID)); });
+  await startTaps(screen.getByTestId(testID));
 }
 
 const alerts = spyOnAlert();
@@ -107,12 +108,12 @@ const CASH_POT: GoalRecord = {
 };
 
 // A minimally-valid synced GROW create: name + synced acc-1 + $5000 + a date.
-function fillValidSyncedGrow(name = 'Holiday') {
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), name);
-  fireEvent.press(screen.getByTestId('goal-source-synced'));
-  fireEvent.press(screen.getByTestId('goal-account-acc-1'));
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
-  setTargetDate();
+async function fillValidSyncedGrow(name = 'Holiday') {
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), name);
+  await fireEvent.press(screen.getByTestId('goal-source-synced'));
+  await fireEvent.press(screen.getByTestId('goal-account-acc-1'));
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+  await setTargetDate();
 }
 
 beforeEach(() => {
@@ -138,11 +139,11 @@ afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
 describe('create', () => {
   it('a synced grow goal → saveGoal(null, {…account_id}) with no manual arm, then back', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Holiday');
-    fireEvent.press(screen.getByTestId('goal-source-synced'));
-    fireEvent.press(screen.getByTestId('goal-account-acc-1'));
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
-    setTargetDate();
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Holiday');
+    await fireEvent.press(screen.getByTestId('goal-source-synced'));
+    await fireEvent.press(screen.getByTestId('goal-account-acc-1'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+    await setTargetDate();
     await press('goal-save');
 
     expect(mockSaveGoal).toHaveBeenCalledTimes(1);
@@ -156,11 +157,11 @@ describe('create', () => {
 
   it('a manual goal → saveGoal(null, {…manual_balance, manual_as_of}) with no account arm', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Cash pot');
-    fireEvent.press(screen.getByTestId('goal-source-manual'));
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '800');
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
-    setTargetDate();
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Cash pot');
+    await fireEvent.press(screen.getByTestId('goal-source-manual'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '800');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+    await setTargetDate();
     await press('goal-save');
 
     expect(mockSaveGoal).toHaveBeenCalledTimes(1);
@@ -174,11 +175,11 @@ describe('create', () => {
 
   it('a pay-down goal saves with target_amount 0 (debt default) — 0 is valid', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Card');
-    fireEvent.press(screen.getByTestId('goal-direction-paydown'));
-    fireEvent.press(screen.getByTestId('goal-source-manual'));
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '1200');
-    setTargetDate();
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Card');
+    await fireEvent.press(screen.getByTestId('goal-direction-paydown'));
+    await fireEvent.press(screen.getByTestId('goal-source-manual'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '1200');
+    await setTargetDate();
     await press('goal-save');
 
     expect(mockShowToast).not.toHaveBeenCalled();
@@ -190,13 +191,13 @@ describe('create', () => {
 describe('synced account picker', () => {
   it('a manual body carries NO account_id even after an account was picked then switched away', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Mix');
-    fireEvent.press(screen.getByTestId('goal-source-synced'));
-    fireEvent.press(screen.getByTestId('goal-account-acc-1')); // a synced account IS selected
-    fireEvent.press(screen.getByTestId('goal-source-manual')); // …then the source flips to manual
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '300');
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
-    setTargetDate();
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Mix');
+    await fireEvent.press(screen.getByTestId('goal-source-synced'));
+    await fireEvent.press(screen.getByTestId('goal-account-acc-1')); // a synced account IS selected
+    await fireEvent.press(screen.getByTestId('goal-source-manual')); // …then the source flips to manual
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '300');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+    await setTargetDate();
     await press('goal-save');
 
     // The body is built from the CHOSEN source's arm, so the stale account pick can't leak in.
@@ -211,7 +212,7 @@ describe('edit', () => {
 
   it('saves the edit under the SAME id (upsert, not a new create)', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByDisplayValue('10000'), '20000');
+    await fireEvent.changeText(screen.getByDisplayValue('10000'), '20000');
     await press('goal-save');
     const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
     expect(editId).toBe('g1');
@@ -229,7 +230,7 @@ describe('edit', () => {
 
   it('a background cache refetch does NOT clobber what the user is mid-editing', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'My own edit');
+    await fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'My own edit');
 
     // A later refetch hands back a fresh record object with server-side values. The re-seed
     // only runs ONCE (on first load), so the in-progress edit must survive.
@@ -262,8 +263,8 @@ describe('ABU-85: Delete goal asks first', () => {
     const del = screen.getByRole('button', { name: 'Delete goal' });
     const save = screen.getByTestId('goal-save');
     expect(styleOf(del).backgroundColor).toBeUndefined();
-    expect(screen.root.findAll((n) => n === save || n === del)).toEqual([save, del]);
-    await act(async () => { fireEvent.press(del); });
+    expect(screen.container.queryAll((n) => n === save || n === del)).toEqual([save, del]);
+    await startTaps(del);
 
     expectConfirmDeletePopUp(alerts, 'Delete this goal?');
     await act(async () => { await pressAlertButton(alerts, 'Cancel'); });
@@ -310,30 +311,30 @@ describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
 describe('validation blocks the save (toast, no writer call)', () => {
   const type = (placeholder: string, value: string) => fireEvent.changeText(screen.getByPlaceholderText(placeholder), value);
   const tap = (testID: string) => fireEvent.press(screen.getByTestId(testID));
-  const synced = (amount: string) => { tap('goal-source-synced'); tap('goal-account-acc-1'); type('e.g. 10000', amount); };
+  const synced = async (amount: string) => { await tap('goal-source-synced'); await tap('goal-account-acc-1'); await type('e.g. 10000', amount); };
 
-  it.each<[string, () => void, string]>([
-    ['empty name', () => { synced('5000'); setTargetDate(); }, 'Give your goal a name.'],
-    ['no balance source chosen', () => { type('e.g. Emergency fund', 'X'); type('e.g. 10000', '5000'); setTargetDate(); }, "Choose where this goal's balance comes from."],
-    ['a grow goal with a $0 target', () => { type('e.g. Emergency fund', 'X'); synced('0'); setTargetDate(); }, 'Enter a target amount above $0.'],
-    ['no target date picked', () => { type('e.g. Emergency fund', 'X'); synced('5000'); }, 'Pick a target date.'],
-    ['a grow baseline that is not below the target', () => {
-      type('e.g. Emergency fund', 'X'); synced('5000'); type('e.g. 500', '9000'); setTargetDate();
+  it.each<[string, () => Promise<void>, string]>([
+    ['empty name', async () => { await synced('5000'); await setTargetDate(); }, 'Give your goal a name.'],
+    ['no balance source chosen', async () => { await type('e.g. Emergency fund', 'X'); await type('e.g. 10000', '5000'); await setTargetDate(); }, "Choose where this goal's balance comes from."],
+    ['a grow goal with a $0 target', async () => { await type('e.g. Emergency fund', 'X'); await synced('0'); await setTargetDate(); }, 'Enter a target amount above $0.'],
+    ['no target date picked', async () => { await type('e.g. Emergency fund', 'X'); await synced('5000'); }, 'Pick a target date.'],
+    ['a grow baseline that is not below the target', async () => {
+      await type('e.g. Emergency fund', 'X'); await synced('5000'); await type('e.g. 500', '9000'); await setTargetDate();
     }, 'The starting amount should be below your target.'],
     // a pay-down "starting amount owed" must sit ABOVE the target; equal is the wrong side.
-    ['pay-down baseline not above the target', () => {
-      type('e.g. Emergency fund', 'Card'); tap('goal-direction-paydown'); tap('goal-source-manual');
-      type('e.g. 2500', '3000'); type('e.g. 0', '1000'); type('e.g. 500', '1000'); setTargetDate();
+    ['pay-down baseline not above the target', async () => {
+      await type('e.g. Emergency fund', 'Card'); await tap('goal-direction-paydown'); await tap('goal-source-manual');
+      await type('e.g. 2500', '3000'); await type('e.g. 0', '1000'); await type('e.g. 500', '1000'); await setTargetDate();
     }, 'The starting amount should be above your target.'],
     // guards the parseAmount regex: a naive parseFloat('80abc') would save a $80 goal.
-    ['a non-numeric target amount', () => { type('e.g. Emergency fund', 'Junk'); synced('80abc'); setTargetDate(); }, 'Enter a target amount above $0.'],
-    ['blank manual starting balance', () => {
-      type('e.g. Emergency fund', 'Cash'); tap('goal-source-manual'); type('e.g. 10000', '5000'); setTargetDate();
+    ['a non-numeric target amount', async () => { await type('e.g. Emergency fund', 'Junk'); await synced('80abc'); await setTargetDate(); }, 'Enter a target amount above $0.'],
+    ['blank manual starting balance', async () => {
+      await type('e.g. Emergency fund', 'Cash'); await tap('goal-source-manual'); await type('e.g. 10000', '5000'); await setTargetDate();
     }, 'Enter a starting balance.'],
-    ['non-numeric baseline', () => { fillValidSyncedGrow('Base'); type('e.g. 500', 'abc'); }, 'Enter a valid starting amount.'],
+    ['non-numeric baseline', async () => { await fillValidSyncedGrow('Base'); await type('e.g. 500', 'abc'); }, 'Enter a valid starting amount.'],
   ])('validation blocks the save: %s', async (_case, fill, toast) => {
     await renderForm();
-    fill();
+    await fill();
     await press('goal-save');
     expect(mockShowToast).toHaveBeenCalledWith(toast);
     expect(mockSaveGoal).not.toHaveBeenCalled();
@@ -344,18 +345,18 @@ describe('validation blocks the save (toast, no writer call)', () => {
 // through at pick time, the save is still blocked. Scoped to a CHANGED date so editing an already-
 // overdue goal (whose past date was saved earlier) isn't blocked.
 describe('WHIT-257: save-time future-date guard on the target date', () => {
-  const fillSyncedGrow = () => {
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Trip');
-    fireEvent.press(screen.getByTestId('goal-source-synced'));
-    fireEvent.press(screen.getByTestId('goal-account-acc-1'));
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+  const fillSyncedGrow = async () => {
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Trip');
+    await fireEvent.press(screen.getByTestId('goal-source-synced'));
+    await fireEvent.press(screen.getByTestId('goal-account-acc-1'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
   };
 
   it('a freshly-picked PAST target date is rejected with a toast, no save', async () => {
     setPickedDate(new Date(2020, 0, 1)); // definitively past
     await renderForm();
-    fillSyncedGrow();
-    setTargetDate();
+    await fillSyncedGrow();
+    await setTargetDate();
     await press('goal-save');
     expect(mockShowToast).toHaveBeenCalledWith('Pick a target date in the future.');
     expect(mockSaveGoal).not.toHaveBeenCalled();
@@ -366,7 +367,7 @@ describe('WHIT-257: save-time future-date guard on the target date', () => {
     setParams({ id: 'gp' });
     goals = [overdue];
     await renderForm();
-    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Renamed');
+    await fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Renamed');
     await press('goal-save');
     expect(mockShowToast).not.toHaveBeenCalled();
     const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -382,7 +383,7 @@ describe('writer failure does not navigate', () => {
   it('saveGoal returns false → no back (the writer keeps its own toast)', async () => {
     mockSaveGoal.mockImplementation(async () => false);
     await renderForm();
-    fillValidSyncedGrow();
+    await fillValidSyncedGrow();
     await press('goal-save');
 
     expect(mockSaveGoal).toHaveBeenCalledTimes(1);
@@ -431,8 +432,8 @@ describe('the icon picker feeds the body', () => {
   // [A26] Tapping a non-default icon changes the icon carried in the saved body (default 'star').
   it('picking "cash" sends icon: "cash"', async () => {
     await renderForm();
-    fillValidSyncedGrow('Piggy');
-    fireEvent.press(screen.getByTestId('goal-icon-cash'));
+    await fillValidSyncedGrow('Piggy');
+    await fireEvent.press(screen.getByTestId('goal-icon-cash'));
     await press('goal-save');
 
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -451,7 +452,7 @@ describe('editing before the cache resolves cannot overwrite the goal', () => {
     goals = [RAINY_DAY];
     seedServer();
     const held = server.hold('/goals'); // cold cache: g1 not loaded yet
-    render(<WithQueries><GoalEdit /></WithQueries>);
+    await render(<WithQueries><GoalEdit /></WithQueries>);
 
     // The button is disabled — that's what stops the blank-over-real save.
     expect(screen.getByTestId('goal-save').props.accessibilityState?.disabled).toBe(true);
@@ -469,22 +470,22 @@ describe('editing before the cache resolves cannot overwrite the goal', () => {
 // WHIT-257 — the manual "as of" date gets the mirror of the target-date guard: a freshly-picked
 // FUTURE as-of is rejected at save (it can only be today or earlier); an untouched one saves.
 describe('WHIT-257: save-time guard on the manual as-of date', () => {
-  const fillManual = () => {
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Cash');
-    fireEvent.press(screen.getByTestId('goal-source-manual'));
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '800');
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+  const fillManual = async () => {
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Cash');
+    await fireEvent.press(screen.getByTestId('goal-source-manual'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '800');
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
   };
 
   it('a freshly-picked FUTURE as-of date is rejected with a toast, no save', async () => {
     setPickedDate(FUTURE); // future — drives BOTH pickers; target stays valid
     await renderForm();
-    fillManual();
+    await fillManual();
     // AS OF is seeded to today → shows a "Change" affordance now; open it (the first date field),
     // then tap its picker → future.
-    fireEvent.press(screen.getAllByTestId('date-open')[0]);
-    fireEvent.press(screen.getAllByTestId('mock-datepicker')[0]); // as-of → future
-    setTargetDate();                                              // target → future (valid)
+    await fireEvent.press(screen.getAllByTestId('date-open')[0]);
+    await fireEvent.press(screen.getAllByTestId('mock-datepicker')[0]); // as-of → future
+    await setTargetDate();                                              // target → future (valid)
     await press('goal-save');
     expect(mockShowToast).toHaveBeenCalledWith("The as-of date can't be in the future.");
     expect(mockSaveGoal).not.toHaveBeenCalled();
@@ -504,7 +505,7 @@ describe('WHIT-477: the checkpoint editor', () => {
 
   it('carries a saved ladder through an unrelated edit, ids intact', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Rainy day fund');
+    await fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Rainy day fund');
     await press('goal-save');
 
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -515,9 +516,9 @@ describe('WHIT-477: the checkpoint editor', () => {
   it('adds a rung and saves it sorted, with a minted id', async () => {
     goals = [RAINY_DAY]; // no existing ladder
     await renderForm();
-    fireEvent.press(screen.getByTestId('goal-cp-add'));
-    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Halfway');
-    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '5000');
+    await fireEvent.press(screen.getByTestId('goal-cp-add'));
+    await fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Halfway');
+    await fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '5000');
     await press('goal-save');
 
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -529,7 +530,7 @@ describe('WHIT-477: the checkpoint editor', () => {
 
   it('editing a rung label keeps its id', async () => {
     await renderForm();
-    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'First grand');
+    await fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'First grand');
     await press('goal-save');
 
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -540,12 +541,12 @@ describe('WHIT-477: the checkpoint editor', () => {
   it('saves rungs SORTED even when entered out of order', async () => {
     goals = [RAINY_DAY];
     await renderForm();
-    fireEvent.press(screen.getByTestId('goal-cp-add'));
-    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Later');
-    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '4000');
-    fireEvent.press(screen.getByTestId('goal-cp-add'));
-    fireEvent.changeText(screen.getByTestId('goal-cp-label-1'), 'Earlier');
-    fireEvent.changeText(screen.getByTestId('goal-cp-amount-1'), '1000');
+    await fireEvent.press(screen.getByTestId('goal-cp-add'));
+    await fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Later');
+    await fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '4000');
+    await fireEvent.press(screen.getByTestId('goal-cp-add'));
+    await fireEvent.changeText(screen.getByTestId('goal-cp-label-1'), 'Earlier');
+    await fireEvent.changeText(screen.getByTestId('goal-cp-amount-1'), '1000');
     await press('goal-save');
 
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -555,8 +556,8 @@ describe('WHIT-477: the checkpoint editor', () => {
 
   it('deleting every rung of a saved ladder sends [] to clear it', async () => {
     await renderForm();
-    fireEvent.press(screen.getByTestId('goal-cp-delete-0'));
-    fireEvent.press(screen.getByTestId('goal-cp-delete-0'));   // indices shift after each delete
+    await fireEvent.press(screen.getByTestId('goal-cp-delete-0'));
+    await fireEvent.press(screen.getByTestId('goal-cp-delete-0'));   // indices shift after each delete
     await press('goal-save');
 
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -566,9 +567,9 @@ describe('WHIT-477: the checkpoint editor', () => {
   it('blocks save with a toast when a rung is out of bounds (grow rung ≥ target)', async () => {
     goals = [RAINY_DAY];
     await renderForm();
-    fireEvent.press(screen.getByTestId('goal-cp-add'));
-    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Too big');
-    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '15000');   // ≥ 10000 target
+    await fireEvent.press(screen.getByTestId('goal-cp-add'));
+    await fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Too big');
+    await fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '15000');   // ≥ 10000 target
     await press('goal-save');
 
     expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/below the target/i));
@@ -586,9 +587,9 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
     goals = [CASH_POT]; // manual grow, target 5000, no ladder
     await renderForm();
 
-    fireEvent.press(screen.getByTestId('goal-cp-add'));
-    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Half');
-    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '2500');
+    await fireEvent.press(screen.getByTestId('goal-cp-add'));
+    await fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Half');
+    await fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '2500');
     await press('goal-save');
 
     const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
@@ -611,7 +612,7 @@ describe('the synced-account picker reads balances + recent transactions from th
       txn({ transaction_id: 't2', account_id: 'acc-9', account_name: 'Old Closed Card' }), // no balance → not offered
     ]);
     await renderWithQueries(<GoalEdit />);
-    fireEvent.press(screen.getByTestId('goal-source-synced'));
+    await fireEvent.press(screen.getByTestId('goal-source-synced'));
 
     expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
     expect(screen.getByText('Everyday Savings')).toBeTruthy();
@@ -626,7 +627,7 @@ describe('the synced-account picker reads balances + recent transactions from th
     server.seed('/accounts/balances', [balance('acc-1', 2500)]);
     server.fail('/transactions', 500);
     await renderWithQueries(<GoalEdit />);
-    fireEvent.press(screen.getByTestId('goal-source-synced'));
+    await fireEvent.press(screen.getByTestId('goal-source-synced'));
 
     expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
     expect(screen.getByText('Acc 1')).toBeTruthy();
@@ -689,7 +690,7 @@ describe('editing waits for the real goals read', () => {
   it('a create keeps Save enabled while GET /goals is still in flight', async () => {
     server.seed('/accounts/balances', [balance('acc-1', 2500)]);
     const held = server.hold('/goals');
-    render(<WithQueries><GoalEdit /></WithQueries>);
+    await render(<WithQueries><GoalEdit /></WithQueries>);
     expect(saveDisabled()).toBe(false);
     await act(async () => { held.release(); });
     await settle();
@@ -702,7 +703,7 @@ describe('editing waits for the real goals read', () => {
     server.seed('/goals', [RAINY_DAY]);
     await renderWithQueries(<GoalEdit />);
     expect(saveDisabled()).toBe(false);
-    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Typed');
+    await fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Typed');
 
     server.seed('/goals', []);
     await refreshInAct(() => queryClient.refetchQueries());

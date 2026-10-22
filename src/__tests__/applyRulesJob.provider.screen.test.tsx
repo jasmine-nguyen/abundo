@@ -33,8 +33,8 @@ const JOB_PATH = `${JOBS}/job-1`;
 
 const POLL = 2500; // APPLY_RULES_JOB_POLL_DELAY_MS
 
-function mount() {
-  return renderHook(() => useAppContext(), { wrapper }).result;
+async function mount() {
+  return (await renderHook(() => useAppContext(), { wrapper })).result;
 }
 
 /** Advance one poll cycle and let the async GET (and the state it sets) settle. */
@@ -52,7 +52,7 @@ it('starts a job, shows it running, and polls to success — refreshing caches o
   server.once('GET', JOB_PATH, { body: applyRulesJob({ status: 'running', matched: 900, filed: 300 }) });
   server.once('GET', JOB_PATH, { body: applyRulesJob({ status: 'succeeded', matched: 900, filed: 900, remaining: 0 }) });
 
-  const r = mount();
+  const r = await mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(r.current.applyRulesJob?.status).toBe('running');
 
@@ -73,7 +73,7 @@ it.each([
 ])('%s', async (_name, reply, error) => {
   server.once('GET', JOB_PATH, reply);
 
-  const r = mount();
+  const r = await mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick();
 
@@ -84,7 +84,7 @@ it('tolerates a transient network throw and keeps polling', async () => {
   server.once('GET', JOB_PATH, 'dropped');                              // dropped poll — NOT a failure
   server.once('GET', JOB_PATH, { body: applyRulesJob({ status: 'succeeded', matched: 5, filed: 5 }) });
 
-  const r = mount();
+  const r = await mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
 
   await tick();
@@ -96,7 +96,7 @@ it('tolerates a transient network throw and keeps polling', async () => {
 it('gives up after too many consecutive network throws', async () => {
   for (let i = 0; i < 5; i++) server.once('GET', JOB_PATH, 'dropped');
 
-  const r = mount();
+  const r = await mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(5); // APPLY_RULES_JOB_MAX_NET_ERRORS
 
@@ -104,7 +104,7 @@ it('gives up after too many consecutive network throws', async () => {
 });
 
 it('blocks the sync sweep while a job is running (one heavy run at a time)', async () => {
-  const r = mount();
+  const r = await mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 900, filed: 100 }));
   expect(r.current.applyRulesJob?.status).toBe('running');
@@ -123,7 +123,7 @@ it('blocks the sync sweep while a job is running (one heavy run at a time)', asy
 it('does not leave two poll chains after a dismiss + reopen during an in-flight GET', async () => {
   // Fail-on-revert for the poll-generation guard: a GET left in flight by a dismiss must NOT re-arm
   // the timer when it resolves, or the reopen's fresh timer plus the stale one give two live chains.
-  const r = mount();
+  const r = await mount();
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 900, filed: 100 }));
@@ -147,7 +147,7 @@ it('retry re-runs the SAME variant that failed, not a plain sweep', async () => 
   // and retried from the plain sheet, which would otherwise call startApplyRulesSweep.)
   server.once('GET', JOB_PATH, { body: applyRulesJob({ status: 'failed', error: 'boom' }) });
 
-  const r = mount();
+  const r = await mount();
   const group = { rulePattern: 'WOOLWORTHS' } as UncategorizedMerchantGroup;
   await act(async () => { await r.current.fileCharges({ kind: 'shop', group: group, categoryId: 'groceries' }, BIG_RUN); });
   await tick();
@@ -161,7 +161,7 @@ it('retry re-runs the SAME variant that failed, not a plain sweep', async () => 
 });
 
 it('stops polling on sign-out and never reads status into the next session', async () => {
-  const r = mount();
+  const r = await mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 900, filed: 100 }));
   await tick();
@@ -186,7 +186,7 @@ describe('lock and variant edges', () => {
   // Distinct from the sign-out test: the session epoch is untouched, so a fresh sweep can start after
   // unlock (the lock was released).
   it('[G3] a Face-ID lock stops polling, drops the job, and releases the lock', async () => {
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 900, filed: 100 }));
     await tick();
@@ -213,7 +213,7 @@ describe('lock and variant edges', () => {
   it('[G5] a lock while the start POST is in flight discards the start and keeps the lock consistent', async () => {
     const held = server.hold(JOBS);
 
-    const r = mount();
+    const r = await mount();
     let started: Promise<unknown>;
     await act(async () => { started = r.current.fileCharges(SWEEP, BIG_RUN); });   // POST now pending
     await act(async () => { setAuthStatus('locked'); });                      // lock clears active + job
@@ -237,7 +237,7 @@ describe('lock and variant edges', () => {
     queryClient.setQueryData(['rules'], []); // seed so patchRules has a cache to prepend into
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
     const before = invalidate.mock.calls.length;
@@ -254,7 +254,7 @@ describe('lock and variant edges', () => {
     queryClient.setQueryData(['rules'], []);
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
-    const r = mount();
+    const r = await mount();
     const grp = { merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 5, samples: [], firstDate: '2026-01-01', lastDate: '2026-02-01', alsoCatches: [] } as unknown as UncategorizedMerchantGroup;
     await act(async () => { await r.current.fileCharges({ kind: 'shop', group: grp, categoryId: 'groceries' }, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
@@ -274,7 +274,7 @@ describe('lock and variant edges', () => {
     server.once('GET', JOB_PATH, { body: applyRulesJob({ status: running, matched: 5, filed: 2 }) });
     server.once('GET', JOB_PATH, { body: applyRulesJob({ status: succeeded, matched: 5, filed: 5, createdRule: minted }) });
 
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, BIG_RUN); });
     await tick(2);
 
@@ -293,7 +293,7 @@ describe('stall hint', () => {
   const POLLS_TO_TRIP = STALL_POLLS + 1;
 
   it('raises the stall hint after N unchanged polls while the job keeps running (planning phase)', async () => {
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 0, attempted: 0 }));
 
@@ -315,7 +315,7 @@ describe('stall hint', () => {
       server.once('GET', JOB_PATH, { body: applyRulesJob({ status: 'running', matched: 900, attempted: 10 * i }) });
     }
 
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
 
     await tick(POLLS_TO_TRIP + 5);
@@ -324,7 +324,7 @@ describe('stall hint', () => {
   });
 
   it('clears the hint when progress resumes', async () => {
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 900, attempted: 100 }));
     await tick(POLLS_TO_TRIP);
@@ -337,7 +337,7 @@ describe('stall hint', () => {
   });
 
   it('a terminal state on the stall poll wins over the hint', async () => {
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 0, attempted: 0 }));
     await tick(POLLS_TO_TRIP - 1);
@@ -356,7 +356,7 @@ describe('stall hint', () => {
   // FAIL-ON-REVERT: drop the endApplyRulesJob() in retryApplyRulesJob and the active lock refuses the
   // restart — startApplyRulesJob stays at 1 call, res is {ok:false}, and the hint never clears.
   it('[G1] Try again while stalled tears the run down and restarts the same variant', async () => {
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'running', matched: 0, attempted: 0 }));
     await tick(POLLS_TO_TRIP);
@@ -374,7 +374,7 @@ describe('stall hint', () => {
     ['[G4a] progress via matched alone resets the stall counter', { matched: 5, attempted: 5 }, { matched: 6, attempted: 5 }],
     ['[G4b] progress via attempted alone resets the stall counter', { matched: 900, attempted: 10 }, { matched: 900, attempted: 11 }],
   ])('%s', async (_name, frozen, advanced) => {
-    const r = mount();
+    const r = await mount();
     await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
     server.seed(JOB_PATH, applyRulesJob({ status: 'running', ...frozen }));
     await tick(POLLS_TO_TRIP);

@@ -20,9 +20,9 @@ beforeEach(() => {
 });
 
 // Fail-on-revert: hard-wire the query `enabled: true` (drop useIsAuthed) → the walk fires and this fails.
-it.each(['anon', 'locked'] as const)('does NOT fetch while the session is %s', (status) => {
+it.each(['anon', 'locked'] as const)('does NOT fetch while the session is %s', async (status) => {
   setAuthStatusQuietly(status);
-  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
+  const { result } = await renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(server.sent('GET', COUNT_PATH)).toHaveLength(0);
   expect(result.current).toBeUndefined(); // → undefined, so consumers fall back to local
 });

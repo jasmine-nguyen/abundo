@@ -25,8 +25,8 @@ import TabsLayout from '../../app/(tabs)/_layout';
 
 beforeEach(() => { captured = undefined; });
 
-it('disables the tab-switch animation when reduce-motion is ON', () => {
+it('disables the tab-switch animation when reduce-motion is ON', async () => {
   mockReduceMotion = true;
-  render(<TabsLayout />);
+  await render(<TabsLayout />);
   expect(captured?.animation).toBe('none');
 });

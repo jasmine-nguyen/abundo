@@ -21,7 +21,7 @@ const COUNT_PATH = '/transactions/uncategorized/count';
 it('[A5] a malformed count envelope ({count:"0"}) leaves the hook undefined, never "0"', async () => {
   server.seed(COUNT_PATH, { count: '0' });
   const client = makeClient({ staleTime: 0 });
-  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(client) });
+  const { result } = await renderHook(() => useUncategorizedCount(), { wrapper: wrapper(client) });
   await waitFor(() => expect(client.getQueryState(uncategorizedCountKey)?.status).toBe('error'));
   expect(result.current).toBeUndefined();
   expect(server.sent('GET', COUNT_PATH)).toHaveLength(1);
@@ -30,9 +30,9 @@ it('[A5] a malformed count envelope ({count:"0"}) leaves the hook undefined, nev
 // [A9]
 it('[A9] a past cycle sends ?cycle=n; a date range replaces the cycle entirely', async () => {
   const client = makeClient({ staleTime: 0 });
-  const past = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 2, true), { wrapper: wrapper(client) });
+  const past = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 2, true), { wrapper: wrapper(client) });
   await waitFor(() => expect(past.result.current.isSuccess).toBe(true));
-  const range = renderHook(
+  const range = await renderHook(
     () => useCategoryCycleTransactionsQuery('coffee', 2, true, { from: '2026-06-12', to: '2026-09-11' }),
     { wrapper: wrapper(client) },
   );

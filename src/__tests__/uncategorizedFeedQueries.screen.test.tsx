@@ -47,7 +47,7 @@ describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
   it('keeps the plain feed on the way back', async () => {
     seedFeedPage(server, FEED, [tx('plain1')]);
     seedFeedPage(server, UNCATEGORIZED_FEED, [tx('u1')]);
-    const { result, rerender } = renderHook((tab: 'all' | 'uncategorized') => useTransactionsScreenData(tab), {
+    const { result, rerender } = await renderHook((tab: 'all' | 'uncategorized') => useTransactionsScreenData(tab), {
       wrapper: wrapper(makeClient()), initialProps: 'all' as 'all' | 'uncategorized',
     });
 
@@ -55,11 +55,11 @@ describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
     expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(0); // uncategorized query only FETCHES on its tab
     expect(server.sentUnder('GET', FEED)).toHaveLength(1);
 
-    rerender('uncategorized');
+    await rerender('uncategorized');
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['u1']));
     expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(1);
 
-    rerender('all');
+    await rerender('all');
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['plain1'])); // plain feed intact
   });
 });
@@ -77,7 +77,7 @@ describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
       pages: [{ transactions: [tx('dup', { description: 'UNCAT' }), tx('deep')], nextCursor: null }],
       pageParams: [undefined],
     });
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
 
     await waitFor(() => expect(result.current.findTx('feedonly')).toBeDefined()); // feed loaded
     expect(result.current.findTx('deep')!.transaction_id).toBe('deep');           // uncat-feed-only, resolved
@@ -105,7 +105,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
     emptyFeed();
     const client = makeClient();
     client.setQueryData(key, [tx(id, { description })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.findTx(id)).toBeDefined());
     expect(result.current.findTx(id)!.description).toBe(description);
   });
@@ -114,7 +114,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
     emptyFeed();
     const client = makeClient();
     client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: '' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
     await refreshInAct(() => client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: 'paid' })]));
     await waitFor(() => expect(result.current.findTx('bill')!.notes).toBe('paid'));
@@ -131,7 +131,7 @@ describe('[C3] refetchList touches only the active feed cache', () => {
       pages: [{ transactions: [tx('u1')], nextCursor: 'c1' }, { transactions: [tx('u2')], nextCursor: null }],
       pageParams: [undefined, 'c1'],
     });
-    const { result } = renderHook(() => useTransactionsScreenData('all'), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData('all'), { wrapper: wrapper(client) });
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['plain1']));
 
     await act(async () => { result.current.refetchList(); });
@@ -151,7 +151,7 @@ describe('[C3] refetchList touches only the active feed cache', () => {
       pages: [{ transactions: [tx('p1')], nextCursor: 'pc1' }, { transactions: [tx('p2')], nextCursor: null }],
       pageParams: [undefined, 'pc1'],
     });
-    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(client) });
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['u1']));
     await act(async () => { result.current.loadMore(); });
     await waitFor(() => expect(result.current.transactions.length).toBe(2)); // 2 uncat pages loaded

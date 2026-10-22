@@ -45,7 +45,7 @@ afterEach(() => { jest.useRealTimers(); });
 describe('Goals tab', () => {
   it('tapping a goal card opens its read-only goal page, not the edit form', async () => {
     await renderWithQueries(<Goals />);
-    fireEvent.press(screen.getByTestId('goal-card-ef 1'));
+    await fireEvent.press(screen.getByTestId('goal-card-ef 1'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/ef%201');
     expect(routerSpies.push).not.toHaveBeenCalledWith(expect.stringContaining('/goal/edit'));
   });
@@ -74,7 +74,7 @@ describe('goal page', () => {
     expect(screen.queryByTestId('goal-milestone-reached-c2')).toBeNull();
 
     expect(screen.queryByText(/Delete/)).toBeNull();
-    fireEvent.press(screen.getByTestId('goal-detail-edit'));
+    await fireEvent.press(screen.getByTestId('goal-detail-edit'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=ef%201');
   });
 });
@@ -107,7 +107,7 @@ describe('goal page milestones', () => {
     expect(within(screen.getByTestId('goal-milestone-c3')).getByTestId('goal-milestone-togo-c3')).toHaveTextContent('$4,501 to go');
 
     expect(screen.getByText('Balance as of 1 Jul 2026')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('goal-balance-buf'));
+    await fireEvent.press(screen.getByTestId('goal-balance-buf'));
     expect(mockOpenGoalBalance).toHaveBeenCalledWith('buf');
   });
 });

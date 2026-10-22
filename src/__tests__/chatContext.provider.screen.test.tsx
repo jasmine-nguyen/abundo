@@ -40,7 +40,7 @@ async function tick(ms = CHAT_POLL_DELAY_MS) {
 }
 
 async function mount() {
-  const view = render(<ChatProvider><Probe /></ChatProvider>);
+  const view = await render(<ChatProvider><Probe /></ChatProvider>);
   await flush();
   return view;
 }
@@ -59,7 +59,7 @@ describe('sending a question', () => {
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
 
-    act(() => chat.send('  Average eating out?  '));
+    await act(() => chat.send('  Average eating out?  '));
     await flush();
     expect(chatPosts().map((request) => request.body)).toEqual([{ messages: [{ role: 'user', text: 'Average eating out?' }] }]);
     expect(chat.inFlight).toBe(true);
@@ -76,12 +76,12 @@ describe('sending a question', () => {
 
   it('ignores a blank message and a second send while one is in flight', async () => {
     await mount();
-    act(() => chat.send('   '));
+    await act(() => chat.send('   '));
     expect(chatPosts()).toHaveLength(0);
 
-    act(() => chat.send('first'));
+    await act(() => chat.send('first'));
     await flush();
-    act(() => chat.send('second'));
+    await act(() => chat.send('second'));
     await flush();
     expect(chatPosts()).toHaveLength(1);
   });
@@ -91,10 +91,10 @@ describe('stop', () => {
   it('stops checking and throws the answer away', async () => {
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('Average eating out?'));
+    await act(() => chat.send('Average eating out?'));
     await flush();
 
-    act(() => chat.stop());
+    await act(() => chat.stop());
     await tick();
     await tick();
 
@@ -110,11 +110,11 @@ describe('errors and retry', () => {
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
 
-    act(() => chat.send('Average eating out?'));
+    await act(() => chat.send('Average eating out?'));
     await flush();
     expect(chat.messages[1]).toMatchObject({ role: 'assistant', status: 'error', text: CHAT_ERROR_TEXT });
 
-    act(() => chat.retry());
+    await act(() => chat.retry());
     await flush();
     expect(chatPosts().map((request) => request.body)).toEqual([
       { messages: [{ role: 'user', text: 'Average eating out?' }] },
@@ -128,7 +128,7 @@ describe('errors and retry', () => {
   it('a job the server marks failed shows the error bubble', async () => {
     nextCheck({ status: 'failed', error: 'assistant unavailable' });
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     await tick();
     expect(chat.messages[1]).toMatchObject({ status: 'error' });
@@ -138,7 +138,7 @@ describe('errors and retry', () => {
   it('a gone job (404) fails straight away', async () => {
     server.fail(JOB, 404);
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     await tick();
     await tick();
@@ -152,7 +152,7 @@ describe('errors and retry', () => {
     server.once('GET', JOB, { status: 503 });
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     await tick();
     expect(chat.messages).toHaveLength(1);
@@ -168,7 +168,7 @@ describe('errors and retry', () => {
     for (let i = 0; i < drops; i += 1) server.once('GET', JOB, 'dropped');
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     for (let i = 0; i < drops * 2 + 2; i += 1) await tick();
     expect(chat.messages[1]).toMatchObject({ status: 'done' });
@@ -178,7 +178,7 @@ describe('errors and retry', () => {
     for (let i = 0; i < CHAT_MAX_NET_ERRORS - 1; i += 1) server.once('GET', JOB, 'dropped');
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     for (let i = 0; i < CHAT_MAX_NET_ERRORS; i += 1) await tick();
     expect(chat.messages[1]).toMatchObject({ status: 'done' });
@@ -187,7 +187,7 @@ describe('errors and retry', () => {
   it('gives up after too many dropped calls in a row', async () => {
     for (let i = 0; i < CHAT_MAX_NET_ERRORS; i += 1) server.once('GET', JOB, 'dropped');
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     for (let i = 0; i < CHAT_MAX_NET_ERRORS; i += 1) await tick();
     expect(chat.messages[1]).toMatchObject({ status: 'error' });
@@ -196,7 +196,7 @@ describe('errors and retry', () => {
 
   it('gives up when the answer takes too long overall', async () => {
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     const checks = Math.ceil(CHAT_MAX_WAIT_MS / CHAT_POLL_DELAY_MS) + 2;
     for (let i = 0; i < checks; i += 1) await tick();
@@ -208,17 +208,17 @@ describe('opening, new chat and sign-out', () => {
   it('a follow-up opens a fresh thread seeded with the summary and focuses the keyboard', async () => {
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('old question'));
+    await act(() => chat.send('old question'));
     await flush();
     await tick();
 
-    act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
+    await act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
     expect(chat.open).toBe(true);
     expect(chat.autoFocus).toBe(true);
     expect(chat.messages).toEqual([expect.objectContaining({ role: 'assistant', status: 'done', text: 'You are on track this cycle.' })]);
 
-    act(() => chat.closeChat());
-    act(() => chat.openChat());
+    await act(() => chat.closeChat());
+    await act(() => chat.openChat());
     expect(chat.autoFocus).toBe(false);
     expect(chat.messages).toHaveLength(1); // the thread survives closing
   });
@@ -227,26 +227,26 @@ describe('opening, new chat and sign-out', () => {
     // The server rejects any message over CHAT_MESSAGE_MAX_LEN, so an uncut seed would make every
     // question in the thread fail — and Retry with it.
     await mount();
-    act(() => chat.openChat({ seed: 'x'.repeat(CHAT_MESSAGE_MAX_LEN + 500) }));
+    await act(() => chat.openChat({ seed: 'x'.repeat(CHAT_MESSAGE_MAX_LEN + 500) }));
     expect(chat.messages[0].text).toHaveLength(CHAT_MESSAGE_MAX_LEN);
   });
 
   it('New chat clears the thread', async () => {
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
-    act(() => chat.newChat());
+    await act(() => chat.newChat());
     expect(chat.messages).toEqual([]);
     expect(chat.inFlight).toBe(false);
   });
 
   it('signing out clears the conversation and closes the sheet', async () => {
     await mount();
-    act(() => chat.openChat());
-    act(() => chat.send('Hi'));
+    await act(() => chat.openChat());
+    await act(() => chat.send('Hi'));
     await flush();
 
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     expect(chat.messages).toEqual([]);
     expect(chat.open).toBe(false);
     expect(chat.inFlight).toBe(false);
@@ -255,10 +255,10 @@ describe('opening, new chat and sign-out', () => {
   it('[A22f] signing out while the start request is pending never starts checking', async () => {
     const start = server.hold('/ai/chat');
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
 
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
     await act(async () => { start.release(); });
     await tick();
     await tick();
@@ -270,11 +270,11 @@ describe('opening, new chat and sign-out', () => {
   it('[A22a] a follow-up opened mid-answer drops the old job\'s late reply', async () => {
     const poll = server.hold(JOB);
     await mount();
-    act(() => chat.send('old question'));
+    await act(() => chat.send('old question'));
     await flush();
     await tick(); // the poll is now in flight
 
-    act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
+    await act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
     nextCheck({ status: 'succeeded', reply: REPLY });
     await act(async () => { poll.release(); });
     await flush();
@@ -286,8 +286,8 @@ describe('opening, new chat and sign-out', () => {
 
   it('[A22h] the first question after a seed sends the summary as the opening answer', async () => {
     await mount();
-    act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
-    act(() => chat.send('Why?'));
+    await act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
+    await act(() => chat.send('Why?'));
     await flush();
     expect(chatPosts().map((request) => request.body)).toEqual([{ messages: [
       { role: 'assistant', text: 'You are on track this cycle.' },
@@ -298,12 +298,12 @@ describe('opening, new chat and sign-out', () => {
   it('[A22e] Retry after a failed follow-up resends the seed and the question once each', async () => {
     server.once('POST', '/ai/chat', 'dropped');
     await mount();
-    act(() => chat.openChat({ seed: 'Summary.' }));
-    act(() => chat.send('Why?'));
+    await act(() => chat.openChat({ seed: 'Summary.' }));
+    await act(() => chat.send('Why?'));
     await flush();
     expect(chat.messages[2]).toMatchObject({ status: 'error' });
 
-    act(() => chat.retry());
+    await act(() => chat.retry());
     await flush();
     const resent = { messages: [
       { role: 'assistant', text: 'Summary.' },
@@ -320,12 +320,12 @@ describe('consent', () => {
     expect(chat.consentLoaded).toBe(true);
     expect(chat.consentedAt).toBeNull();
 
-    act(() => chat.acceptConsent());
+    await act(() => chat.acceptConsent());
     await flush();
     expect(chat.consentedAt).not.toBeNull();
     expect(await AsyncStorage.getItem(CHAT_CONSENT_KEY)).toBe(chat.consentedAt);
 
-    first.unmount();
+    await first.unmount();
     await mount();
     expect(chat.consentedAt).toBe(await AsyncStorage.getItem(CHAT_CONSENT_KEY));
   });
@@ -385,10 +385,10 @@ describe('QA edges', () => {
     const start = server.hold('/ai/chat');
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('Average eating out?'));
+    await act(() => chat.send('Average eating out?'));
     await flush();
 
-    act(() => chat.newChat());
+    await act(() => chat.newChat());
     await act(async () => { start.release(); });
     await tick();
     await tick();
@@ -403,7 +403,7 @@ describe('QA edges', () => {
   it('a succeeded job with no reply shows the error bubble straight away and stops checking', async () => {
     nextCheck({ status: 'succeeded', reply: null });
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     await tick();
 
@@ -418,12 +418,12 @@ describe('QA edges', () => {
   it('Retry after a good answer does nothing', async () => {
     nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
-    act(() => chat.send('Hi'));
+    await act(() => chat.send('Hi'));
     await flush();
     await tick();
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
 
-    act(() => chat.retry());
+    await act(() => chat.retry());
     await flush();
     expect(chatPosts()).toHaveLength(1);
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant']);

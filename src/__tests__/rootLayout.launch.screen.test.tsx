@@ -70,23 +70,23 @@ beforeEach(() => {
   mockFontsLoaded = false;
 });
 
-it('fires the launch effect ONCE while fonts are still loading (not gated by ready)', () => {
+it('fires the launch effect ONCE while fonts are still loading (not gated by ready)', async () => {
   // First render: fonts not loaded → RootLayout returns the early placeholder. The
   // effect must still have run (it sits above the early return, `[]` deps).
-  const { rerender } = render(<RootLayout />);
+  const { rerender } = await render(<RootLayout />);
   expect(mockRegister).toHaveBeenCalledTimes(1);
 
   // Fonts finish → real tree renders. The effect must NOT re-fire (`[]`, not `[ready]`).
   mockFontsLoaded = true;
-  rerender(<RootLayout />);
+  await rerender(<RootLayout />);
   expect(mockRegister).toHaveBeenCalledTimes(1);
 });
 
-it('installs the push-token rotation listener once at launch and removes it on unmount (WHIT-145)', () => {
+it('installs the push-token rotation listener once at launch and removes it on unmount (WHIT-145)', async () => {
   mockFontsLoaded = true;
-  const { unmount } = render(<RootLayout />);
+  const { unmount } = await render(<RootLayout />);
   expect(mockRotation).toHaveBeenCalledTimes(1);
   expect(mockRemove).not.toHaveBeenCalled();
-  unmount();
+  await unmount();
   expect(mockRemove).toHaveBeenCalledTimes(1); // cleanup removes the additive listener
 });

@@ -7,7 +7,6 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { ScrollView } from 'react-native';
 import { txn } from './factory';
 import type { Transaction } from '../types';
 import type { RuleRecord } from '../api';
@@ -41,7 +40,7 @@ import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
 import { pinToday } from './support/clock';
-import { styleOf, expectScrollEdge } from './support/layout';
+import { styleOf, expectScrollEdge, hostsOfType } from './support/layout';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
@@ -141,7 +140,7 @@ it('does NOT show the error when a background refetch fails over cached rows (ca
 // every cold load — this test fails if that happens.
 it('while loading with nothing cached, shows the spinner and NOT the not-found state', async () => {
   const held = server.hold('/transactions/feed');
-  render(<WithQueries><TransactionDetail /></WithQueries>);
+  await render(<WithQueries><TransactionDetail /></WithQueries>);
   expect(await screen.findByTestId('transaction-loading')).toBeTruthy();
   expect(screen.queryByText('Transaction not found')).toBeNull();
   await refreshInAct(() => held.release());
@@ -168,22 +167,22 @@ it('the amount leads, Account opens its page, empty note/tags fold, and the titl
 
   const amount = screen.getByText('−⁠$12.50');
   const merchant = screen.getByText('Woolworths');
-  expect(screen.root.findAll((n) => n === amount || n === merchant)).toEqual([amount, merchant]);
+  expect(screen.container.queryAll((n) => n === amount || n === merchant)).toEqual([amount, merchant]);
   expect(styleOf(amount).fontSize).toBeGreaterThanOrEqual(2 * styleOf(merchant).fontSize);
 
-  fireEvent.press(screen.getByRole('button', { name: 'Open account Everyday' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Open account Everyday' }));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/a1');
 
   expect(screen.queryByTestId('note-input')).toBeNull();
   expect(screen.queryByTestId('tag-input')).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: 'Add note' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Add note' }));
   expect(screen.getByTestId('note-input')).toBeTruthy();
-  fireEvent.press(screen.getByRole('button', { name: 'Add tag' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Add tag' }));
   expect(screen.getByTestId('tag-input')).toBeTruthy();
 
   expect(styleOf(screen.getByTestId('transaction-delete')).backgroundColor).toBeUndefined();
 
-  expectScrollEdge(screen.UNSAFE_getByType(ScrollView));
+  await expectScrollEdge(hostsOfType('RCTScrollView')[0]);
 });
 
 // ===== WHIT-276 (folded from transactionDetailStates.screen.test.tsx)
@@ -196,7 +195,7 @@ it('tapping the Category row opens the picker for this transaction', async () =>
   const row = screen.getByLabelText('Change category, currently Cafes & Coffee');
   expect(row.props.accessibilityRole).toBe('button');
 
-  fireEvent.press(row);
+  await fireEvent.press(row);
   expect(mockOpenPicker).toHaveBeenCalledTimes(1);
   expect(mockOpenPicker).toHaveBeenCalledWith('t1');
 });
@@ -207,7 +206,7 @@ it('detail screen labels the Category "Uncategorized" and re-opens the picker on
   seedFeedPage(server, '/transactions/feed', [txn({ transaction_id: 't1', category: null, counts_to_budget: false })]);
   await draw();
   expect(screen.getByText('Uncategorised')).toBeTruthy();
-  fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
+  await fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
   expect(mockOpenPicker).toHaveBeenCalledWith('t1');
 });
 
@@ -260,7 +259,7 @@ describe('rule attribution line', () => {
   it('shows no line (and does not crash) while the rules cache is still loading', async () => {
     seedStamped('r1');
     const held = server.hold('/rules');
-    render(<WithQueries><TransactionDetail /></WithQueries>);
+    await render(<WithQueries><TransactionDetail /></WithQueries>);
     expect(await screen.findByText('Woolworths')).toBeTruthy();
     expect(server.sent('GET', '/rules')).toHaveLength(1);
     expect(screen.queryByTestId('filed-by-rule')).toBeNull();
@@ -295,8 +294,8 @@ describe('rule attribution line', () => {
 describe('delete this transaction', () => {
   const alerts = spyOnAlert();
 
-  function tapDeleteAndChoose(choice: 'Cancel' | 'Delete') {
-    fireEvent.press(screen.getByTestId('transaction-delete'));
+  async function tapDeleteAndChoose(choice: 'Cancel' | 'Delete') {
+    await fireEvent.press(screen.getByTestId('transaction-delete'));
     expect(alerts.spy).toHaveBeenCalledTimes(1);
     expect(alerts.last().title).toBe('Delete this transaction?');
     pressAlertButton(alerts, choice);
@@ -304,7 +303,7 @@ describe('delete this transaction', () => {
 
   it('asks for confirmation, and Cancel deletes nothing', async () => {
     await draw();
-    tapDeleteAndChoose('Cancel');
+    await tapDeleteAndChoose('Cancel');
     expect(mockDeleteTransaction).not.toHaveBeenCalled();
     expect(routerSpies.back).not.toHaveBeenCalled();
   });
@@ -340,15 +339,15 @@ describe('delete this transaction', () => {
     expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
   });
 
-  function openConfirm() {
-    fireEvent.press(screen.getByTestId('transaction-delete'));
+  async function openConfirm() {
+    await fireEvent.press(screen.getByTestId('transaction-delete'));
     return alerts.last().button('Delete');
   }
 
   it('a double confirm in the same frame deletes once and goes back once', async () => {
     mockDeleteTransaction.mockResolvedValue(true);
     await draw();
-    const confirm = openConfirm();
+    const confirm = await openConfirm();
 
     await refreshInAct(() => { confirm.onPress?.(); confirm.onPress?.(); });
 
@@ -361,7 +360,7 @@ describe('delete this transaction', () => {
     mockDeleteTransaction.mockRejectedValue(new Error('boom'));
     await draw();
 
-    await refreshInAct(() => { openConfirm().onPress?.(); });
+    await refreshInAct(async () => { (await openConfirm()).onPress?.(); });
 
     expect(routerSpies.back).not.toHaveBeenCalled();
     expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
@@ -379,7 +378,7 @@ describe('delete this transaction', () => {
     await draw();
     const reload = server.hold('/transactions/feed');
 
-    await refreshInAct(() => { openConfirm().onPress?.(); });
+    await refreshInAct(async () => { (await openConfirm()).onPress?.(); });
 
     expect(queryClient.getQueryState(transactionsKey)?.status).toBe('pending');
     expect(screen.queryByTestId('transaction-loading')).toBeNull();
@@ -400,12 +399,12 @@ describe('delete this transaction', () => {
     let finish: (done: boolean) => void = () => {};
     mockDeleteTransaction.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     const view = await draw();
-    fireEvent.press(screen.getByTestId('note-add'));
-    fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
+    await fireEvent.press(screen.getByTestId('note-add'));
+    await fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
 
-    await refreshInAct(() => { openConfirm().onPress?.(); });  // the screen draws mid-delete
+    await refreshInAct(async () => { (await openConfirm()).onPress?.(); });  // the screen draws mid-delete
     await refreshInAct(() => finish(ok));
-    view.unmount();
+    await view.unmount();
 
     expect(routerSpies.back).toHaveBeenCalledTimes(backs);
     expect(mockApplyTransactionEdit).toHaveBeenCalledTimes(saves);
