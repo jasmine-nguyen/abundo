@@ -42,7 +42,7 @@ afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 it('[A10] dropped connections before a dismiss still count after the sheet is reopened', async () => {
   drop(jobPath('job-1'), 5);
 
-  const r = renderHook(() => useAppContext(), { wrapper }).result;
+  const r = (await renderHook(() => useAppContext(), { wrapper })).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(3); // 3 of the 5 allowed drops
@@ -61,7 +61,7 @@ it('[A11] a new job after a network give-up starts its dropped-connection count 
   drop(jobPath('job-1'), 5);
   drop(jobPath('job-2'), 5); // the retry's fresh job
 
-  const r = renderHook(() => useAppContext(), { wrapper }).result;
+  const r = (await renderHook(() => useAppContext(), { wrapper })).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(5);
@@ -83,9 +83,9 @@ function Probe() {
 it('[A13] the chat time limit counts from before the start request, not from the first check', async () => {
   const start = server.hold('/ai/chat');
 
-  render(<ChatProvider><Probe /></ChatProvider>);
+  await render(<ChatProvider><Probe /></ChatProvider>);
   await act(async () => { await Promise.resolve(); });
-  act(() => chat.send('how much on coffee?'));
+  await act(() => chat.send('how much on coffee?'));
 
   // The start request itself eats almost the whole budget. The clock jumps rather than the timers
   // running, so the start request's own 15s cancel timer doesn't end it first.

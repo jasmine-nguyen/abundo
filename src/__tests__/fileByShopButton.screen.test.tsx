@@ -48,7 +48,7 @@ const APPLY_RULES = 'transactions-apply-rules';
 async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
   const view = await renderWithQueries(<Transactions />);
   if (tab === 'all') return view;
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   await settle();
   return view;
 }
@@ -72,7 +72,7 @@ describe('the "File by shop" button', () => {
 
   it('opens the file-by-shop list sheet when pressed', async () => {
     await renderTab();
-    fireEvent.press(screen.getByTestId(BUTTON));
+    await fireEvent.press(screen.getByTestId(BUTTON));
     expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'fileByShopList' });
   });
 
@@ -100,16 +100,16 @@ it('leads with File by shop, keeps Apply my rules as a link, and hides the hint 
   expect(applyRules.backgroundColor).toBeFalsy();
   expect(applyRules.borderWidth ?? 0).toBe(0);
   expect(applyRules.minHeight).toBeGreaterThanOrEqual(44);
-  const text = textOf(screen.root);
+  const text = textOf(screen.container);
   expect(text.indexOf('File by shop')).toBeLessThan(text.indexOf('Apply my rules'));
   expect(screen.getByText(HINT)).toBeTruthy();
 
   mockSheet = { mode: 'confirm' };
-  view.rerender(<WithQueries><Transactions /></WithQueries>);
+  await view.rerender(<WithQueries><Transactions /></WithQueries>);
   await settle();
   expect(screen.queryByText(HINT)).toBeNull();
 
-  view.unmount();
+  await view.unmount();
   mockSheet = null;
   await renderTab();
   expect(screen.getByTestId(BUTTON)).toBeTruthy();
@@ -129,7 +129,7 @@ it.each([
   const view = await renderTab();
   expect(screen.getByText(HINT)).toBeTruthy();
   mockSheet = { mode };
-  view.rerender(<WithQueries><Transactions /></WithQueries>);
+  await view.rerender(<WithQueries><Transactions /></WithQueries>);
   await settle();
   expect(screen.queryByText(HINT) !== null).toBe(hintShown);
 });

@@ -50,8 +50,8 @@ it.each<[string, Transaction[], Rule[], ((c: Ctx) => void) | null, (c: Ctx) => P
   queryClient.setQueryData(['categories'], [{ ...GROCERIES }]);
   queryClient.setQueryData(['rules'], rules);
   queryClient.setQueryData(['budgets', 14], {});
-  const { result } = renderHook(() => useAppContext(), { wrapper });
-  if (before) act(() => before(result.current));
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
+  if (before) await act(() => before(result.current));
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await run(result.current); });

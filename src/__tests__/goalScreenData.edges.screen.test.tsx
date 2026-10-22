@@ -53,7 +53,7 @@ it('a null balance on a LATER refetch KEEPS the loaded balance (keep-last-good, 
   // homeLoan fetch COUNT would let the assertion fire before the null result was written.)
   server.once('GET', '/repayment', { body: REPAYMENT });
   server.seed('/repayment', REPAYMENT_2);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
 
   await act(async () => { result.current.refetch(); });
@@ -74,7 +74,7 @@ it('a held null is later OVERWRITTEN by a real balance — keep-last-good does N
   server.once('GET', '/repayment', { body: REPAYMENT });
   server.once('GET', '/repayment', { body: REPAYMENT_2 });
   server.seed('/repayment', REPAYMENT_3);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
 
   // Round 2: the null — held.
@@ -95,7 +95,7 @@ it('a genuine $0 balance (loan paid off) is NOT held — the guard keys on == nu
   server.seed('/homeloan', ZERO_HOME_LOAN);
   server.once('GET', '/repayment', { body: REPAYMENT });
   server.seed('/repayment', REPAYMENT_2);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
 
   await act(async () => { result.current.refetch(); });
@@ -107,7 +107,7 @@ it('a genuine $0 balance (loan paid off) is NOT held — the guard keys on == nu
 
 it('a loan-facts read failure is an aggregate error but NOT a balance error, and facts fall back to empty', async () => {
   server.fail('/loanfacts', 500);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.homeLoanError).toBe(false);            // the balance read is fine
@@ -116,7 +116,7 @@ it('a loan-facts read failure is an aggregate error but NOT a balance error, and
 });
 
 it('refetchStale refetches all three reads exactly once when they are stale', async () => {
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   await waitFor(() => expect(server.sent('GET', '/homeloan')).toHaveLength(1));
 
@@ -134,7 +134,7 @@ it('refetchStale refetches all three reads exactly once when they are stale', as
 describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
   it('a milestones read FAILURE does not flip isError/isLoading and falls back to []', async () => {
     server.fail('/milestones', 500);
-    const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
 
     // The three primary reads all succeed; the milestones failure must NOT surface in the aggregate.
     await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));

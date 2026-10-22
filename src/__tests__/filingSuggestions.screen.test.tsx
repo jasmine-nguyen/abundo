@@ -66,7 +66,7 @@ beforeEach(() => {
 // pattern + category. Fail-on-revert: pass the wrong pattern/category and this reddens.
 it('opens the add-rule confirm sheet with the suggested pattern and category', async () => {
   await mountList([suggestion()]);
-  fireEvent.press(await screen.findByTestId('filing-suggestion'));
+  await fireEvent.press(await screen.findByTestId('filing-suggestion'));
   expect(fns.setSheet).toHaveBeenCalledWith({
     mode: 'addRuleConfirm', pattern: 'SEDDONS EATERY', categoryId: 'dining', budgetExcluded: false,
   });
@@ -76,6 +76,6 @@ it('opens the add-rule confirm sheet with the suggested pattern and category', a
 // the card must still render and stay tappable.
 it('renders a suggestion whose also-sweep list has a null-merchant line', async () => {
   await mountList([suggestion({ alsoCatches: [{ merchant: null, count: 3 }, { merchant: 'Coles Express', count: 2 }] })]);
-  fireEvent.press(await screen.findByTestId('filing-suggestion'));
+  await fireEvent.press(await screen.findByTestId('filing-suggestion'));
   expect(fns.setSheet).toHaveBeenCalledWith(expect.objectContaining({ mode: 'addRuleConfirm', pattern: 'SEDDONS EATERY' }));
 });

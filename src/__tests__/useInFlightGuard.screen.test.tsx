@@ -15,7 +15,7 @@ afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
 // Fail-on-revert: delete the `if (inFlight.current) return` line and the second call fires,
 // making this expect(1) go to 2.
 it('runs the action once when fired twice in the same frame (drops the second)', async () => {
-  const { result } = renderHook(() => useInFlightGuard());
+  const { result } = await renderHook(() => useInFlightGuard());
   const action = jest.fn(() => new Promise<void>(() => {})); // stays in-flight forever
   await act(async () => {
     // Two SYNCHRONOUS calls in one tick — the same-frame double-tap the bug needs.
@@ -28,7 +28,7 @@ it('runs the action once when fired twice in the same frame (drops the second)',
 // [G-reset] While an action is in flight the button is latched; once it SETTLES the latch
 // releases so the next press works. Guards the disabled-then-re-enabled behaviour.
 it('re-enables once the in-flight action settles', async () => {
-  const { result } = renderHook(() => useInFlightGuard());
+  const { result } = await renderHook(() => useInFlightGuard());
   let resolveFirst!: () => void;
   const first = jest.fn(() => new Promise<void>((r) => { resolveFirst = r; }));
   const second = jest.fn(() => Promise.resolve());
@@ -52,7 +52,7 @@ it('re-enables once the in-flight action settles', async () => {
 // logs the rejection (WHIT-249), so silence console.error to keep the output clean.
 it('releases the latch when the action throws (retry still works)', async () => {
   const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  const { result } = renderHook(() => useInFlightGuard());
+  const { result } = await renderHook(() => useInFlightGuard());
   const boom = jest.fn(() => Promise.reject(new Error('save failed')));
   const retry = jest.fn(() => Promise.resolve());
 
@@ -72,7 +72,7 @@ it('releases the latch when the action throws (retry still works)', async () => 
 // out of `act` and the test fails (and the console.error assertion no longer holds).
 it('swallows a thrown action: resolves (not rejects), logs it, and re-enables', async () => {
   const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  const { result } = renderHook(() => useInFlightGuard());
+  const { result } = await renderHook(() => useInFlightGuard());
   const boom = jest.fn(() => { throw new Error('boom'); });
   const retry = jest.fn(() => Promise.resolve());
 

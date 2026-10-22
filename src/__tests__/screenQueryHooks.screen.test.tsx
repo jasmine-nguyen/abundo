@@ -32,13 +32,13 @@ beforeEach(() => {
 
 it('useCategories maps the list + a null-tolerant lookup, and does not fetch before login', async () => {
   setAuthStatusQuietly('anon');
-  const anon = renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
+  const anon = await renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
   expect(server.sent('GET', '/categories')).toHaveLength(0);
   expect(anon.result.current.categories).toEqual([]);
   expect(anon.result.current.category('coffee')).toBeUndefined();
 
   setAuthStatusQuietly('authed');
-  const { result } = renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.categories).toHaveLength(1));
   expect(result.current.category('coffee')?.name).toBe('Coffee');
   expect(result.current.category(null)).toBeUndefined();
@@ -46,7 +46,7 @@ it('useCategories maps the list + a null-tolerant lookup, and does not fetch bef
 
 it('useBudgetDetailScreenData assembles the budget list + budgets + categories for the given id', async () => {
   server.seed(COFFEE_BUDGET_TX, [{ transaction_id: 'x', category: 'coffee', date: '2026-07-18' }]);
-  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.cycleLen).toBe(cycleClock(PAY_CYCLE).cycleLen); // a monthly cycle is 28-31 days, so it follows today's date
   expect(result.current.category('coffee')?.name).toBe('Coffee');
@@ -61,7 +61,7 @@ it('useBudgetDetailScreenData assembles the budget list + budgets + categories f
 // transcription risk the plan-critic flagged) — a list failure must surface as isError.
 it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isError (not a stranded spinner)', async () => {
   server.fail(COFFEE_BUDGET_TX, 500);
-  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true)); // budgetTransactionsQuery IS in the OR
   expect(result.current.isLoading).toBe(false);                   // errored dependency → not an endless spinner
 });
@@ -74,7 +74,7 @@ it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isE
 // test (tracked as a follow-up card). This still guards the payCycle-failure → not-stranded path.
 it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading', async () => {
   server.fail('/paycycle', 503);
-  const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.isLoading).toBe(false);
 });
@@ -87,15 +87,15 @@ describe('useCategoryCycleTransactionsQuery (WHIT-342)', () => {
   const cycleRows = (cycle: number) => ({ body: [{ transaction_id: `coffee-c${cycle}` }] });
 
   // [A-hook1]
-  it('does not fetch before login (enabled=false)', () => {
-    renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, false), { wrapper: wrapper(makeClient()) });
+  it('does not fetch before login (enabled=false)', async () => {
+    await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, false), { wrapper: wrapper(makeClient()) });
     expect(server.sentUnder('GET', '/categories/')).toHaveLength(0);
   });
 
   // [A-hook2] — the `enabled && !!categoryId` guard: an absent id (a route mounted before params
   // resolve) must not fire a `/categories//transactions` request.
-  it('does not fetch when categoryId is empty, even when enabled', () => {
-    renderHook(() => useCategoryCycleTransactionsQuery('', 0, true), { wrapper: wrapper(makeClient()) });
+  it('does not fetch when categoryId is empty, even when enabled', async () => {
+    await renderHook(() => useCategoryCycleTransactionsQuery('', 0, true), { wrapper: wrapper(makeClient()) });
     expect(server.sentUnder('GET', '/categories/')).toHaveLength(0);
   });
 
@@ -106,11 +106,11 @@ describe('useCategoryCycleTransactionsQuery (WHIT-342)', () => {
   it('caches cycle 0 and cycle 1 independently for the same category (no collision)', async () => {
     const client = makeClient();
     server.once('GET', COFFEE_TX, cycleRows(0));
-    const c0 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true), { wrapper: wrapper(client) });
+    const c0 = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true), { wrapper: wrapper(client) });
     await waitFor(() => expect(c0.result.current.data).toBeDefined());
 
     server.once('GET', COFFEE_TX, cycleRows(1));
-    const c1 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(client) });
+    const c1 = await renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(client) });
     await waitFor(() => expect(c1.result.current.data).toBeDefined());
 
     expect(c0.result.current.data).toEqual([{ transaction_id: 'coffee-c0' }]);
@@ -141,7 +141,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   it('categoriesReady is true on the first render when the taxonomy is already cached', async () => {
     const client = makeClient();
     client.setQueryData(categoriesKey, CATS); // taxonomy warmed by an earlier screen
-    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(client) });
+    const { result } = await renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(client) });
     expect(result.current.categoriesReady).toBe(true);        // warm on mount → no cold gate
     expect(result.current.category('salary')?.bucket).toBe('Income');
     await waitFor(() => expect(result.current.transactions).toHaveLength(1)); // flush the txn fetch
@@ -151,8 +151,10 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // (the screen holds the spinner), then true once it lands. FAIL-ON-REVERT: hard-coding true skips
   // the false phase and this first assertion fails.
   it('categoriesReady is false while the taxonomy loads, then true once it lands', async () => {
-    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    const held = server.hold('/categories'); // v14's awaited render can otherwise let the read land first
+    const { result } = await renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     expect(result.current.categoriesReady).toBe(false);       // cold: categories still fetching
+    await act(async () => { held.release(); });
     await waitFor(() => expect(result.current.categoriesReady).toBe(true));
   });
 
@@ -160,7 +162,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // and the screen renders (everything Uncategorized), not stall on a spinner forever. No crash.
   it('treats an empty taxonomy ([]) as ready (true), not as never-loaded', async () => {
     server.seed('/categories', []);
-    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.categoriesReady).toBe(true));
     expect(result.current.category('salary')).toBeUndefined(); // empty taxonomy → no match, no throw
   });
@@ -170,7 +172,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // error card (it can't label/sign the rows) instead of a cold "$0" detail.
   it('a taxonomy read failure (transactions cached) surfaces isError with categoriesReady false', async () => {
     server.fail('/categories', 500);
-    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.categoriesReady).toBe(false);       // never loaded → screen must gate
     expect(result.current.transactions).toHaveLength(1);       // the txns DID land
@@ -181,7 +183,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // actually recover. FAIL-ON-REVERT: dropping categoriesQuery from useCombineScreenQueries' array
   // leaves fetchCategories at 1 call.
   it('refetch re-fires both the transactions and the categories reads', async () => {
-    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(server.sent('GET', SALARY_TX)).toHaveLength(1);
     expect(server.sent('GET', '/categories')).toHaveLength(1);

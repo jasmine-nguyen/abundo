@@ -49,7 +49,7 @@ describe('goal card: past its date', () => {
     expect(card.queryByText(/each payday/)).toBeNull();
     expect(card.getByText('40%')).toBeTruthy();
 
-    fireEvent.press(screen.getByTestId('goal-pastdue-od'));
+    await fireEvent.press(screen.getByTestId('goal-pastdue-od'));
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=od');
   });

@@ -119,16 +119,16 @@ describe('WHIT-158 income category interaction (folded)', () => {
   describe('Categorize picker — income is pickable, not just visible (WHIT-158)', () => {
     it('tapping the income row advances the flow (chooseCategory with the income id)', async () => {
       await openPicker({ transaction_id: 't1', amount: 5000, description: 'ACME PAYROLL' }, fns);
-      fireEvent.press(screen.getByText('Salary'));
+      await fireEvent.press(screen.getByText('Salary'));
       expect(fns.chooseCategory).toHaveBeenCalledWith('salary'); // was filtered out pre-WHIT-158
     });
   });
 
   it('New-rule sheet: an income category can be selected AND submitted (WHIT-158)', async () => {
     await openRuleSheet(fns);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'PAYROLL');
-    fireEvent.press(screen.getByText('Salary'));   // income pill now offered
-    fireEvent.press(screen.getByText('Add rule'));
+    await fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'PAYROLL');
+    await fireEvent.press(screen.getByText('Salary'));   // income pill now offered
+    await fireEvent.press(screen.getByText('Add rule'));
     // WHIT-538: a new rule now opens the preview/confirm step, which owns the save.
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'PAYROLL', categoryId: 'salary', budgetExcluded: false });
   });

@@ -35,6 +35,7 @@ import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import { previewReport } from './support/applyRulesReport';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -78,17 +79,17 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   // --- sign-out hard-clears the overlay state ----------------------------------------
   // (The AI insights' sign-out cases live in useAiInsights.provider.screen.test.tsx.)
 
-  it('flipping to anon clears sheet and toast (fail-on-revert for the anon subscription)', () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+  it('flipping to anon clears sheet and toast (fail-on-revert for the anon subscription)', async () => {
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
-    act(() => {
+    await act(() => {
       result.current.setSheet({ mode: 'paycycle' } as never);
       result.current.showToast('Transaction filed: $123.45');
     });
     expect(result.current.sheet).not.toBeNull();
     expect(result.current.toast).toBe('Transaction filed: $123.45');
 
-    act(() => setAuthStatus('anon'));
+    await act(() => setAuthStatus('anon'));
 
     expect(result.current.sheet).toBeNull();
     expect(result.current.toast).toBeNull();
@@ -101,9 +102,9 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     return <Text testID="probe">probe</Text>;
   }
 
-  it('locked hides the overlay layer but keeps its state: the toast disappears and REAPPEARS on unlock (fail-on-revert for the gate)', () => {
+  it('locked hides the overlay layer but keeps its state: the toast disappears and REAPPEARS on unlock (fail-on-revert for the gate)', async () => {
     let ctx!: ReturnType<typeof useAppContext>;
-    render(
+    await render(
       <WithQueries>
         <AppProvider>
           <Probe grab={(c) => { ctx = c; }} />
@@ -112,10 +113,10 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
       </WithQueries>,
     );
 
-    act(() => ctx.showToast('Balance: $9,999'));
+    await act(() => ctx.showToast('Balance: $9,999'));
     expect(screen.getByText('Balance: $9,999')).toBeTruthy();
 
-    act(() => setAuthStatus('locked')); // Face ID resume seal
+    await act(() => setAuthStatus('locked')); // Face ID resume seal
     // Hidden from the tree — nothing money-related can sit over the lock screen…
     expect(screen.queryByText('Balance: $9,999')).toBeNull();
     // …but the context-held toast value is NOT cleared on a lock (only on 'anon'), so it
@@ -123,7 +124,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     // loses it; preserving that across a lock is WHIT-266, not this card.)
     expect(ctx.toast).toBe('Balance: $9,999');
 
-    act(() => setAuthStatus('authed'));
+    await act(() => setAuthStatus('authed'));
     expect(screen.getByText('Balance: $9,999')).toBeTruthy(); // reappears intact
   });
 });
@@ -150,10 +151,10 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
 
   // WHIT-268 — [A9] cold start: while status is 'loading' (before the first auth resolve)
   // the overlay layer is hidden — but NOT cleared (loading is not a sign-out).
-  it("during the cold-start 'loading' status the overlay layer is hidden, and its state survives to authed", () => {
+  it("during the cold-start 'loading' status the overlay layer is hidden, and its state survives to authed", async () => {
     setAuthStatusQuietly('loading');
     let ctx!: ReturnType<typeof useAppContext>;
-    render(
+    await render(
       <WithQueries>
         <AppProvider>
           <Probe grab={(c) => { ctx = c; }} />
@@ -162,11 +163,11 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
       </WithQueries>,
     );
 
-    act(() => ctx.showToast('Balance: $1,234'));
+    await act(() => ctx.showToast('Balance: $1,234'));
     expect(screen.queryByText('Balance: $1,234')).toBeNull(); // hidden pre-auth
     expect(ctx.toast).toBe('Balance: $1,234'); // not cleared — loading isn't anon
 
-    act(() => setAuthStatus('authed'));
+    await act(() => setAuthStatus('authed'));
     expect(screen.getByText('Balance: $1,234')).toBeTruthy(); // renders once authed
   });
 
@@ -176,15 +177,15 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     queryClient.setQueryData(['rules'], []); // a warm rules cache, as if the screen was open
     const held = server.hold('/rules');
     server.once('POST', '/rules', { body: { id: 'srv-1', value: 'NETFLIX', categoryId: 'c1', field: 'description', operator: 'contains' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
-    act(() => { pending = result.current.saveManualRule('NETFLIX', 'c1'); });
+    await act(() => { pending = result.current.saveManualRule('NETFLIX', 'c1'); });
     // The optimistic write landed while authed (that part is fine and invisible post-clear).
     expect(queryClient.getQueryData(['rules'])).toHaveLength(1);
     await waitFor(() => expect(server.sent('POST', '/rules')).toHaveLength(1));
 
-    signOut();
+    await signOut();
     await act(async () => {
       held.release();
       await pending;
@@ -224,38 +225,38 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
 
   it('restores a half-typed AddRule draft across authed→locked→authed', async () => {
     await renderOverlays();
-    act(() => ctx.setSheet({ mode: 'addrule' }));
-    fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
+    await fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
 
     // Lock: the whole overlay layer unmounts (WHIT-268 privacy shield) — the input is gone.
-    act(() => setAuthStatus('locked'));
+    await act(() => setAuthStatus('locked'));
     expect(screen.queryByPlaceholderText(RULE_INPUT)).toBeNull();
     expect(screen.queryByText('New rule')).toBeNull();
 
     // Unlock: the sheet remounts and restores the stashed text.
-    act(() => setAuthStatus('authed'));
+    await act(() => setAuthStatus('authed'));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
   });
 
   it('clears the draft on sign-out — the next session opens the sheet empty (no cross-user leak)', async () => {
     await renderOverlays();
-    act(() => ctx.setSheet({ mode: 'addrule' }));
-    fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
+    await fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
 
-    act(() => setAuthStatus('anon')); // sign-out: hard-clears drafts + the sheet descriptor
-    act(() => setAuthStatus('authed'));
-    act(() => ctx.setSheet({ mode: 'addrule' }));
+    await act(() => setAuthStatus('anon')); // sign-out: hard-clears drafts + the sheet descriptor
+    await act(() => setAuthStatus('authed'));
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('');
   });
 
   it('clears the draft on close — reopening the same sheet starts empty (no stale restore)', async () => {
     await renderOverlays();
-    act(() => ctx.setSheet({ mode: 'addrule' }));
-    fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
+    await fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
 
-    act(() => ctx.setSheet(null)); // cancel/submit both route through null → clear-on-close
-    act(() => ctx.setSheet({ mode: 'addrule' }));
+    await act(() => ctx.setSheet(null)); // cancel/submit both route through null → clear-on-close
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('');
   });
 });
@@ -294,27 +295,27 @@ describe('WHIT-277 gaps — key isolation and the WHIT-268 lock guard', () => {
   it('[A8] a NEW-rule draft does not leak into an EDIT sheet (distinct draft keys, no null between)', async () => {
     await renderOverlays();
     // New rule: type text under the `addrule:new` key.
-    act(() => ctx.setSheet({ mode: 'addrule' }));
-    fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'AAA');
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
+    await fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'AAA');
 
     // Switch straight to EDITING e1 WITHOUT closing (no setSheet(null)) — so nothing is cleared;
     // the sheet remounts under key `addrule:e1` and must read ITS key, not the new-rule draft.
-    act(() => ctx.setSheet({ mode: 'addrule', ruleId: 'e1' }));
+    await act(() => ctx.setSheet({ mode: 'addrule', ruleId: 'e1' }));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('NETFLIX');
     expect(screen.queryByDisplayValue('AAA')).toBeNull();
 
     // And back to the new-rule sheet: its own draft is still intact (keys are independent).
-    act(() => ctx.setSheet({ mode: 'addrule' }));
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('AAA');
   });
 
   it('[A9] WHIT-268: while locked WITH a draft stashed, the typed money figure is not readable by any query', async () => {
     await renderOverlays();
-    act(() => ctx.setSheet({ mode: 'goalbalance', goalId: 'g1' }));
-    fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9999');
+    await act(() => ctx.setSheet({ mode: 'goalbalance', goalId: 'g1' }));
+    await fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9999');
     expect(screen.getByDisplayValue('9999')).toBeTruthy();
 
-    act(() => setAuthStatus('locked'));
+    await act(() => setAuthStatus('locked'));
     // The privacy shield must hide the whole sheet even though the draft (9999) is stashed in the
     // provider — nothing money-related may sit over the Face ID lock.
     expect(screen.queryByTestId('goal-balance-input')).toBeNull();
@@ -322,7 +323,7 @@ describe('WHIT-277 gaps — key isolation and the WHIT-268 lock guard', () => {
     expect(screen.queryByText('Emergency fund — set the current balance and the date it was true.')).toBeNull();
 
     // …and it all comes back intact on unlock (proves it was HIDDEN, not cleared).
-    act(() => setAuthStatus('authed'));
+    await act(() => setAuthStatus('authed'));
     expect(screen.getByDisplayValue('9999')).toBeTruthy();
   });
 });
@@ -347,23 +348,23 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     queryClient.clear();
   });
 
-  function openCreateForm() {
-    act(() => ctx.openPicker('t1'));
-    fireEvent.press(screen.getByTestId('pickerNewCategory')); // list → inline create form
+  async function openCreateForm() {
+    await act(() => ctx.openPicker('t1'));
+    await fireEvent.press(screen.getByTestId('pickerNewCategory')); // list → inline create form
   }
 
   it('restores the half-typed name and reopens INTO the create form (not the list) across a lock', async () => {
     await renderOverlays();
-    openCreateForm();
-    fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
+    await openCreateForm();
+    await fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('Gym');
 
     // Lock: the whole overlay layer unmounts (WHIT-268 shield) — the form is gone.
-    act(() => setAuthStatus('locked'));
+    await act(() => setAuthStatus('locked'));
     expect(screen.queryByPlaceholderText(NAME_INPUT)).toBeNull();
 
     // Unlock: the picker reopens straight into the create form with the name restored.
-    act(() => setAuthStatus('authed'));
+    await act(() => setAuthStatus('authed'));
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('Gym');
     expect(screen.getByText('New category')).toBeTruthy();       // the form title
     expect(screen.queryByTestId('pickerNewCategory')).toBeNull(); // NOT back on the list
@@ -371,11 +372,11 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
 
   it('Cancel discards the draft — reopening the create form starts empty', async () => {
     await renderOverlays();
-    openCreateForm();
-    fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
+    await openCreateForm();
+    await fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
 
-    fireEvent.press(screen.getByText('Cancel')); // back to the list, draft discarded
-    fireEvent.press(screen.getByTestId('pickerNewCategory'));
+    await fireEvent.press(screen.getByText('Cancel')); // back to the list, draft discarded
+    await fireEvent.press(screen.getByTestId('pickerNewCategory'));
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('');
   });
 });
@@ -403,21 +404,21 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
     queryClient.clear();
   });
 
-  function openCreateForm() {
-    act(() => ctx.openPicker('t1'));
-    fireEvent.press(screen.getByTestId('pickerNewCategory')); // list -> inline create form
+  async function openCreateForm() {
+    await act(() => ctx.openPicker('t1'));
+    await fireEvent.press(screen.getByTestId('pickerNewCategory')); // list -> inline create form
   }
 
   // [G1] Round-trip RENDER of bucket + icon (the implementer only checks the store write pre-lock).
   it('[G1] bucket + icon selection survive the lock and RENDER as selected on unlock (not just the store)', async () => {
     await renderOverlays();
-    openCreateForm();
-    fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
-    fireEvent.press(screen.getByText('Living'));       // a non-default bucket (default is Lifestyle)
-    fireEvent.press(screen.getByTestId('icon-cart'));  // a non-default icon (default is coffee)
+    await openCreateForm();
+    await fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
+    await fireEvent.press(screen.getByText('Living'));       // a non-default bucket (default is Lifestyle)
+    await fireEvent.press(screen.getByTestId('icon-cart'));  // a non-default icon (default is coffee)
 
-    act(() => setAuthStatus('locked'));  // overlay layer unmounts (WHIT-268 shield)
-    act(() => setAuthStatus('authed'));  // restored mount
+    await act(() => setAuthStatus('locked'));  // overlay layer unmounts (WHIT-268 shield)
+    await act(() => setAuthStatus('authed'));  // restored mount
 
     // The reopened form must SHOW the choices selected: the bucket label paints in its bucket colour
     // and the icon tile borders in the accent ONLY when selected.
@@ -464,11 +465,11 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
   /** Open the picker for t1, switch to the inline create form, and type a name. */
   async function fillCreateForm(name = 'Gym') {
     await renderOverlays();
-    act(() => ctx.openPicker('t1'));
-    fireEvent.press(screen.getByTestId('pickerNewCategory'));
-    fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), name);
+    await act(() => ctx.openPicker('t1'));
+    await fireEvent.press(screen.getByTestId('pickerNewCategory'));
+    await fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), name);
   }
-  const submit = async () => { await act(async () => { fireEvent.press(screen.getByText('Create & file')); }); };
+  const submit = async () => { await startTaps(screen.getByText('Create & file')); };
 
   describe('the sheet shows the server reason instead of "Please try again"', () => {
     // [A30] the card's headline promise, on the path that got no code change.
@@ -541,19 +542,19 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
 
   it('restores the typed pattern after transitioning to the confirm step and pressing Back', async () => {
     await renderOverlays();
-    act(() => ctx.setSheet({ mode: 'addrule' }));
-    fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
-    fireEvent.press(screen.getByText('Subscriptions')); // pick a category so Add rule is enabled
+    await act(() => ctx.setSheet({ mode: 'addrule' }));
+    await fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
+    await fireEvent.press(screen.getByText('Subscriptions')); // pick a category so Add rule is enabled
 
     // Submit → the REAL write() transitions to the confirm step (not saveManualRule).
-    await act(async () => { fireEvent.press(screen.getByText('Add rule')); });
+    await startTaps(screen.getByText('Add rule'));
     expect(ctx.sheet).toEqual({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs', budgetExcluded: false });
     // The preview resolved and the confirm card (with its Back button) is on screen.
     expect(screen.getByTestId('add-rule-confirm-back')).toBeTruthy();
     expect(screen.queryByPlaceholderText(RULE_INPUT)).toBeNull(); // form is gone, confirm is up
 
     // Back → the form remounts and the draft (never cleared, since the sheet never went null) restores.
-    await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-back')); });
+    await startTaps(screen.getByTestId('add-rule-confirm-back'));
     expect(ctx.sheet).toEqual({ mode: 'addrule' });
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
   });

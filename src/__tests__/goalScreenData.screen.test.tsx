@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 it('assembles the balance (as_of→asOf), repayment, and loan facts from the three reads', async () => {
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
 
   expect(result.current.homeLoan).toEqual({ balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' });
@@ -43,7 +43,7 @@ it('assembles the balance (as_of→asOf), repayment, and loan facts from the thr
 
 it('does not fetch before login, then fires on the auth flip to authed', async () => {
   setAuthStatusQuietly('anon');
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   expect(server.sent('GET', '/homeloan')).toHaveLength(0);
   expect(server.sent('GET', '/repayment')).toHaveLength(0);
   expect(server.sent('GET', '/loanfacts')).toHaveLength(0);
@@ -55,7 +55,7 @@ it('does not fetch before login, then fires on the auth flip to authed', async (
 
 it('treats a null balance as a normal success — not an error', async () => {
   server.seed('/homeloan', { balance: null, as_of: null, currency: null });
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
 
   expect(result.current.homeLoan).toEqual({ balance: null, asOf: null });
@@ -65,7 +65,7 @@ it('treats a null balance as a normal success — not an error', async () => {
 
 it('keeps homeLoanError home-loan-specific: a repayment failure is not a balance error', async () => {
   server.fail('/repayment', 500);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.isError).toBe(true)); // aggregate reflects the repayment failure
   expect(result.current.homeLoanError).toBe(false); // ...but the balance read is fine
@@ -86,7 +86,7 @@ it('WHIT-121: a cached EMPTY repayment survives a failed refetch — no false er
   server.seed('/homeloan', HOME_LOAN_2);
   server.once('GET', '/repayment', { body: EMPTY });
   server.fail('/repayment', 500);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
   expect(result.current.repaymentError).toBe(false); // first load: an empty SUCCESS, not an error
 
@@ -102,6 +102,6 @@ it('WHIT-121: a first-load balance failure flags homeLoanError (nothing cached)'
   // The other half of firstLoadError for the balance: a never-loaded balance read that fails
   // DOES surface an error (the Goal + milestone heroes show "Couldn't load your balance.").
   server.fail('/homeloan', 503);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoanError).toBe(true));
 });

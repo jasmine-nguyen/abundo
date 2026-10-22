@@ -58,7 +58,7 @@ it('Transactions: a failed pull after Load More keeps the rows and shows the ori
   expect(await screen.findByText('−\u2060$42.00')).toBeTruthy();
 
   server.once('GET', FEED, { body: { transactions: [txn({ transaction_id: 't2', amount: -7, account_name: 'ANZ' })], nextCursor: null } });
-  fireEvent.press(screen.getByTestId('transactions-load-more'));
+  await fireEvent.press(screen.getByTestId('transactions-load-more'));
   expect(await screen.findByText('−\u2060$7.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 
@@ -70,7 +70,7 @@ it('Transactions: a failed pull after Load More keeps the rows and shows the ori
   expect(screen.getByText('−\u2060$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-error')).toBeNull();
 
-  fireEvent.changeText(screen.getByPlaceholderText('Search transactions'), 'wool');
+  await fireEvent.changeText(screen.getByPlaceholderText('Search transactions'), 'wool');
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 });
 
@@ -123,11 +123,11 @@ it('Transactions: shows "● 1 account behind ›" on both tabs, and tapping it 
   };
 
   await expectCompactLine();
-  fireEvent.press(screen.getByText('Uncategorised'));
+  await fireEvent.press(screen.getByText('Uncategorised'));
   await settle();
   await expectCompactLine();
 
-  fireEvent.press(header().getByTestId('transactions-bank-sync'));
+  await fireEvent.press(header().getByTestId('transactions-bank-sync'));
   expect(currentSheet()).toEqual({
     mode: 'bankSync',
     accounts: [
@@ -150,7 +150,7 @@ describe('stale line edges', () => {
   it('Accounts: a failed background refetch on return to the tab shows the line with no pull', async () => {
     seedFeedPage(server, FEED, [LIST_ROW]);
     const first = await renderWithApp(<Accounts />);
-    first.unmount();
+    await first.unmount();
     jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00')); // past the 45s staleTime
     server.fail(FEED, 503);
     await renderWithApp(<Accounts />);
@@ -183,7 +183,7 @@ describe('stale line edges', () => {
     seedFeedPage(server, FEED, [LIST_ROW], 'c1');
     await renderWithApp(<Transactions />);
     server.once('GET', FEED, { status: 503 });
-    fireEvent.press(screen.getByTestId('transactions-load-more'));
+    await fireEvent.press(screen.getByTestId('transactions-load-more'));
     await settle();
     expect(screen.queryByTestId('transactions-stale')).toBeNull();
     server.once('GET', FEED, { status: 503 });
@@ -198,7 +198,7 @@ describe('stale line edges', () => {
     server.once('GET', FEED, { status: 503 });
     await pullAndSettle();
     await waitFor(() => expect(screen.getByTestId('transactions-stale')).toBeTruthy());
-    fireEvent.press(screen.getByText('Uncategorised'));
+    await fireEvent.press(screen.getByText('Uncategorised'));
     await settle();
     expect(screen.queryByTestId('transactions-stale')).toBeNull();
   });

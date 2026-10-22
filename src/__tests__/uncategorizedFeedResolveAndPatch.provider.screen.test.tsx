@@ -46,16 +46,16 @@ beforeEach(() => {
 });
 afterEach(() => { queryClient.clear(); });
 
-function mount() {
-  return renderHook(() => useAppContext(), { wrapper }).result;
+async function mount() {
+  return (await renderHook(() => useAppContext(), { wrapper })).result;
 }
 
 // [1] RESOLVE — a row only in the uncategorized feed is found and filed. Fail-on-revert: without the
 // uncategorized arm in readTransactionsCache, applyCategory bails "not found" and never calls the API.
 it('files a deep-history row that lives ONLY in the uncategorized feed cache', async () => {
   seedUncategorizedFeed([txn({ transaction_id: 'deep1' })]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -67,8 +67,8 @@ it('files a deep-history row that lives ONLY in the uncategorized feed cache', a
 // without the uncategorized arm in patchTransactionsCache, the cached row stays category=null.
 it('optimistically patches the filed row inside the uncategorized feed cache', async () => {
   seedUncategorizedFeed([txn({ transaction_id: 'deep1', category: null })]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -81,7 +81,7 @@ it('optimistically patches the filed row inside the uncategorized feed cache', a
 // invalidate and the newly-unfiled rows never appear on the tab until a manual refresh.
 it('deleteCategory invalidates the paged uncategorized feed (rows enter the list)', async () => {
   queryClient.setQueryData(['transactions'], { pages: [{ transactions: [txn({ category: 'groceries' })], nextCursor: null }], pageParams: [undefined] });
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.deleteCategory('groceries'); });

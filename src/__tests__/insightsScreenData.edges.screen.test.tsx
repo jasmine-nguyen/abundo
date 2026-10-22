@@ -34,7 +34,7 @@ beforeEach(() => {
 // taxonomy (keep the rows). These two lock the `data === undefined` guard — the make-or-break.
 it('categoriesError is TRUE on a FIRST-LOAD categories failure (never-succeeded → data undefined)', async () => {
   server.fail('/categories', 500);
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.categoriesError).toBe(true); // categories errored AND never had data
@@ -45,7 +45,7 @@ it('categoriesError is FALSE on a BACKGROUND-refetch categories failure over goo
   // First load succeeds → taxonomy cached. Then a refetch of categories fails: TanStack v5
   // RETAINS the last-good data, so categoriesError must stay false and the taxonomy survives —
   // the exact regression a bare `.isError` (no data guard) would introduce.
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.category('coffee')?.name).toBe('Cafes & Coffee'));
 
   server.fail('/categories', 503);
@@ -57,7 +57,7 @@ it('categoriesError is FALSE on a BACKGROUND-refetch categories failure over goo
 });
 
 it('a breakdown background-refetch failure surfaces isError but RETAINS the last-good breakdown (categoriesError stays false)', async () => {
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.breakdown.coffee?.posted).toBe(40));
 
   // Only breakdown fails on refetch; categories still resolve.
@@ -73,7 +73,7 @@ it('a breakdown background-refetch failure surfaces isError but RETAINS the last
 // read as posted + pending; absent (no income, or an older server) → 0.
 it('derives earned from the __earned__ bucket (posted + pending)', async () => {
   server.seed('/breakdown', { coffee: { posted: 40, pending: 10 }, __earned__: { posted: 2500, pending: 300 } });
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.earned).toBe(2800));
   // The earned bucket must not leak into the spend breakdown consumers keep reading.
@@ -94,7 +94,7 @@ it('derives incomeSources biggest-first, keeps a net-negative source, drops only
       cancelled: { posted: 100, pending: -100 }, // exact $0 net → dropped
     },
   });
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.incomeSources.length).toBe(3)); // cancelled dropped
   expect(result.current.incomeSources.map((s) => s.id)).toEqual(['salary', 'side', 'bonus']); // desc; negative last
@@ -113,14 +113,14 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
   server.seed('/breakdown', { coffee: { posted: 40, pending: 10 }, __earned__: { posted: 2500, pending: 300 } });
 
   const client = makeClient();
-  const { result, rerender } = renderHook(({ cycle }: { cycle: number }) => useInsightsScreenData(cycle), {
+  const { result, rerender } = await renderHook(({ cycle }: { cycle: number }) => useInsightsScreenData(cycle), {
     initialProps: { cycle: 0 },
     wrapper: wrapper(client),
   });
   await waitFor(() => expect(result.current.earned).toBe(2800)); // this cycle: 2500 + 300
 
   server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 }, __earned__: { posted: 1000, pending: 0 } } });
-  rerender({ cycle: 1 });
+  await rerender({ cycle: 1 });
   await waitFor(() => expect(result.current.earned).toBe(1000)); // last cycle: its OWN __earned__
   expect(result.current.breakdown.coffee).toEqual({ posted: 5, pending: 0 });
   expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toBe('/breakdown?cycle=1');
@@ -135,7 +135,7 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
 // bump RECONCILE_EPSILON to 0.01 drops the −0.006 source → reddens.
 // The test seeds its own breakdown over the file's default.
 describe('RECONCILE_EPSILON income-dust boundary', () => {
-  it('drops a sub-half-cent net source (either sign) as float dust but keeps a net just OVER the half-cent', () => {
+  it('drops a sub-half-cent net source (either sign) as float dust but keeps a net just OVER the half-cent', async () => {
     server.seed('/breakdown', {
       coffee: { posted: 40, pending: 10 },
       __earned__: { posted: 5000, pending: 0 },
@@ -146,7 +146,7 @@ describe('RECONCILE_EPSILON income-dust boundary', () => {
         keepneg: { posted: -0.006, pending: 0 },// |0.006| >= 0.005 → kept, sorts last (negative)
       },
     });
-    const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = await renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
     return waitFor(() => expect(result.current.incomeSources.length).toBe(2)).then(() => {
       // Only salary and keepneg survive; both dust sources are gone.

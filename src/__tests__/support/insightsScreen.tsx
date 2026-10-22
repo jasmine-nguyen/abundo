@@ -14,7 +14,7 @@
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
 import { jest } from '@jest/globals';
-import { render } from '@testing-library/react-native';
+import { render, type RenderResult } from '@testing-library/react-native';
 import type { useAiInsights } from '../../hooks/useAiInsights';
 import type { installFakeServer } from './fakeServer';
 import { renderWithQueries, WithQueries } from './renderWithQueries';
@@ -82,6 +82,6 @@ export function drawInsights() {
 }
 
 /** Redraw an already-drawn tab, e.g. after setAi() changed the AI slice. */
-export function redrawInsights(view: ReturnType<typeof render>) {
-  view.rerender(<WithQueries><InsightsTab /></WithQueries>);
+export async function redrawInsights(view: RenderResult) {
+  await view.rerender(<WithQueries><InsightsTab /></WithQueries>);
 }

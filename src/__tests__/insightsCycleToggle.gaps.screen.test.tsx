@@ -42,7 +42,7 @@ it('[A6] segmented control accessibilityState.selected tracks the active segment
   expect(screen.getByTestId('insights-cycle-current').props.accessibilityState.selected).toBe(true);
   expect(screen.getByTestId('insights-cycle-prev').props.accessibilityState.selected).toBe(false);
 
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   await screen.findByText('LAST PAY CYCLE');
 
   // after tapping "Last cycle": selection flips — prev selected, current NOT
@@ -59,14 +59,14 @@ it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetche
 
   // Cycle 0 is cached now, so from here only the cycle-1 read reaches the server — and it fails.
   server.fail('/breakdown', 503);
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
   expect(screen.queryByText('$0')).toBeNull();               // no confident zero over a past-cycle error
   expect(screen.queryByText('Cafes & Coffee')).toBeNull();   // no stale cycle-0 rows bleeding through
 
   // Retry — cycle 1 now succeeds with its own data (a queued reply goes out ahead of the failure).
   server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 } } });
-  fireEvent.press(screen.getByTestId('insights-retry'));
+  await fireEvent.press(screen.getByTestId('insights-retry'));
 
   await screen.findByText('Cafes & Coffee');
   expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();    // still on the past cycle after recovery

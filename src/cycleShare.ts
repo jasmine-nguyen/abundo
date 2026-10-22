@@ -16,7 +16,7 @@ export async function shareCycleExport(
   const data = await fetchCycleTransactions(cycle);
   const file = new File(Paths.cache, cycleFileName(data.start, data.end));
   file.create({ overwrite: true });
-  file.write(buildCycleWorkbook(data, category, cycle > 0));
+  await file.write(buildCycleWorkbook(data, category, cycle > 0));
   await Sharing.shareAsync(file.uri, {
     mimeType: XLSX_MIME_TYPE,
     UTI: XLSX_UTI,

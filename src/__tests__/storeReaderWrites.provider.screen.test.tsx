@@ -37,8 +37,8 @@ beforeEach(() => {
 });
 afterEach(() => { queryClient.clear(); });
 
-function mount() {
-  const { result } = renderHook(() => useAppContext(), { wrapper: appProviderWrapper });
+async function mount() {
+  const { result } = await renderHook(() => useAppContext(), { wrapper: appProviderWrapper });
   return result;
 }
 

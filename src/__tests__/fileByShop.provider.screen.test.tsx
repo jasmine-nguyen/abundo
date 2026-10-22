@@ -46,7 +46,7 @@ function rowsIn(key: 'transactions'): Transaction[] {
   const data = queryClient.getQueryData<{ pages: { transactions: Transaction[] }[] }>([key]);
   return data ? data.pages.flatMap((p) => p.transactions) : [];
 }
-function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
+async function mount() { return (await renderHook(() => useAppContext(), { wrapper })).result; }
 
 beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
@@ -59,7 +59,7 @@ it('sends the inline rule (value = the group pattern, category = the pick) with 
   seedTransactionsCache(queryClient, [txn()]);
   server.seed(APPLY_RULES, report());
 
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
   expect(server.requests()).toContainEqual({
@@ -71,7 +71,7 @@ it('patches the filed row and returns { ok, report } on success', async () => {
   seedTransactionsCache(queryClient, [txn(), txn({ transaction_id: 'untouched' })]);
   server.seed(APPLY_RULES, report({ filed: [{ id: 't1', category: 'groceries' }] }));
 
-  const result = mount();
+  const result = await mount();
   let outcome: FilingResult | null = null;
   await act(async () => { outcome = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
@@ -87,7 +87,7 @@ it('invalidates the shop list and the rules list after a successful file', async
   seedTransactionsCache(queryClient, [txn()]);
   server.seed(APPLY_RULES, report());
 
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   await act(async () => { await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
@@ -103,7 +103,7 @@ it('returns { clash } and refreshes nothing on a 409 clash', async () => {
   seedTransactionsCache(queryClient, [txn()]);
   server.fail(APPLY_RULES, 409);
 
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let outcome: FilingResult | null = null;
   await act(async () => { outcome = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
@@ -121,7 +121,7 @@ it('returns { clash: null } and still refreshes on a non-clash failure', async (
   seedTransactionsCache(queryClient, [txn()]);
   server.fail(APPLY_RULES, 502);
 
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let outcome: FilingResult | null = null;
   await act(async () => { outcome = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
@@ -139,7 +139,7 @@ it('shares the in-flight latch with applyRulesToHistory', async () => {
   server.once('POST', APPLY_RULES, { body: report() });
   const pending = server.hold(APPLY_RULES);
 
-  const result = mount();
+  const result = await mount();
   await act(async () => {
     const first = result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });   // holds the latch
     const blocked = await result.current.fileCharges(SWEEP, { now: true });     // must be turned away
@@ -157,7 +157,7 @@ it('previews with dryRun true and the inline rule, writing nothing', async () =>
   seedTransactionsCache(queryClient, [txn()]);
   server.seed(APPLY_RULES, report({ dryRun: true, filed: [], createdRule: null }));
 
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let outcome: FilingResult | null = null;
   await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
@@ -175,7 +175,7 @@ it('surfaces a 409 clash from the preview (distinct from a generic failure)', as
   seedTransactionsCache(queryClient, [txn()]);
   server.fail(APPLY_RULES, 409);
 
-  const result = mount();
+  const result = await mount();
   let outcome: FilingResult | null = null;
   await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
 
@@ -189,7 +189,7 @@ it('surfaces a 409 clash from the preview (distinct from a generic failure)', as
 it('[A30] applyRulesToHistory calls the api with dryRun false and NO inline rule', async () => {
   seedTransactionsCache(queryClient, []);
   server.seed(APPLY_RULES, filedReport());
-  const result = mount();
+  const result = await mount();
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
   expect(server.requests()).toContainEqual({ method: 'POST', path: APPLY_RULES, body: { dryRun: false } });
 });
@@ -199,7 +199,7 @@ it('[A30] applyRulesToHistory calls the api with dryRun false and NO inline rule
 it('[A32] a 409 from applyRulesToHistory returns bare null and still refreshes', async () => {
   seedTransactionsCache(queryClient, []);
   server.fail(APPLY_RULES, 409);
-  const result = mount();
+  const result = await mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let out: FilingResult | undefined;
   await act(async () => { out = await result.current.fileCharges(SWEEP, { now: true }); });
@@ -215,7 +215,7 @@ it('[A32] a 409 from applyRulesToHistory returns bare null and still refreshes',
 it('bails without painting when a file settles after sign-out', async () => {
   server.once('POST', APPLY_RULES, { body: report({ filed: [{ id: 't1', category: 'groceries' }] }) });
   const pending = server.hold(APPLY_RULES);
-  const result = mount();
+  const result = await mount();
 
   let outcome: FilingResult | null = null;
   await act(async () => {

@@ -20,48 +20,48 @@ beforeEach(() => {
 afterEach(() => { jest.useRealTimers(); });
 
 describe('Celebration overlay', () => {
-  it('renders nothing at the initial key 0 (nothing celebrated yet)', () => {
-    render(<Celebration celebrationKey={0} label="Holiday · $5,000 reached" />);
+  it('renders nothing at the initial key 0 (nothing celebrated yet)', async () => {
+    await render(<Celebration celebrationKey={0} label="Holiday · $5,000 reached" />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
-  it('shows the milestone on a backing card, without blocking taps', () => {
-    render(<Celebration celebrationKey={1} label="Offset · $150,000 reached" />);
+  it('shows the milestone on a backing card, without blocking taps', async () => {
+    await render(<Celebration celebrationKey={1} label="Offset · $150,000 reached" />);
     expect(screen.getByTestId('checkpoint-celebration-label')).toHaveTextContent('Offset · $150,000 reached 🎉');
     expect(screen.getByTestId('checkpoint-celebration-banner')).toBeTruthy();
     expect(screen.getByTestId('checkpoint-celebration').props.pointerEvents).toBe('none');
     expect(screen.getAllByTestId('celebration-piece').length).toBeGreaterThan(0);
   });
 
-  it('re-fires and refreshes the label when a new key arrives mid-way', () => {
-    const { rerender } = render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
+  it('re-fires and refreshes the label when a new key arrives mid-way', async () => {
+    const { rerender } = await render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(1600); });              // partway through the 2400ms life
-    rerender(<Celebration celebrationKey={2} label="New car · goal reached" />);
+    await act(() => { jest.advanceTimersByTime(1600); });              // partway through the 2400ms life
+    await rerender(<Celebration celebrationKey={2} label="New car · goal reached" />);
     expect(screen.getByText(/New car · goal reached/)).toBeTruthy();
 
-    act(() => { jest.advanceTimersByTime(1600); });              // burst 1's old timer must NOT hide it
+    await act(() => { jest.advanceTimersByTime(1600); });              // burst 1's old timer must NOT hide it
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(800); });               // now a full 2400ms past burst 2
+    await act(() => { jest.advanceTimersByTime(800); });               // now a full 2400ms past burst 2
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
-  it('calls onDone exactly once when the lifecycle timer elapses', () => {
+  it('calls onDone exactly once when the lifecycle timer elapses', async () => {
     const onDone = jest.fn();
-    render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" onDone={onDone} />);
+    await render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" onDone={onDone} />);
     expect(onDone).not.toHaveBeenCalled();
-    act(() => { jest.advanceTimersByTime(2400); });
+    await act(() => { jest.advanceTimersByTime(2400); });
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
-  it('reduce-motion shows the banner with no confetti and clears it after the same time', () => {
+  it('reduce-motion shows the banner with no confetti and clears it after the same time', async () => {
     mockReduceMotion = true;
-    render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
+    await render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
     expect(screen.getByTestId('checkpoint-celebration-banner')).toBeTruthy();
     expect(screen.queryAllByTestId('celebration-piece')).toHaveLength(0);
-    act(() => { jest.advanceTimersByTime(2399); });
+    await act(() => { jest.advanceTimersByTime(2399); });
     expect(screen.queryByTestId('checkpoint-celebration')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(1); });
+    await act(() => { jest.advanceTimersByTime(1); });
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 });

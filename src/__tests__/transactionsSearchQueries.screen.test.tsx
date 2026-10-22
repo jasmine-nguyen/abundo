@@ -48,7 +48,7 @@ function mountScreenData(client: QueryClient, initialProps: Props) {
 
 it('[Q1] searches the tab + query and leaves `transactions` as the normal feed', async () => {
   seedSearch('all', 'steven');
-  const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
+  const { result } = await mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
 
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   expect(server.sent('GET', ALL_STEVEN).length).toBeGreaterThanOrEqual(1);
@@ -58,12 +58,12 @@ it('[Q1] searches the tab + query and leaves `transactions` as the normal feed',
 
 it('[Q2] the previous query\'s result is a placeholder, not an answer, while the next loads', async () => {
   seedSearch('all', 'ste');
-  const { result, rerender } = mountScreenData(makeClient(), { tab: 'all', query: 'ste' });
+  const { result, rerender } = await mountScreenData(makeClient(), { tab: 'all', query: 'ste' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
 
   const next = server.hold(SEARCH);
   server.once('GET', SEARCH, { body: { transactions: [tx('all-steven')], truncated: true } });
-  rerender({ tab: 'all', query: 'steven' });
+  await rerender({ tab: 'all', query: 'steven' });
 
   await waitFor(() => expect(server.requests().at(-1)?.path).toBe(ALL_STEVEN));
   expect(ids(result.current.search.results)).toEqual(['all-ste']); // shown while loading
@@ -75,11 +75,11 @@ it('[Q2] the previous query\'s result is a placeholder, not an answer, while the
 
 it('[Q3] never carries one tab\'s results onto the other tab as a placeholder', async () => {
   seedSearch('uncategorized', 'steven');
-  const { result, rerender } = mountScreenData(makeClient(), { tab: 'uncategorized', query: 'steven' });
+  const { result, rerender } = await mountScreenData(makeClient(), { tab: 'uncategorized', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
 
   const never = server.hold(SEARCH);
-  rerender({ tab: 'all', query: 'steven' });
+  await rerender({ tab: 'all', query: 'steven' });
 
   await waitFor(() => expect(server.requests().at(-1)?.path).toBe(ALL_STEVEN));
   expect(result.current.search.results).toEqual([]);
@@ -89,7 +89,7 @@ it('[Q3] never carries one tab\'s results onto the other tab as a placeholder', 
 
 it('[Q4] pull-to-refresh under a search refetches the search, not the feed', async () => {
   seedSearch('all', 'steven');
-  const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
+  const { result } = await mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   const feedCalls = server.sentUnder('GET', FEED).length;
   const searchCalls = server.sent('GET', ALL_STEVEN).length;
@@ -103,7 +103,7 @@ it('[Q4] pull-to-refresh under a search refetches the search, not the feed', asy
 it('[Q4b] Retry under a search still reloads a FAILED feed (its error screen hides the search)', async () => {
   seedSearch('all', 'steven');
   server.once('GET', FEED, 'dropped');
-  const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
+  const { result } = await mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.isError).toBe(true));
   const feedCalls = server.sentUnder('GET', FEED).length;
 
@@ -116,7 +116,7 @@ it('[Q4b] Retry under a search still reloads a FAILED feed (its error screen hid
 it('[Q4d] with rows still on screen, a failed feed refresh does not stop a pull re-asking the search', async () => {
   seedSearch('all', 'steven');
   const client = makeClient();
-  const { result } = mountScreenData(client, { tab: 'all', query: 'steven' });
+  const { result } = await mountScreenData(client, { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   await waitFor(() => expect(ids(result.current.transactions)).toEqual(['feed1']));
   server.once('GET', FEED, 'dropped');
@@ -135,14 +135,14 @@ it('[Q4d] with rows still on screen, a failed feed refresh does not stop a pull 
 // manual Retry runs — the screen must show "Searching…", not the stale error.
 it('[Q4c] a manual Retry after a failed refresh reports "searching", not the old error', async () => {
   seedSearch('all', 'steven');
-  const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
+  const { result } = await mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   server.once('GET', SEARCH, 'dropped');
   await act(async () => { await result.current.refetchList(); });
   await waitFor(() => expect(result.current.search.isError).toBe(true));
 
   const retry = server.hold(SEARCH);
-  act(() => { result.current.search.retry(); });
+  await act(() => { result.current.search.retry(); });
 
   await waitFor(() => expect(result.current.search.isError).toBe(false));
   await act(async () => { retry.release(); });
@@ -153,7 +153,7 @@ it('[Q4c] a manual Retry after a failed refresh reports "searching", not the old
 // the paged feed is left alone (refetching every loaded page under a search would be a wasted storm).
 it('[A8] on return, a stale search is re-asked (and picks up a new match); the feed is not refetched', async () => {
   server.seed(SEARCH, { transactions: [tx('old-match')], truncated: false });
-  const { result } = mountScreenData(makeClient({ staleTime: 0 }), { tab: 'all', query: 'steven' }); // everything is immediately stale
+  const { result } = await mountScreenData(makeClient({ staleTime: 0 }), { tab: 'all', query: 'steven' }); // everything is immediately stale
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   await waitFor(() => expect(server.sentUnder('GET', FEED).length).toBeGreaterThan(0));
   const feedCalls = server.sentUnder('GET', FEED).length;

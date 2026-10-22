@@ -49,8 +49,8 @@ const listRows = (key: QueryKey) => queryClient.getQueryData<Transaction[]>(key)
 const listIds = (key: QueryKey) => listRows(key)?.map((t) => t.transaction_id);
 const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalidated;
 
-function mount() {
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+async function mount() {
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
@@ -69,7 +69,7 @@ it('a batch re-file updates every copy, undoes only the charge that failed, and 
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t2'), tx('t1')], truncated: false });
   queryClient.setQueryData(BUDGET_KEY, [tx('t1'), tx('t2')]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1'), tx('t2')]);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't2', 't3'], 'groceries'); });
 
@@ -101,8 +101,8 @@ it("applyCategory('one') files the charge in every main copy, drops it from the 
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t1')], truncated: false });
   queryClient.setQueryData(BUDGET_KEY, [tx('t1'), tx('t2')]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1'), tx('t2')]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -131,8 +131,8 @@ it("applyCategory('one') failure puts the charge back to its OWN old category ev
   queryClient.setQueryData(['transactionsRecent'], [tx('t1')]);
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t1')], truncated: false });
   queryClient.setQueryData(BUDGET_KEY, [tx('t1'), tx('t2')]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('one'); });
 
@@ -158,8 +158,8 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: null })]));
   queryClient.setQueryData(UNCAT_KEY, page([tx('t2', { category: null }), tx('t3', { category: null })]));
   queryClient.setQueryData(BUDGET_KEY, [tx('t1'), tx('t9', { category: null })]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('all'); });
 
@@ -179,8 +179,8 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
 it("applyCategory('all') swaps the temp rule for the id the server minted, keeping the NEW badge", async () => {
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1', { category: null }), tx('t2', { category: null })]));
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('all'); });
 
@@ -194,8 +194,8 @@ it("applyCategory('all') whose rule mint is refused (409) files the charges, dro
   server.once('POST', '/rules', { status: 409 });
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1', { category: null }), tx('t2', { category: null })]));
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  const result = await mount();
+  await act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
 
   await act(async () => { await result.current.applyCategory('all'); });
 
@@ -213,7 +213,7 @@ it('applyCategoryToMany where every save fails restores every copy and marks not
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t2', { category: null })], truncated: false });
   queryClient.setQueryData(BUDGET_KEY, [tx('t1')]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1')]);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't2'], 'groceries'); });
 
@@ -229,7 +229,7 @@ it('applyCategoryToMany when the batch request itself errors reverts every charg
   server.once('PATCH', '/transactions', { status: 500 });
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1', { category: null }), tx('t2')]));
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't2'], 'groceries'); });
 
@@ -246,7 +246,7 @@ it('applyTransactionEdit exclude stamps every copy (main + scoped) and refreshes
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t1')], truncated: false });
   queryClient.setQueryData(BUDGET_KEY, [tx('t1')]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1')]);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
@@ -267,7 +267,7 @@ it('applyTransactionEdit on a budget-only charge: a note edit refreshes nothing;
   queryClient.setQueryData(['transactions'], page([]));
   queryClient.setQueryData(BUDGET_KEY, [tx('old', { notes: 'before' })]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('old', { notes: 'before' })]);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyTransactionEdit('old', { notes: 'after' }); });
   expect(byId(listRows(BUDGET_KEY)).old.notes).toBe('after');
@@ -285,7 +285,7 @@ it('applyTransactionEdit on a budget-only charge: a note edit refreshes nothing;
 it('an edit on an id with a slash is sent as one encoded path segment and lands', async () => {
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('bank/1')]));
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.applyTransactionEdit('bank/1', { notes: 'lunch' }); });
 
@@ -301,7 +301,7 @@ it('deleteCategory unfiles its charges in every copy and refreshes the category-
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t1')], truncated: false });
   queryClient.setQueryData(BUDGET_KEY, [tx('t1')]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1')]);
-  const result = mount();
+  const result = await mount();
 
   await act(async () => { await result.current.deleteCategory('dining'); });
 

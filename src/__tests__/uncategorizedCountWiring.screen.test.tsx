@@ -41,7 +41,7 @@ const COUNT = '/transactions/uncategorized/count';
 
 async function renderUncategorizedTab() {
   await renderWithQueries(<Transactions />);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   await settle();
 }
 
@@ -63,7 +63,7 @@ describe('Transactions screen badge', () => {
   it('falls back to the local count while the server value is undefined', async () => {
     const held = server.hold(COUNT);
     seedFeedPage(server, FEED, [txn({ transaction_id: 't1', category: null }), txn({ transaction_id: 't2', category: null })]);
-    render(<WithQueries><Transactions /></WithQueries>);
+    await render(<WithQueries><Transactions /></WithQueries>);
     await loaded(transactionsKey);
     expect(within(screen.getByTestId('tab-uncategorized')).getByText('2')).toBeTruthy();
     held.release();
@@ -76,7 +76,7 @@ describe('Transactions screen "All caught up"', () => {
   it('shows "All caught up" on a resolved server 0', async () => {
     server.seed(COUNT, { count: 0 });
     await renderWithQueries(<Transactions />);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByText('All caught up')).toBeTruthy();
     await settle();
   });
@@ -86,8 +86,8 @@ describe('Transactions screen "All caught up"', () => {
   // Fail-on-revert: gate allCaughtUp on the local count (0) instead of a resolved server 0 → this fails.
   it('does NOT show "All caught up" while the server value is undefined', async () => {
     const held = server.hold(COUNT);
-    render(<WithQueries><Transactions /></WithQueries>);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await render(<WithQueries><Transactions /></WithQueries>);
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     await loaded(uncategorizedFeedKey);
     expect(screen.queryByText('All caught up')).toBeNull();
     held.release();
@@ -103,7 +103,7 @@ describe('Transactions screen "All caught up"', () => {
     server.seed(COUNT, { count: 0 });
     seedFeedPage(server, UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
     await renderWithQueries(<Transactions />);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await fireEvent.press(screen.getByTestId('tab-uncategorized'));
     expect(await screen.findByText('Woolworths')).toBeTruthy(); // the unfiled row is still shown
     expect(screen.queryByText('All caught up')).toBeNull();     // no false empty state over real rows
     // The "tap a transaction" hint keys off the LOCAL loaded-page count (not the server tally), so it

@@ -7,7 +7,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react-native';
-import { RefreshControl, SectionList } from 'react-native';
+import { pullControl } from './support/pull';
 import { C } from '../theme';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
@@ -15,7 +15,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { accountFeedKey } from '../queryKeys';
-import { styleOf, expectScrollEdge } from './support/layout';
+import { styleOf, expectScrollEdge, virtualLists } from './support/layout';
 import { accountBalance } from './support/accountBalance';
 import type { AccountBalance } from '../api';
 
@@ -25,7 +25,6 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import AccountDetail from '../../app/account/[id]';
-import { Header } from '../components/Header';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -79,7 +78,7 @@ it('hides the available line for a loan (you owe, but there is no credit to draw
 // keeps the LIST. [A-acct-cache] below supersedes the old "cache-first" test (dropped WHIT-459).
 it('while loading with nothing cached, shows the spinner and NOT the empty "No transactions" message', async () => {
   const held = server.hold(FEED);
-  render(<WithQueries><AccountDetail /></WithQueries>);
+  await render(<WithQueries><AccountDetail /></WithQueries>);
   await waitFor(() => expect(server.sent('GET', FIRST_PAGE)).toHaveLength(1));
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
@@ -128,7 +127,7 @@ it.each([
   }
   const link = screen.getByTestId('account-payoff-link');
   expect(within(link).getByText('See payoff progress')).toBeTruthy();
-  fireEvent.press(link);
+  await fireEvent.press(link);
   expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
 });
 
@@ -137,7 +136,7 @@ it.each([
 it('uses the transaction account name for the header when the account also has a balance', async () => {
   server.seed('/accounts/balances', [bal()]);
   await renderWithQueries(<AccountDetail />);
-  expect(screen.UNSAFE_getByType(Header).props.title).toBe('ANZ');
+  expect(within(screen.getByTestId('header-wrap')).getByText('ANZ')).toBeTruthy();
 });
 
 // ABU-66: the account page matches Transactions. A pull re-reads the list and fetches live
@@ -154,10 +153,10 @@ it('pull refreshes the list and live balances, headings show the day total, bala
   expect(amount.props.maxFontSizeMultiplier).toBe(2);
 
   const listReads = server.sent('GET', FIRST_PAGE).length;
-  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
   await waitFor(() => expect(server.sent('GET', FIRST_PAGE).length).toBeGreaterThan(listReads));
-  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
 });
 
 // [A1] the account page's pull puts the live number on screen and confirms it (the failure path
@@ -174,7 +173,7 @@ it('a pull whose live balance call succeeds shows the live balance and confirms 
   server.seed('/accounts/balances', fresh);
   server.once('POST', '/accounts/balances/refresh', { body: fresh });
   const bankSync = server.hold('/transactions/sync');
-  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   expect(await screen.findByText('$250.00')).toBeTruthy();
   bankSync.release();
   await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
@@ -191,16 +190,16 @@ it.each([
 ])('a pull %s: pull spinner shown = %s', async (_name, coldLoad, spinning) => {
   seedFeedPage(server, FEED, []);
   const list = coldLoad ? server.hold(FEED) : null;
-  render(<WithQueries><AccountDetail /></WithQueries>);
+  await render(<WithQueries><AccountDetail /></WithQueries>);
   await waitFor(() => expect(server.sent('GET', FIRST_PAGE)).toHaveLength(1));
   if (!coldLoad) await waitFor(() => expect(screen.getByText('No transactions')).toBeTruthy());
   const liveRefresh = server.hold('/accounts/balances/refresh');
-  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
-  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(spinning);
+  expect(pullControl().props.refreshing).toBe(spinning);
   liveRefresh.release();
   list?.release();
-  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
   await settle();
 });
 
@@ -229,7 +228,7 @@ it('Load More appends this account\'s older rows, and a pull snaps back to the n
   const older = { ...ROW, transaction_id: 't0', date: '2025-03-04', authorized_date: '2025-03-04', amount: -7 };
   const held = server.hold('/transactions/feed');
   server.once('GET', '/transactions/feed', { body: { transactions: [older], nextCursor: null } });
-  fireEvent.press(screen.getByTestId('account-load-more'));
+  await fireEvent.press(screen.getByTestId('account-load-more'));
   expect(await screen.findByTestId('account-load-more-spinner')).toBeTruthy();
   held.release();
 
@@ -241,12 +240,12 @@ it('Load More appends this account\'s older rows, and a pull snaps back to the n
   expect(screen.queryByTestId('account-load-more')).toBeNull();
 
   const readsBeforePull = feedReads().length;
-  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await act(() => { pullControl().props.onRefresh(); });
   await waitFor(() => expect(screen.queryByText('−⁠$7.00')).toBeNull());
   expect(screen.getByText('−⁠$42.00')).toBeTruthy();
   expect(await screen.findByTestId('account-load-more')).toBeTruthy();
   expect(feedReads().slice(readsBeforePull).every((params) => params.get('cursor') === null)).toBe(true);
-  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
 });
 
 // [A1] ABU-58: a full first page (30 rows, each on its own day) draws every row and the Load More
@@ -268,6 +267,6 @@ it('a full first page over 30 different days draws every row and Load More witho
 it('scrolling the list draws the title bar edge, and scrolling back to the top removes it', async () => {
   server.seed('/accounts/balances', [bal()]);
   await renderWithQueries(<AccountDetail />);
-  expectScrollEdge(screen.UNSAFE_getByType(SectionList));
+  await expectScrollEdge(virtualLists()[0]);
 });
 

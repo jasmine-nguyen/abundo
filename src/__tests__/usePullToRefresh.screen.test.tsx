@@ -31,9 +31,9 @@ describe('usePullToRefresh', () => {
     const bal = deferred<void>();
     refetchList.mockReturnValueOnce(list.promise);
     refreshLiveBalances.mockReturnValueOnce(bal.promise);
-    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
 
-    act(() => { result.current.onRefresh(); });
+    await act(() => { result.current.onRefresh(); });
     // Only the list has settled — the live call is still in flight → still pulling.
     await act(async () => { list.resolve(); await Promise.resolve(); });
     expect(result.current.pulling).toBe(true);
@@ -44,7 +44,7 @@ describe('usePullToRefresh', () => {
 
   it('a failed live refresh toasts the exact copy and still clears the spinner', async () => {
     refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
-    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
 
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(showToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
@@ -52,14 +52,14 @@ describe('usePullToRefresh', () => {
   });
 
   it('a successful pull does not toast when no success message is given', async () => {
-    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(showToast).not.toHaveBeenCalled();
     expect(result.current.pulling).toBe(false);
   });
 
   it('toasts the success message on a successful pull when one is provided', async () => {
-    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date'));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date'));
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(showToast).toHaveBeenCalledWith('Balances up to date');
     expect(result.current.pulling).toBe(false);
@@ -67,7 +67,7 @@ describe('usePullToRefresh', () => {
 
   it('does NOT toast the success message when the live refresh fails', async () => {
     refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
-    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date'));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date'));
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(showToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
     expect(showToast).not.toHaveBeenCalledWith('Balances up to date');
@@ -76,9 +76,9 @@ describe('usePullToRefresh', () => {
   it('a list-only pull (no live balances, no toast) raises then clears the spinner', async () => {
     const list = deferred<void>();
     refetchList.mockReturnValueOnce(list.promise);
-    const { result } = renderHook(() => usePullToRefresh(refetchList));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList));
 
-    act(() => { result.current.onRefresh(); });
+    await act(() => { result.current.onRefresh(); });
     expect(result.current.pulling).toBe(true);
     expect(refetchList).toHaveBeenCalledTimes(1);
 
@@ -89,7 +89,7 @@ describe('usePullToRefresh', () => {
 
   it('is not latched: a second pull after a failed first fires again and clears', async () => {
     refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
-    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(result.current.pulling).toBe(false);
 
@@ -109,10 +109,10 @@ describe('usePullToRefresh', () => {
   ] as const)('a bank sync that ends %s reloads the list after it and shows one toast', async (outcome, toast) => {
     const sync = deferred<{ status: 'done' | 'syncing' | 'failed' | 'cooldown' }>();
     const syncBank = jest.fn(() => sync.promise);
-    const { result } = renderHook(() =>
+    const { result } = await renderHook(() =>
       usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date', syncBank));
 
-    act(() => { result.current.onRefresh(); });
+    await act(() => { result.current.onRefresh(); });
     expect(syncBank).toHaveBeenCalledTimes(1);
     expect(refetchList).not.toHaveBeenCalled();
     expect(result.current.pulling).toBe(true);
@@ -138,7 +138,7 @@ describe('usePullToRefresh', () => {
   ] as const)('balances fail=%s, success message %s, sync %s → toast %s', async (balancesFail, successMessage, status, toast) => {
     if (balancesFail) refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
     const sync = deferred<{ status: 'done' | 'syncing' }>();
-    const { result } = renderHook(() =>
+    const { result } = await renderHook(() =>
       usePullToRefresh(refetchList, refreshLiveBalances, showToast, successMessage, () => sync.promise));
 
     await act(async () => { result.current.onRefresh(); for (let i = 0; i < 5; i++) await Promise.resolve(); });
@@ -153,7 +153,7 @@ describe('usePullToRefresh', () => {
   // WHIT-713 QA
   it('[A10] a list-only pull whose refetch REJECTS still clears the spinner and is not latched', async () => {
     refetchList.mockReturnValueOnce(Promise.reject(new Error('API error: 503')));
-    const { result } = renderHook(() => usePullToRefresh(refetchList));
+    const { result } = await renderHook(() => usePullToRefresh(refetchList));
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(result.current.pulling).toBe(false);
 

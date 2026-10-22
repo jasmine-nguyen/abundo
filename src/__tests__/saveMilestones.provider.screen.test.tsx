@@ -25,14 +25,14 @@ const cached = () => queryClient.getQueryData<MilestoneRecord[]>(['milestones'])
 beforeEach(() => { resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
-function mount() {
+async function mount() {
   queryClient.setQueryData(['milestones'], []); // the "no saved plan yet" starting point
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
 it('saveMilestones writes the cache + invalidates milestones', async () => {
-  const result = mount();
+  const result = await mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
   let ok: boolean | undefined;
@@ -47,7 +47,7 @@ it('saveMilestones writes the cache + invalidates milestones', async () => {
 
 it('rolls the cache back to the prior plan on a save failure', async () => {
   server.fail('/milestones', 500);
-  const result = mount();
+  const result = await mount();
 
   // The optimistic write reaches the cache MID-FLIGHT (before the reject), then the catch rolls it
   // back to the pre-save []. The mid check keeps teeth: without the optimistic write mid stays empty.
@@ -74,11 +74,11 @@ describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () =>
   it('SUCCESS after sign-out: no invalidate re-seat, no toast, returns false', async () => {
     queryClient.setQueryData(['milestones'], PREV);
     const held = server.hold('/milestones'); // the save is genuinely in flight when the session ends
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveMilestones(NEXT); }); // optimistic write → cache = NEXT
-    signOut();                                                      // clears cache + bumps epoch
+    await act(() => { pending = result.current.saveMilestones(NEXT); }); // optimistic write → cache = NEXT
+    await signOut();                                                      // clears cache + bumps epoch
     let returned!: boolean;
     await act(async () => { held.release(); returned = await pending; });
 
@@ -90,11 +90,11 @@ describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () =>
   it('FAILURE after sign-out: old plan is NOT re-seated into the cleared cache, no toast, returns false', async () => {
     queryClient.setQueryData(['milestones'], PREV);
     const held = server.hold('/milestones'); // the save is genuinely in flight when the session ends
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveMilestones(NEXT); });
-    signOut();
+    await act(() => { pending = result.current.saveMilestones(NEXT); });
+    await signOut();
     let returned!: boolean;
     await act(async () => { held.fail('PUT'); returned = await pending; });
 

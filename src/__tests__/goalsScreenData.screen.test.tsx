@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 
 it('assembles goals, pay cycle, the mortgage summary, and a per-account balance lookup', async () => {
-  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
 
   expect(result.current.goals).toEqual(GOALS);
@@ -50,7 +50,7 @@ it('assembles goals, pay cycle, the mortgage summary, and a per-account balance 
 });
 
 it('balanceFor returns the live SIGNED amount by account id, null for unknown/unset', async () => {
-  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.goals).toEqual(GOALS));
 
   expect(result.current.balanceFor('up-spending')).toBe(4200.5);
@@ -62,7 +62,7 @@ it('balanceFor returns the live SIGNED amount by account id, null for unknown/un
 
 it('does not fetch before login, then fires every read on the auth flip', async () => {
   setAuthStatusQuietly('anon');
-  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   expect(server.sent('GET', '/goals')).toHaveLength(0);
   expect(server.sent('GET', '/paycycle')).toHaveLength(0);
   expect(server.sent('GET', '/accounts/balances')).toHaveLength(0);
@@ -77,7 +77,7 @@ it('SECONDARY milestones (WHIT-747): a slow read never holds up the hub, and the
   const MILESTONES = [{ id: 'm1', label: 'First', targetBalance: 600000, targetDate: '2027-01-01' }];
   server.seed('/milestones', MILESTONES);
   const held = server.hold('/milestones');
-  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.goals).toEqual(GOALS));
 
   expect(result.current.isLoading).toBe(false);
@@ -92,7 +92,7 @@ it('SECONDARY milestones (WHIT-747): a slow read never holds up the hub, and the
 
 it('SECONDARY milestones failure does NOT set isError, and still counts as loaded (an empty plan)', async () => {
   server.fail('/milestones', 500);
-  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = await renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.milestonesLoaded).toBe(true));
 
   expect(result.current.isError).toBe(false);

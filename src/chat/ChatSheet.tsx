@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated, KeyboardAvoidingView, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform,
-  Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  Pressable, ScrollView, ScrollViewInstance, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
@@ -141,7 +141,7 @@ function TypingIndicator({ status }: { status: string | null }) {
 function MessageList() {
   const { messages, inFlight, toolStatus, retry, send, closeChat } = useChat();
   const router = useRouter();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const [atBottom, setAtBottom] = useState(true);
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {

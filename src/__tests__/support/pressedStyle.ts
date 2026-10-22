@@ -2,13 +2,13 @@
 // a tappable element takes the shared PRESSED style on press and is solid at rest.
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import { expect } from '@jest/globals';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, StyleProp, ViewStyle } from 'react-native';
 
 type StyledNode = { props: { style?: unknown } };
 
 export function pressedStyle(node: StyledNode, pressed: boolean) {
   expect(typeof node.props.style).toBe('function');
-  return StyleSheet.flatten((node.props.style as (x: { pressed: boolean }) => unknown)({ pressed })) as {
+  return StyleSheet.flatten((node.props.style as (x: { pressed: boolean }) => StyleProp<ViewStyle>)({ pressed })) as {
     opacity?: number;
     transform?: unknown;
   };

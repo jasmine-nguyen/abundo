@@ -12,7 +12,7 @@
 // afterEach restores spies (config clears call-counts but not spyOn installs) so the WHIT-199
 // Animated.spring spy can't leak into a later describe.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { Modal, Animated, KeyboardAvoidingView, ScrollView } from 'react-native';
+import { Animated, KeyboardAvoidingView } from 'react-native';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import { SHEET_DISMISS_DISTANCE, shouldDismissSheet } from '../motion/sheetMotion';
@@ -33,6 +33,7 @@ import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { hostsOfType } from './support/layout';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -81,8 +82,8 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
     mockReduceMotion = false;
     const springSpy = jest.spyOn(Animated, 'spring')
       .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
-    const { UNSAFE_getByType } = await mount(paycycleState());
-    expect(UNSAFE_getByType(Modal).props.animationType).toBe('fade'); // NOT the old 'slide'
+    await mount(paycycleState());
+    expect(hostsOfType('Modal')[0].props.animationType).toBe('fade'); // NOT the old 'slide'
     expect(await screen.findByText('Fortnightly')).toBeTruthy();      // sheet content mounted
     expect(springSpy).toHaveBeenCalledTimes(1);                       // the open spring fired
   });
@@ -90,8 +91,8 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
   it('reduce-motion: Modal does not animate and NO spring is started (instant jump)', async () => {
     mockReduceMotion = true;
     const springSpy = jest.spyOn(Animated, 'spring');
-    const { UNSAFE_getByType } = await mount(paycycleState());
-    expect(UNSAFE_getByType(Modal).props.animationType).toBe('none');
+    await mount(paycycleState());
+    expect(hostsOfType('Modal')[0].props.animationType).toBe('none');
     expect(await screen.findByText('Fortnightly')).toBeTruthy(); // rendered once the pay cycle loads
     expect(springSpy).not.toHaveBeenCalled();
   });
@@ -117,11 +118,11 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
 
   // A slow drag from y=100 down to y=100+distance (timestamps far apart → negligible velocity, so
   // the DISTANCE path decides). Raw responder events, no gesture library.
-  function dragGrabber(distance: number) {
+  async function dragGrabber(distance: number) {
     const grabber = screen.getByTestId('sheet-grabber');
-    fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100, timestamp: 0 } });
-    fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
-    fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
+    await fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100, timestamp: 0 } });
+    await fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
+    await fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
   }
 
   describe('shouldDismissSheet decision (WHIT-290/WHIT-293)', () => {
@@ -144,13 +145,13 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
   describe('grabber pull-down-to-dismiss (WHIT-290/WHIT-293)', () => {
     it('a drag past the threshold closes the sheet', async () => {
       await mount(sheetState());
-      dragGrabber(SHEET_DISMISS_DISTANCE + 40);
+      await dragGrabber(SHEET_DISMISS_DISTANCE + 40);
       expect(fns.setSheet).toHaveBeenCalledWith(null);
     });
 
     it('a short, slow drag springs back and does NOT close', async () => {
       await mount(sheetState());
-      dragGrabber(20);
+      await dragGrabber(20);
       expect(fns.setSheet).not.toHaveBeenCalled();
     });
   });
@@ -173,10 +174,14 @@ describe('SheetHost keyboard avoidance (WHIT-294)', () => {
 
   describe('SheetHost lifts the sheet above the keyboard (WHIT-294)', () => {
     it('wraps the sheet in a KeyboardAvoidingView with a real behavior', async () => {
-      const { UNSAFE_getByType } = await mount(sheetState());
-      const kav = UNSAFE_getByType(KeyboardAvoidingView);
+      // `behavior` stays on the KeyboardAvoidingView itself (it never reaches a drawn element), so
+      // read it off the instance that rendered.
+      const kavRender = jest.spyOn((KeyboardAvoidingView as unknown as { prototype: { render(): unknown } }).prototype, 'render');
+      await mount(sheetState());
+      const kav = kavRender.mock.contexts.at(-1) as { props: { behavior?: string } } | undefined;
+      kavRender.mockRestore();
       expect(kav).toBeTruthy();
-      expect(['padding', 'height', 'position']).toContain(kav.props.behavior); // set, not undefined
+      expect(['padding', 'height', 'position']).toContain(kav!.props.behavior); // set, not undefined
     });
   });
 });
@@ -214,7 +219,7 @@ describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
       // The old sheet had no such control — the whole card was the close-wrapper. Its presence is
       // the fail-on-revert: revert to the wrapping Pressable and this "Close" button disappears.
       await openPicker();
-      fireEvent.press(screen.getByLabelText('Close'));
+      await fireEvent.press(screen.getByLabelText('Close'));
       expect(fns.setSheet).toHaveBeenCalledWith(null);
     });
 
@@ -222,12 +227,12 @@ describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
       // The bug was the closing element wrapping the ScrollView. Lock the fix structurally: the
       // "Close" backdrop must have NO ScrollView in its subtree — it's a sibling behind the sheet,
       // not an ancestor of the list. Re-wrapping the list in a labelled Pressable (reintroducing
-      // the exact bug) would put a ScrollView under this element and trip the assertion. (ScrollView
-      // matches by type reference in this RN/RNTL; Pressable does not, so we anchor on the list.)
-      const { UNSAFE_getByType } = await openPicker();
-      expect(UNSAFE_getByType(ScrollView)).toBeTruthy(); // the picker list exists...
+      // the exact bug) would put a ScrollView under this element and trip the assertion. (Only drawn
+      // elements are visible to the test, so we anchor on the list's native scroller.)
+      await openPicker();
+      expect(hostsOfType('RCTScrollView').length).toBeGreaterThan(0); // the picker list exists...
       const close = screen.getByLabelText('Close');
-      expect(close.findAll((n) => n.type === ScrollView)).toHaveLength(0); // ...but not under the backdrop
+      expect(hostsOfType('RCTScrollView', close)).toHaveLength(0); // ...but not under the backdrop
     });
   });
 });
@@ -277,8 +282,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
     // `conditions` array + `logic`, not a flat `pattern`.)
     it('[B1] selecting a category after typing a pattern persists BOTH fields (merge, no clobber)', async () => {
       await openNewRule();
-      fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
-      fireEvent.press(screen.getByText('Groceries'));
+      await fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
+      await fireEvent.press(screen.getByText('Groceries'));
 
       expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false });
       // the live field still reflects it — the collapse didn't decouple state from the input

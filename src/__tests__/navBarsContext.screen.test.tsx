@@ -43,8 +43,8 @@ describe('NavBarsContext default (no provider)', () => {
     return <Text testID="probe">{String(ok)}</Text>;
   }
 
-  it('renders a consumer with NO NavBarsProvider without crashing', () => {
-    const { getByTestId } = render(<Probe />);
+  it('renders a consumer with NO NavBarsProvider without crashing', async () => {
+    const { getByTestId } = await render(<Probe />);
     expect(getByTestId('probe').props.children).toBe('true');
   });
 });
@@ -74,22 +74,22 @@ describe('WHIT-200 — NavBarsRouteReset detail push/pop (folded from navBarsRou
 
   beforeEach(() => resetRouter());
 
-  it('re-shows the nav bars on a route change (detail push/pop)', () => {
-    const view = render(tree());
+  it('re-shows the nav bars on a route change (detail push/pop)', async () => {
+    const view = await render(tree());
     // Simulate scroll-hiding the bars on the current screen.
-    act(() => captured.setNavBars('hidden'));
+    await act(() => captured.setNavBars('hidden'));
     expect(visValue()).toBe(0);
 
     // Push a detail route: pathname changes → the reset fires → bars come back.
     setPathname('/budget/1');
-    view.rerender(tree());
+    await view.rerender(tree());
     expect(visValue()).toBe(1);
 
     // Hide again, then pop back to the tab: pathname changes again → re-shown.
-    act(() => captured.setNavBars('hidden'));
+    await act(() => captured.setNavBars('hidden'));
     expect(visValue()).toBe(0);
     setPathname('/budgets');
-    view.rerender(tree());
+    await view.rerender(tree());
     expect(visValue()).toBe(1);
   });
 });

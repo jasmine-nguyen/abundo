@@ -14,8 +14,8 @@ const onCancel = jest.fn();
 beforeEach(() => { onSubmit.mockClear(); onCancel.mockClear(); });
 
 // [A5] lockBucket hides the bucket picker (a new sub inherits its parent's bucket).
-it('lockBucket hides the bucket chips', () => {
-  render(<QuickCreateCategory initialBucket="Living" lockBucket submitLabel="Add sub-category" onSubmit={onSubmit} />);
+it('lockBucket hides the bucket chips', async () => {
+  await render(<QuickCreateCategory initialBucket="Living" lockBucket submitLabel="Add sub-category" onSubmit={onSubmit} />);
   // With the picker hidden, none of the other bucket labels render.
   expect(screen.queryByText('Income')).toBeNull();
   expect(screen.queryByText('Savings')).toBeNull();
@@ -23,36 +23,36 @@ it('lockBucket hides the bucket chips', () => {
 });
 
 // [A6] parentPicker: the picked parent is stamped onto the draft handed to onSubmit.
-it('parentPicker carries the picked parent id on the draft', () => {
+it('parentPicker carries the picked parent id on the draft', async () => {
   const cats = [cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null })];
-  render(<QuickCreateCategory initialBucket="Living" parentPicker categories={cats} submitLabel="Create & file" onSubmit={onSubmit} />);
-  fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Parking');
-  fireEvent.press(screen.getByText('Car'));            // pick the same-bucket parent
-  fireEvent.press(screen.getByText('Create & file'));
+  await render(<QuickCreateCategory initialBucket="Living" parentPicker categories={cats} submitLabel="Create & file" onSubmit={onSubmit} />);
+  await fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Parking');
+  await fireEvent.press(screen.getByText('Car'));            // pick the same-bucket parent
+  await fireEvent.press(screen.getByText('Create & file'));
   expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'Parking', bucket: 'Living', parent: 'car' }));
 });
 
 // [A7] Changing bucket under a picked parent drops the now cross-bucket parent to top-level,
 // so a category can never be saved under a parent from a different bucket. Fail-on-revert: kill
 // the drop effect and this submits parent:'car' with bucket:'Lifestyle'.
-it('changing bucket drops a now-ineligible picked parent to null', () => {
+it('changing bucket drops a now-ineligible picked parent to null', async () => {
   const cats = [
     cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
     cat({ name: 'Coffee', parent: null }),
   ];
-  render(<QuickCreateCategory initialBucket="Living" parentPicker categories={cats} submitLabel="Create & file" onSubmit={onSubmit} />);
-  fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Parking');
-  fireEvent.press(screen.getByText('Car'));            // parent = Living 'car'
-  fireEvent.press(screen.getByText('Lifestyle'));      // switch bucket → car is now cross-bucket
-  fireEvent.press(screen.getByText('Create & file'));
+  await render(<QuickCreateCategory initialBucket="Living" parentPicker categories={cats} submitLabel="Create & file" onSubmit={onSubmit} />);
+  await fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Parking');
+  await fireEvent.press(screen.getByText('Car'));            // parent = Living 'car'
+  await fireEvent.press(screen.getByText('Lifestyle'));      // switch bucket → car is now cross-bucket
+  await fireEvent.press(screen.getByText('Create & file'));
   expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ bucket: 'Lifestyle', parent: null }));
 });
 
 // [A8] busy=true guards the submit button (the sheet's double-tap guard while a create is in
 // flight). Fail-on-revert: drop `!busy` from canSave and onSubmit fires despite busy.
-it('busy blocks submit (double-submit guard)', () => {
-  render(<QuickCreateCategory initialBucket="Lifestyle" busy submitLabel="Create & file" onSubmit={onSubmit} />);
-  fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
-  fireEvent.press(screen.getByText('Create & file'));
+it('busy blocks submit (double-submit guard)', async () => {
+  await render(<QuickCreateCategory initialBucket="Lifestyle" busy submitLabel="Create & file" onSubmit={onSubmit} />);
+  await fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Gym');
+  await fireEvent.press(screen.getByText('Create & file'));
   expect(onSubmit).not.toHaveBeenCalled();
 });

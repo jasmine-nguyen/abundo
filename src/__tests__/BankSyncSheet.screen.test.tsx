@@ -48,6 +48,6 @@ it('lists each account with its sync time, an amber dot only on the one over a d
   expect(westpac.getByText('16 Sep, 7:55am')).toBeTruthy();
   expect(styleOf(westpac.getByTestId('bank-sync-dot-westpac-altitude')).color).toBe(C.warn);
 
-  fireEvent.press(screen.getByText('Done'));
+  await fireEvent.press(screen.getByText('Done'));
   expect(setSheet).toHaveBeenCalledWith(null);
 });

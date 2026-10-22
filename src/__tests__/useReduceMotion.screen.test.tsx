@@ -25,26 +25,29 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 it('defaults to false, then reflects the OS value once the probe resolves', async () => {
-  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
-  const { result } = renderHook(() => useReduceMotion());
-  expect(result.current).toBe(false); // initial synchronous render, before the promise settles
-  await waitFor(() => expect(result.current).toBe(true));
+  // Held until the test answers it: an awaited render settles every promise it can.
+  let answerProbe: (enabled: boolean) => void = () => {};
+  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockReturnValue(new Promise((resolve) => { answerProbe = resolve; }));
+  const { result } = await renderHook(() => useReduceMotion());
+  expect(result.current).toBe(false); // before the probe answers
+  await act(async () => { answerProbe(true); });
+  expect(result.current).toBe(true);
 });
 
 it('live-updates when the OS reduceMotionChanged event fires', async () => {
   jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
-  const { result } = renderHook(() => useReduceMotion());
+  const { result } = await renderHook(() => useReduceMotion());
   await waitFor(() => expect(changeHandler).toBeDefined());
 
-  act(() => changeHandler!(true));
+  await act(() => changeHandler!(true));
   expect(result.current).toBe(true);
-  act(() => changeHandler!(false));
+  await act(() => changeHandler!(false));
   expect(result.current).toBe(false);
 });
 
 it('stays false (no crash) when the reduce-motion probe rejects', async () => {
   jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockRejectedValue(new Error('no native module'));
-  const { result } = renderHook(() => useReduceMotion());
+  const { result } = await renderHook(() => useReduceMotion());
   // give the rejected promise a tick to be swallowed by the hook's .catch
   await act(async () => { await Promise.resolve(); });
   expect(result.current).toBe(false);

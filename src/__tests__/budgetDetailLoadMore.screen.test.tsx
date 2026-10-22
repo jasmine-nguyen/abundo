@@ -60,7 +60,7 @@ it('shows the first 7 rows with a Load More button, then reveals the rest on pre
   expect(screen.getAllByLabelText('View transaction details')).toHaveLength(7);
   const loadMore = screen.getByTestId('budget-load-more');
 
-  fireEvent.press(loadMore);
+  await fireEvent.press(loadMore);
 
   expect(screen.getAllByLabelText('View transaction details')).toHaveLength(9);
   // All revealed → the button is gone.
@@ -87,7 +87,7 @@ it('tapping a row arrow opens that transaction (where it can be refiled)', async
   seedDetail({ budget: { target: 80, posted: 15, pending: 5 }, transactions: [charge(1)] });
   await renderWithQueries(<BudgetDetail />);
 
-  fireEvent.press(screen.getAllByLabelText('View transaction details')[0]);
+  await fireEvent.press(screen.getAllByLabelText('View transaction details')[0]);
 
   expect(routerSpies.push).toHaveBeenCalledWith('/transaction/t1');
 });

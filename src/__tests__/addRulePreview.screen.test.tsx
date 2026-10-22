@@ -26,6 +26,7 @@ import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { previewReport as report } from './support/applyRulesReport';
+import { startTaps } from './support/tap';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -78,7 +79,7 @@ it('"Add rule + file N" calls fileNewRule with the captured pair, then toasts an
   fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 12, filed: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, category: 'groceries' })) }) });
   await mountConfirm('COLES', 'groceries', true);
 
-  await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
+  await startTaps(screen.getByTestId('add-rule-confirm-file'));
 
   expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: true }, { now: true });
   expect(fns.showToast).toHaveBeenCalledWith('Rule added — filed 12 past charges as Groceries.');
@@ -91,7 +92,7 @@ it('"Add rule only" calls saveManualRule and never files', async () => {
   fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   await mountConfirm('COLES', 'groceries', true);
 
-  fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
+  await fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
 
   expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'groceries', true);
   expect(fns.fileCharges).not.toHaveBeenCalled();
@@ -105,7 +106,7 @@ it('says nothing matches and offers no "+ file" button when matched is 0', async
 
   expect(screen.getByText('No past charges match')).toBeTruthy();
   expect(screen.queryByTestId('add-rule-confirm-file')).toBeNull();
-  fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
+  await fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('ZZZNOPE', 'groceries', false);
 });
 
@@ -138,11 +139,8 @@ it('double-tapping "Add rule only" calls saveManualRule exactly once', async () 
   fns.saveManualRule.mockReturnValue(new Promise(() => {})); // never resolves → latch stays held
   await mountConfirm('COLES', 'groceries');
 
-  await act(async () => {
-    const btn = screen.getByTestId('add-rule-confirm-rule-only');
-    fireEvent.press(btn);
-    fireEvent.press(btn); // same frame
-  });
+  const btn = screen.getByTestId('add-rule-confirm-rule-only');
+  await startTaps(btn, btn); // same frame
   expect(fns.saveManualRule).toHaveBeenCalledTimes(1);
 });
 
@@ -153,7 +151,7 @@ it('[A30] "Back" returns to the add-rule form', async () => {
   fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   await mountConfirm('COLES', 'groceries');
 
-  fireEvent.press(screen.getByTestId('add-rule-confirm-back'));
+  await fireEvent.press(screen.getByTestId('add-rule-confirm-back'));
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addrule' });
   expect(fns.setSheet).not.toHaveBeenCalledWith(null);
 });
@@ -170,7 +168,7 @@ it('[A31] shows the preview-failed card and retries into a fresh preview', async
   expect(screen.getByText("Couldn't check this rule")).toBeTruthy();
   expect(screen.queryByTestId('add-rule-confirm-file')).toBeNull();
 
-  await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-retry')); });
+  await startTaps(screen.getByTestId('add-rule-confirm-retry'));
   expect(fns.previewFiling).toHaveBeenCalledTimes(2);
   expect(screen.getByTestId('add-rule-confirm-file')).toBeTruthy();
 });
@@ -183,7 +181,7 @@ it('[A32] shows the "Couldn\'t finish" card when the write fails non-clash', asy
   fns.fileCharges.mockResolvedValue({ status: 'failed', background: false });
   await mountConfirm();
 
-  await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
+  await startTaps(screen.getByTestId('add-rule-confirm-file'));
   expect(screen.getByText("Couldn't finish")).toBeTruthy();
   expect(screen.queryByText('You already have a rule for this')).toBeNull();
   expect(fns.setSheet).not.toHaveBeenCalledWith(null);
@@ -197,7 +195,7 @@ it('[A33] shows the clash card when the write reports a 409 clash', async () => 
   fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: false });
   await mountConfirm();
 
-  await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
+  await startTaps(screen.getByTestId('add-rule-confirm-file'));
   expect(screen.getByText('You already have a rule for this')).toBeTruthy();
   expect(screen.queryByText("Couldn't finish")).toBeNull();
 });
@@ -211,9 +209,9 @@ it('[A34] dismissed mid-write: success toasts but does not setSheet(null)', asyn
   fns.fileCharges.mockReturnValue(pending.promise);
   const { rerender } = await mountConfirm();
 
-  await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
+  await startTaps(screen.getByTestId('add-rule-confirm-file'));
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
-  await act(async () => { rerender(overlaysTree()); });
+  await act(async () => { await rerender(overlaysTree()); });
 
   await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 
@@ -232,9 +230,9 @@ it.each([
   fns.fileCharges.mockReturnValue(pending.promise);
   const { rerender } = await mountConfirm('COLES', 'groceries');
 
-  await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
+  await startTaps(screen.getByTestId('add-rule-confirm-file'));
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
-  await act(async () => { rerender(overlaysTree()); });
+  await act(async () => { await rerender(overlaysTree()); });
   expect(fns.showToast).not.toHaveBeenCalled();
 
   await act(async () => { pending.resolve(outcome); });
@@ -251,14 +249,12 @@ it('[A39] double-tapping the file button fires fileNewRule exactly once', async 
   fns.fileCharges.mockReturnValue(pending.promise);
   await mountConfirm();
 
-  await act(async () => {
-    const btn = screen.getByTestId('add-rule-confirm-file');
-    fireEvent.press(btn);
-    fireEvent.press(btn); // same frame, before the disabled state / phase flip lands
-  });
+  const btn = screen.getByTestId('add-rule-confirm-file');
+  const taps = await startTaps(btn, btn); // same frame, before the disabled state / phase flip lands
   expect(fns.fileCharges).toHaveBeenCalledTimes(1);
 
   await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+  await taps.settled;
 });
 
 // [A41] "File" and "rule only" share ONE commit latch (the shell's runGuarded). A same-frame double-
@@ -271,14 +267,15 @@ it('[A41] a cross-action double-tap (file then rule-only) fires exactly one writ
   fns.fileCharges.mockReturnValue(pending.promise); // holds the shared latch
   await mountConfirm();
 
-  await act(async () => {
-    fireEvent.press(screen.getByTestId('add-rule-confirm-file'));
-    fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only')); // same frame — latch held
-  });
+  const taps = await startTaps(
+    screen.getByTestId('add-rule-confirm-file'),
+    screen.getByTestId('add-rule-confirm-rule-only'), // same frame — latch held
+  );
   expect(fns.fileCharges).toHaveBeenCalledTimes(1);
   expect(fns.saveManualRule).toHaveBeenCalledTimes(0);
 
   await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+  await taps.settled;
 });
 
 // [A6] add-rule confirm for a category the server no longer has: nothing drawn, nothing previewed.

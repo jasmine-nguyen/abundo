@@ -59,7 +59,7 @@ const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalid
 async function startDelete(result: { current: ReturnType<typeof useAppContext> }) {
   const held = server.hold('/categories/dining');
   let pending!: Promise<boolean>;
-  act(() => { pending = result.current.deleteCategory('dining'); });
+  await act(() => { pending = result.current.deleteCategory('dining'); });
   const request = {
     resolve: () => held.release(),
     reject: (reply: Parameters<typeof server.once>[2]) => held.fail('DELETE', reply),
@@ -76,7 +76,7 @@ afterEach(() => { queryClient.clear(); });
 // [A1]
 it('unfiles the charge in every copy — main copies, every budget list, every cycle of the drill-in — before the server replies', async () => {
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   const { request, pending } = await startDelete(result);
 
   expect(categoryOf(feedRows(['transactions']))).toEqual({ t1: null, t2: 'groceries', t3: null });
@@ -96,7 +96,7 @@ it('unfiles the charge in every copy — main copies, every budget list, every c
 // [A2]
 it('a failed delete puts back exactly what it changed: only Dining charges return to Dining, every budget cycle is restored', async () => {
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   const { request, pending } = await startDelete(result);
 
   let ok!: boolean;
@@ -124,10 +124,10 @@ it('a failed delete puts back exactly what it changed: only Dining charges retur
 // [A4]
 it('signing out mid-delete then failing re-seats nothing into the cleared cache and shows no toast', async () => {
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   const { request, pending } = await startDelete(result);
 
-  signOut();
+  await signOut();
   let ok!: boolean;
   await act(async () => { request.reject('dropped'); ok = await pending; });
 
@@ -141,10 +141,10 @@ it('signing out mid-delete then failing re-seats nothing into the cleared cache 
 // [A5]
 it('signing out mid-delete then succeeding returns false (no navigate-back), no toast, no refresh', async () => {
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   const { request, pending } = await startDelete(result);
 
-  signOut();
+  await signOut();
   // The next session loads its own charge lists before the old delete settles.
   queryClient.setQueryData(BUDGET_KEY, [tx('n1', { category: 'dining' })]);
   let ok!: boolean;
@@ -159,7 +159,7 @@ it('signing out mid-delete then succeeding returns false (no navigate-back), no 
 // [A7]
 it('a successful delete refreshes every cycle of the charge lists and the budgets, but never the feed', async () => {
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   const { request, pending } = await startDelete(result);
 
   let ok!: boolean;

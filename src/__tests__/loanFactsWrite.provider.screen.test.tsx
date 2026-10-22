@@ -28,14 +28,14 @@ afterEach(() => {
 
 // WHIT-192: seed the ['loanFacts'] cache the writer sources `prev` from (the provider no
 // longer eager-loads), then mount.
-function mount() {
+async function mount() {
   queryClient.setQueryData(['loanFacts'], EMPTY);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
 it('saveLoanFacts writes the cache + invalidates loanFacts', async () => {
-  const result = mount();
+  const result = await mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
   let ok: boolean | undefined;
@@ -50,7 +50,7 @@ it('saveLoanFacts writes the cache + invalidates loanFacts', async () => {
 
 it('rolls the cache back on a save failure', async () => {
   server.fail('/loanfacts', 500);
-  const result = mount();
+  const result = await mount();
 
   // The optimistic write reaches the cache MID-FLIGHT (before the reject), then the catch
   // rolls it back to the pre-save facts. The mid check keeps teeth: without the optimistic

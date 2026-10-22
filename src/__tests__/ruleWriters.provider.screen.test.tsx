@@ -38,7 +38,7 @@ afterEach(() => {
 it('saveManualRule creates the rule and swaps the temp id for the server id', async () => {
   server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
@@ -51,7 +51,7 @@ it('saveManualRule creates the rule and swaps the temp id for the server id', as
 it('saveManualRule rolls back the optimistic rule when the create fails', async () => {
   server.once('POST', '/rules', { status: 400 });
   seed();
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
@@ -61,7 +61,7 @@ it('saveManualRule rolls back the optimistic rule when the create fails', async 
 
 it('deleteRule removes the rule on success', async () => {
   seed([{ ...NETFLIX }]);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.deleteRule('e1'); });
 
@@ -74,7 +74,7 @@ it('updateRule edits in place and preserves the rule field/operator', async () =
   const catRule: Rule = { id: 'e1', pattern: 'FOOD_AND_DRINK', categoryId: 'eatingout', isNew: false, field: 'category', operator: 'equals' };
   server.once('PUT', '/rules/e1', { body: { id: 'e1', field: 'category', operator: 'equals', value: 'GROCERIES', categoryId: 'groceries' } });
   seed([catRule]);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.updateRule('e1', 'GROCERIES', 'groceries'); });
 
@@ -85,7 +85,7 @@ it('updateRule edits in place and preserves the rule field/operator', async () =
 it('updateRule rolls back to the original rule when the update fails', async () => {
   server.fail('/rules/e1', 500);
   seed([{ ...NETFLIX }]);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.updateRule('e1', 'SPOTIFY', 'subs'); });
 
@@ -96,7 +96,7 @@ it('updateRule rolls back to the original rule when the update fails', async () 
 it('deleteRule restores the rule at its position when the delete fails', async () => {
   server.fail('/rules/e1', 500);
   seed([{ ...NETFLIX }]);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.deleteRule('e1'); });
 
@@ -121,7 +121,7 @@ it.each([
 ])('$name', async ({ write, sent }) => {
   server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true } });
   seed([{ ...NETFLIX }]);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await write(result.current); });
 
@@ -133,7 +133,7 @@ it('a create while the Rules screen was never opened is a no-op on the (absent) 
   // No ['rules'] seed: the query was never mounted, so getQueryData is undefined.
   queryClient.setQueryData(['categories'], []);
   server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
@@ -148,7 +148,7 @@ it('a create while the Rules screen was never opened is a no-op on the (absent) 
 // FAIL-ON-REVERT: drop skipRules and 'rules' shows up in the invalidated keys.
 it('a successful text edit swaps the rule id in the cache and skipRules leaves it standing', async () => {
   seed([{ id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' }]);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
   server.once('PUT', '/rules/r1', { body: {
     id: 'coles-sydney', value: 'COLES SYDNEY', categoryId: 'groceries',
     field: 'description', operator: 'contains',
@@ -213,10 +213,10 @@ it.each([
 ])('$name', async ({ seeded, write, method, path, row, body }) => {
   seed(seeded as Rule[]);
   const held = server.hold(path);
-  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { result } = await renderHook(() => useAppContext(), { wrapper });
 
   let pending!: Promise<void>;
-  act(() => { pending = write(result.current); });
+  await act(() => { pending = write(result.current); });
   expect(rules()).toEqual([row]);
 
   await act(async () => { held.fail(method); await pending; });

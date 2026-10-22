@@ -47,32 +47,32 @@ beforeEach(() => {
 });
 
 it('tapping a leaf row drills into that category for the current cycle', async () => {
-  renderInsights();
+  await renderInsights();
   await screen.findByText('Food');
-  fireEvent.press(screen.getByText('Food'));            // expand the parent to reveal its subs
-  fireEvent.press(await screen.findByText('Coffee'));   // leaf
+  await fireEvent.press(screen.getByText('Food'));            // expand the parent to reveal its subs
+  await fireEvent.press(await screen.findByText('Coffee'));   // leaf
   expect(routerSpies.push).toHaveBeenCalledWith('/category/coffee?cycle=0');
 });
 
 it('tapping a "Directly in X" row drills into the PARENT id (no __direct in the path)', async () => {
-  renderInsights();
+  await renderInsights();
   await screen.findByText('Food');
-  fireEvent.press(screen.getByText('Food'));
-  fireEvent.press(await screen.findByText('Directly in Food'));
+  await fireEvent.press(screen.getByText('Food'));
+  await fireEvent.press(await screen.findByText('Directly in Food'));
   expect(routerSpies.push).toHaveBeenCalledWith('/category/food?cycle=0');
 });
 
 it('tapping a PARENT row expands it instead of navigating', async () => {
-  renderInsights();
-  fireEvent.press(await screen.findByText('Food'));
+  await renderInsights();
+  await fireEvent.press(await screen.findByText('Food'));
   expect(await screen.findByText('Coffee')).toBeTruthy(); // subs revealed
   expect(routerSpies.push).not.toHaveBeenCalled();                // no drill
 });
 
 it('carries the selected cycle: on "Last cycle" the drill pushes cycle=1', async () => {
-  renderInsights();
+  await renderInsights();
   await screen.findByText('Uncategorised');
-  fireEvent.press(screen.getByTestId('insights-cycle-prev')); // switch to last cycle
-  fireEvent.press(await screen.findByText('Uncategorised'));
+  await fireEvent.press(screen.getByTestId('insights-cycle-prev')); // switch to last cycle
+  await fireEvent.press(await screen.findByText('Uncategorised'));
   expect(routerSpies.push).toHaveBeenCalledWith('/category/__uncategorized__?cycle=1');
 });

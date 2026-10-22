@@ -141,7 +141,7 @@ export function BudgetBar({
   tickTail?: number;
 }) {
   return (
-    <View>
+    <View testID="budget-bar">
       <View style={[styles.track, { height, borderRadius: height * 0.6 }]}>
         <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${postedPct}%`, backgroundColor: postedColor, borderTopLeftRadius: height * 0.6, borderBottomLeftRadius: height * 0.6 }} />
         <View style={{ position: 'absolute', top: 0, bottom: 0, left: `${postedPct}%`, width: `${pendingPct}%`, backgroundColor: pendingTint }} />

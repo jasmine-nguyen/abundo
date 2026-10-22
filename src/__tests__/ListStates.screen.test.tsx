@@ -7,23 +7,24 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { ListStates, StaleDataLine } from '../components/ListStates';
 import { pinToday } from './support/clock';
+import { startTaps } from './support/tap';
 
 // ABU-82: the line reads setSheet from the app context once it has bank times to show.
 const mockSetSheet = jest.fn();
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ setSheet: mockSetSheet })));
 
-it('renders the spinner (only) with the prefixed testID when loading', () => {
-  render(<ListStates showSpinner showError={false} idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="Retry loading your accounts" onRetry={jest.fn()} />);
+it('renders the spinner (only) with the prefixed testID when loading', async () => {
+  await render(<ListStates showSpinner showError={false} idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="Retry loading your accounts" onRetry={jest.fn()} />);
   expect(screen.getByTestId('accounts-loading')).toBeTruthy();
   expect(screen.queryByTestId('accounts-error')).toBeNull();
 });
 
-it('renders the error + retry with the prefixed testIDs and copy, and Retry fires onRetry', () => {
+it('renders the error + retry with the prefixed testIDs and copy, and Retry fires onRetry', async () => {
   const onRetry = jest.fn();
-  render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="Retry loading your accounts" onRetry={onRetry} />);
+  await render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="Retry loading your accounts" onRetry={onRetry} />);
   expect(screen.getByTestId('accounts-error')).toBeTruthy();
   expect(screen.getByText("Couldn't load your accounts.")).toBeTruthy();
-  fireEvent.press(screen.getByTestId('accounts-retry'));
+  await fireEvent.press(screen.getByTestId('accounts-retry'));
   expect(onRetry).toHaveBeenCalledTimes(1);
 });
 
@@ -31,24 +32,25 @@ it('renders the error + retry with the prefixed testIDs and copy, and Retry fire
 it('shows a spinner on Retry and ignores taps until the retry settles', async () => {
   let settle = () => {};
   const onRetry = jest.fn(() => new Promise<void>((resolve) => { settle = resolve; }));
-  render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="x" retryLabel="y" onRetry={onRetry} />);
-  fireEvent.press(screen.getByTestId('accounts-retry'));
+  await render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="x" retryLabel="y" onRetry={onRetry} />);
+  const first = await startTaps(screen.getByTestId('accounts-retry'));
   expect(screen.getByTestId('accounts-retry-busy')).toBeTruthy();
-  fireEvent.press(screen.getByTestId('accounts-retry'));
+  const second = await startTaps(screen.getByTestId('accounts-retry'));
   expect(onRetry).toHaveBeenCalledTimes(1);
   await act(async () => { settle(); });
+  await Promise.all([first.settled, second.settled]);
   expect(screen.queryByTestId('accounts-retry-busy')).toBeNull();
   expect(screen.getByText('Retry')).toBeTruthy();
 });
 
-it('renders nothing when neither state is active', () => {
-  render(<ListStates showSpinner={false} showError={false} idPrefix="accounts" errorText="x" retryLabel="y" onRetry={jest.fn()} />);
+it('renders nothing when neither state is active', async () => {
+  await render(<ListStates showSpinner={false} showError={false} idPrefix="accounts" errorText="x" retryLabel="y" onRetry={jest.fn()} />);
   expect(screen.queryByTestId('accounts-loading')).toBeNull();
   expect(screen.queryByTestId('accounts-error')).toBeNull();
 });
 
-it('with an error, adds the reason line under the error copy', () => {
-  render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="y" onRetry={jest.fn()} error={new TypeError('Network request failed')} />);
+it('with an error, adds the reason line under the error copy', async () => {
+  await render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="y" onRetry={jest.fn()} error={new TypeError('Network request failed')} />);
   expect(screen.getByText("Couldn't load your accounts.")).toBeTruthy();
   expect(screen.getByText('You look offline. Check your connection and retry.')).toBeTruthy();
 });
@@ -62,20 +64,20 @@ describe('StaleDataLine (WHIT-713)', () => {
 
   const loadedAt = new Date('2026-09-18T09:40:00+10:00').getTime();
 
-  it('renders nothing when nothing has loaded yet', () => {
-    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={0} />);
+  it('renders nothing when nothing has loaded yet', async () => {
+    await render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={0} />);
     expect(screen.queryByTestId('budgets-stale')).toBeNull();
   });
 
   // WHIT-844: the opt-in success version.
-  it('with showUpdated, says when a good load happened', () => {
-    render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={loadedAt} showUpdated />);
+  it('with showUpdated, says when a good load happened', async () => {
+    await render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={loadedAt} showUpdated />);
     expect(screen.getByTestId('budgets-updated')).toHaveTextContent('Updated 9:40am');
     expect(screen.queryByTestId('budgets-stale')).toBeNull();
   });
 
-  it('with showUpdated, a failed refresh still shows only the stale line', () => {
-    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated />);
+  it('with showUpdated, a failed refresh still shows only the stale line', async () => {
+    await render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated />);
     expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am");
     expect(screen.queryByTestId('budgets-updated')).toBeNull();
   });
@@ -95,24 +97,24 @@ describe('StaleDataLine (WHIT-713)', () => {
     [null, [{ ...fresh, at: Date.parse('2026-09-17T15:00:00+10:00') - 1 }], 'budgets-updated', 'Updated 9:40am · ● 1 account behind ›'],
     // [A2] the offline lead keeps the compact bank part.
     [new TypeError('Network request failed'), [old('westpac')], 'budgets-stale', 'You look offline · showing 9:40am · ● 1 account behind ›'],
-  ])('with bankSynced, error %p and %j → %s reads %s', (error, bankSynced, testId, text) => {
-    render(<StaleDataLine idPrefix="budgets" error={error} updatedAt={loadedAt} showUpdated bankSynced={bankSynced} />);
+  ])('with bankSynced, error %p and %j → %s reads %s', async (error, bankSynced, testId, text) => {
+    await render(<StaleDataLine idPrefix="budgets" error={error} updatedAt={loadedAt} showUpdated bankSynced={bankSynced} />);
     expect(screen.getByTestId(testId)).toHaveTextContent(text, { exact: true });
     if (bankSynced.length === 0) expect(screen.queryByTestId('budgets-bank-sync')).toBeNull();
   });
 
   // [A3] the error line is a button too: a press opens the bankSync sheet with the accounts given.
-  it('pressing the stale line with bank times opens the bank sync sheet with those accounts', () => {
+  it('pressing the stale line with bank times opens the bank sync sheet with those accounts', async () => {
     const accounts = [old('anz'), fresh];
-    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated bankSynced={accounts} />);
+    await render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated bankSynced={accounts} />);
     const button = screen.getByTestId('budgets-bank-sync');
     expect(button.props.accessibilityLabel).toContain('1 account behind');
-    fireEvent.press(button);
+    await fireEvent.press(button);
     expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'bankSync', accounts });
   });
 
-  it('with showUpdated, renders nothing when nothing has loaded yet', () => {
-    render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={0} showUpdated />);
+  it('with showUpdated, renders nothing when nothing has loaded yet', async () => {
+    await render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={0} showUpdated />);
     expect(screen.queryByTestId('budgets-updated')).toBeNull();
   });
 });

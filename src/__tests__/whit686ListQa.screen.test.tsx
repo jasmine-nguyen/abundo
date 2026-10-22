@@ -4,7 +4,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
+import { pullControl } from './support/pull';
 
 jest.mock('../context', () =>
   require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), openMultiPicker: jest.fn(), showToast: jest.fn() })),
@@ -38,7 +38,7 @@ const row = (id: string, amount: number, category: string | null = 'groceries') 
 // the All feed and a cursor read is told apart from a first-page read.
 const gets = (path: string) => server.sentUnder('GET', path).filter((request) => request.path === path).length;
 const cursorGets = (path: string) => server.sentUnder('GET', `${path}?cursor=`).length;
-const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
+const refreshControl = () => pullControl();
 const pull = () => act(async () => { refreshControl().props.onRefresh(); });
 
 beforeEach(() => {
@@ -52,12 +52,12 @@ it('[A1] Uncategorized tab, empty + feed error: inline Retry re-reads the UNCATE
   server.fail(UNCATEGORIZED_FEED, 500);
   server.seed(COUNT, { count: 3 });
   await renderWithQueries(<Transactions />);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByTestId('transactions-error', {}, { timeout: 10000 })).toBeTruthy();
   expect(screen.queryByText('−\u2060$42.00')).toBeNull(); // the All tab's row never leaks onto this tab
   const uncategorizedBefore = gets(UNCATEGORIZED_FEED);
   const allBefore = gets(FEED);
-  fireEvent.press(screen.getByTestId('transactions-retry'));
+  await fireEvent.press(screen.getByTestId('transactions-retry'));
   await waitFor(() => expect(gets(UNCATEGORIZED_FEED)).toBeGreaterThan(uncategorizedBefore));
   expect(gets(FEED)).toBe(allBefore);
 });
@@ -67,7 +67,7 @@ it('[A2] a pull on the Uncategorized tab re-reads the uncategorized feed and lea
   seedFeedPage(server, UNCATEGORIZED_FEED, [row('u1', -9, null)]);
   server.seed(COUNT, { count: 1 });
   await renderWithQueries(<Transactions />);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText('−\u2060$9.00')).toBeTruthy();
   await settle();
   const before = { uncategorized: gets(UNCATEGORIZED_FEED), all: gets(FEED) };
@@ -83,7 +83,7 @@ it('[A3] a pull after Load More snaps the list back to the newest page (older ro
   seedFeedPage(server, FEED, [row('t1', -42)], 'c1');
   await renderWithQueries(<Transactions />);
   server.once('GET', FEED, { body: { transactions: [row('t2', -7)], nextCursor: null } });
-  fireEvent.press(screen.getByTestId('transactions-load-more'));
+  await fireEvent.press(screen.getByTestId('transactions-load-more'));
   expect(await screen.findByText('−\u2060$7.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull();
 
@@ -100,7 +100,7 @@ it('[A6] Uncategorized tab: a failed background refresh over loaded rows keeps t
   seedFeedPage(server, UNCATEGORIZED_FEED, [row('u1', -9, null)]);
   server.seed(COUNT, { count: 1 });
   await renderWithQueries(<Transactions />);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await fireEvent.press(screen.getByTestId('tab-uncategorized'));
   expect(await screen.findByText('−\u2060$9.00')).toBeTruthy();
   await settle();
   server.fail(UNCATEGORIZED_FEED, 500);

@@ -11,7 +11,7 @@ import { registerDevice } from './api';
 // module at launch (app/_layout.tsx) runs it. Skipped on web, where the native
 // handler has no meaning — mirrors registerForPushNotificationsAsync's web bail.
 //
-// NB the four booleans are the current expo-notifications@56 NotificationBehavior
+// NB the four booleans are the current expo-notifications@58 NotificationBehavior
 // shape (shouldShowBanner/shouldShowList replaced the deprecated shouldShowAlert).
 if (Platform.OS !== 'web') {
   try {

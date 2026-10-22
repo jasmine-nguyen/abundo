@@ -25,13 +25,13 @@ describe('WHIT-544 — a pending Uncategorized-select intent is dropped on sign-
   // the freshly-signed-in user is dumped into selection mode for no reason.
   // GENUINE FAIL-ON-REVERT: remove `setPendingUncategorizedSelect(false)` from the anon branch of the
   // auth subscription and the flag stays true across the session boundary → this reddens.
-  it('resets pendingUncategorizedSelect to false when the session ends', () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
+  it('resets pendingUncategorizedSelect to false when the session ends', async () => {
+    const { result } = await renderHook(() => useAppContext(), { wrapper });
 
-    act(() => { result.current.requestUncategorizedSelect(); });
+    await act(() => { result.current.requestUncategorizedSelect(); });
     expect(result.current.pendingUncategorizedSelect).toBe(true); // armed
 
-    signOut();
+    await signOut();
 
     expect(result.current.pendingUncategorizedSelect).toBe(false); // dropped, not carried forward
   });

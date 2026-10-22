@@ -67,7 +67,7 @@ it('labels the total "Earned" for an Income-bucket category', async () => {
 // `&& categoriesReady` from hasCache lets the detail render here.
 it('waits for the category taxonomy before rendering the detail (spinner, not a cold "$0")', async () => {
   const held = server.hold('/categories');
-  render(<WithQueries><CategoryDetail /></WithQueries>);
+  await render(<WithQueries><CategoryDetail /></WithQueries>);
   await waitFor(() => expect(queryClient.isFetching()).toBe(1)); // rows in, categories in flight
   expect(screen.getByTestId('category-loading')).toBeTruthy();
   expect(screen.queryByTestId('category-total')).toBeNull();
@@ -186,7 +186,7 @@ it('Retry after a failed first read shows the detail once the server answers', a
   expect(screen.getByTestId('category-error')).toBeTruthy();
   expect(screen.getByTestId('category-retry').props.accessibilityLabel).toBe('Retry loading this category');
 
-  fireEvent.press(screen.getByTestId('category-retry'));
+  await fireEvent.press(screen.getByTestId('category-retry'));
   await waitFor(() => expect(screen.getByTestId('category-total')).toBeTruthy());
   expect(screen.queryByTestId('category-error')).toBeNull();
   expect(screen.getByText('$8.50')).toBeTruthy();
@@ -199,7 +199,7 @@ it('Retry after the category list failed shows the detail once the list loads', 
   expect(screen.getByTestId('category-error')).toBeTruthy();
   expect(screen.queryByTestId('category-total')).toBeNull(); // WHIT-374: no cold "$0" total card
 
-  fireEvent.press(screen.getByTestId('category-retry'));
+  await fireEvent.press(screen.getByTestId('category-retry'));
   await waitFor(() => expect(screen.getByTestId('category-total')).toBeTruthy());
   expect(screen.getAllByText('Cafes & Coffee').length).toBeGreaterThan(0);
 });
@@ -213,7 +213,7 @@ it('switching to last cycle re-reads ?cycle=1 and shows that cycle\'s total, not
 
   server.once('GET', COFFEE_ROWS, { status: 200, body: [{ ...ROW, transaction_id: 't9', amount: -42 }] });
   setParams({ id: 'coffee', cycle: '1' });
-  view.rerender(<WithQueries><CategoryDetail /></WithQueries>);
+  await view.rerender(<WithQueries><CategoryDetail /></WithQueries>);
   await waitFor(() => expect(screen.getByText('$42')).toBeTruthy());
   expect(server.sent('GET', `${COFFEE_ROWS}?cycle=1`)).toHaveLength(1);
   expect(screen.getByText('Spent last cycle')).toBeTruthy();

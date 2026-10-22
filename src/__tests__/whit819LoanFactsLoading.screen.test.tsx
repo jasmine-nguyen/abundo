@@ -40,7 +40,7 @@ beforeEach(() => {
 it('Loan form: does not open blank while saved facts are still loading', async () => {
   server.seed('/loanfacts', SAVED);
   const held = server.hold('/loanfacts');
-  drawHeld(<Loan />);
+  await drawHeld(<Loan />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Save loan details')).toBeNull();
   expect(screen.queryByPlaceholderText(LOAN_FORM_PLACEHOLDERS.orig)).toBeNull();
@@ -59,7 +59,7 @@ it('Loan form: a failed facts read shows Retry, not an empty form', async () => 
 it('Home loan: no "set up" copy while saved facts are still loading', async () => {
   seedGoal(server);
   const held = server.hold('/loanfacts');
-  drawHeld(<Mortgage />);
+  await drawHeld(<Mortgage />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Set up loan details →')).toBeNull();
   expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
@@ -111,7 +111,7 @@ it('Home loan: a failed refetch over cached facts shows neither the facts error 
 it('Loan form: a background refetch keeps in-progress edits', async () => {
   server.seed('/loanfacts', SAVED);
   await renderLoaded(<Loan />);
-  fireEvent.changeText(screen.getByDisplayValue('600000'), '612345');
+  await fireEvent.changeText(screen.getByDisplayValue('600000'), '612345');
   server.seed('/loanfacts', { ...SAVED, original: 500000 });
   await refreshInAct(() => queryClient.refetchQueries({ queryKey: loanFactsKey }));
   expect(queryClient.getQueryData<LoanFacts>(loanFactsKey)?.original).toBe(500000);
