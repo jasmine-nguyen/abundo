@@ -87,13 +87,14 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   });
 
   it('shows "…" (not "0") while first-loading, then the real count', async () => {
-    const heldCats = server.hold(CATEGORIES);
+    // Hold all three reads: v14's awaited render can let an unheld one land before the check.
+    const held = [server.hold(CATEGORIES), server.hold(LOAN_FACTS), server.hold(RULES)];
     await renderSettings();
     // All three query-backed rows — categories count, loan status, AND the Automation-rules
     // count (WHIT-198) — show "…" while first-loading; none flashes a misleading "0".
     expect(screen.getAllByText('…').length).toBe(3);
     expect(screen.queryByText('0')).toBeNull(); // fail-on-revert for the rules-row "0" flash
-    await act(async () => { heldCats.release(); });
+    await act(async () => { held.forEach((h) => h.release()); });
     expect(await screen.findByText('3')).toBeTruthy();
   });
 
