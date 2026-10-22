@@ -17,48 +17,10 @@ Write every PR description with `.github/pull_request_template.md`: Problem, Tas
 Solution, Evidence and Merge danger, plus Manual checks and Follow-ups when there
 are any. This applies to every agent, including when using the `pr` skill.
 
-# Jargon → say instead
-
-Swap these on sight, in chat AND Linear writes. If you must keep the term, follow
-it with the plain version in parentheses. Not exhaustive — gloss ANY technical term
-that isn't here.
-
-| Jargon                     | Say instead                                                                |
-| -------------------------- | -------------------------------------------------------------------------- |
-| idempotent                 | safe to run twice — doing it again changes nothing                         |
-| optimistic update          | the screen updates instantly, before the server confirms                   |
-| hydrate                    | fill the screen with its saved data when it loads                          |
-| memoize / memoized         | remember a result so it isn't recalculated every redraw                    |
-| re-render                  | the screen redraws itself                                                  |
-| selector                   | a function that reads one value out of the app's data                      |
-| mapper                     | code that converts data from one shape to another                          |
-| stale closure              | old data captured earlier that never updated                               |
-| debounce                   | wait until you stop typing/tapping before acting                           |
-| hero                       | the big headline element at the top of a screen                            |
-| state                      | the app's current in-memory data                                           |
-| webhook                    | the bank's server pings ours when something changes                        |
-| Lambda                     | a small piece of server code that runs on demand (AWS)                     |
-| handler                    | the entry-point function a Lambda runs                                     |
-| repository / repo layer    | the code that reads and writes the database                                |
-| shared layer               | common code bundled into every server function                             |
-| schema                     | the shape the data must follow                                             |
-| migration                  | a one-time change to the database's structure                              |
-| 4xx / 5xx                  | error responses (4xx = the request was wrong; 5xx = our server broke)      |
-| race condition             | two things happen at once and the order decides the result                 |
-| idempotency key            | a tag that stops the same action running twice                             |
-| coverage floor / ratchet   | the minimum share of code the tests must touch                             |
-| fail-on-revert             | a test that breaks if you undo the fix — proves it really checks something |
-| blast radius               | how much other code a change could affect                                  |
-| regression                 | an old, working feature a change accidentally breaks                       |
-| happy path                 | the normal case where nothing goes wrong                                   |
-| edge case                  | an unusual input or situation (empty, zero, huge, offline)                 |
-| optimistic vs server state | what the screen shows now vs what the server has actually saved            |
-
 # Presenting a decision
 
 When you surface a choice for Jasmine (an escalation, an open question, a decision
-the plan didn't settle), use this structure — the jargon list above still
-applies:
+the plan didn't settle), use this structure:
 
 - **Problem** — one or two lines: what's undecided and why it matters.
 - **Options** — each with its pros and cons. Name the **recommended** one and why.
@@ -154,6 +116,12 @@ Check these before changing the touched area:
   puts a fixed "here's the summary" user turn in front of a history that starts with an answer.
   Any trim or filter of the history (client `chatHistory`, server `_validate_chat_messages`) must
   never leave an answer at the front.
+- **Screen tests are deterministic, never timing-dependent** (ABU-114) — `jest.setup.js` makes
+  React Query hand results to the screen at once (`notifyManager.setScheduler`), so every run,
+  local or CI, behaves the same. A test that checks a loading state holds that read
+  (`server.hold(...)`) and releases it after the check. A test that is green locally and red on CI
+  has a shared timing cause: find it, fix it once in the shared setup, and prove the fix by making
+  the old test fail locally on every run before pushing.
 
 ## Coding standards
 
