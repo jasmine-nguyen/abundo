@@ -1,6 +1,6 @@
-// Xcode 27.1 refuses pod targets below iOS 15, and the react-native-svg and async-storage resource
-// bundles still declare 12.4 / 13.0. Raise any pod below the app's own minimum up to it.
-// shortcut: blanket raise; drop this plugin once both libraries ship iOS 15+ targets.
+// Xcode 27.1 refuses pod targets below iOS 15, and async-storage 3.1.1's podspec still declares
+// iOS 13.0. Raise any pod below the app's own minimum up to it.
+// shortcut: blanket raise; drop this plugin once async-storage ships an iOS 15+ podspec.
 const fs = require('fs');
 const path = require('path');
 const { withDangerousMod } = require('expo/config-plugins');

@@ -1,6 +1,6 @@
-# Expo v56
+# Expo v58
 
-The app runs Expo v56, which is newer than most training data. Before writing app code that uses an Expo or React Native API, check that API in the versioned docs: https://docs.expo.dev/versions/v56.0.0/
+The app runs Expo v58, which is newer than most training data. Before writing app code that uses an Expo or React Native API, check that API in the versioned docs: https://docs.expo.dev/versions/v58.0.0/
 
 # Code changes go through /build
 
@@ -83,7 +83,7 @@ Default card label: `Improvement`
 
 ## Stack
 
-- **Client:** React Native (Expo v56), TypeScript
+- **Client:** React Native (Expo v58), TypeScript
 - **Server:** Python Lambdas on AWS, shared layer staged recursively from `shared/`
 - **Tests:** Jest (client — `npm test` for fast logic, `npm run test:all` for full),
   pytest (server — `python -m pytest`)

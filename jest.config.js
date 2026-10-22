@@ -60,7 +60,7 @@ module.exports = {
     },
     {
       displayName: "screen",
-      preset: "react-native",
+      preset: "@react-native/jest-preset",
       testMatch: ["<rootDir>/src/**/*.screen.test.{ts,tsx}"],
       setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
       transformIgnorePatterns: RN_TRANSFORM_IGNORE,

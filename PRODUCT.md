@@ -40,7 +40,7 @@ Success means the number on screen is right *now*, and paying down the mortgage 
 - Auto-categorisation rules by merchant. Notes, tags and "Not in budget" exclusion on transactions.
 - Insights: per-cycle category breakdown with a tappable donut chart, this cycle vs last cycle, and an optional AI spending coach (Claude) that receives only category totals, and only on tap.
 - Security: Cognito sign-in, a biometric lock (Face ID), and tokens kept in the secure store.
-- Stack: Expo v56 / React Native / TypeScript, expo-router, React Query, react-native-svg charts and a shared token theme (`src/theme.ts`). The backend is Python Lambdas on AWS.
+- Stack: Expo v58 / React Native / TypeScript, expo-router, React Query, react-native-svg charts and a shared token theme (`src/theme.ts`). The backend is Python Lambdas on AWS.
 - **Australian context:** AUD, Australian banks, LVR, fortnightly pay is common. Use Australian spelling and terms (categorise, cheque, etc.).
 
 ## Brand Commitments

@@ -20,6 +20,9 @@
     ],
     "name": "Abundo",
     "slug": "abundo",
+    "web": {
+      "output": "single"
+    },
     "ios": {
       "bundleIdentifier": "com.jasminenguyen.abundo",
       "icon": "./assets/abundo-icon-ios.png",
