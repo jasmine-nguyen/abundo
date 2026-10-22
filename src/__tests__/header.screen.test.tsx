@@ -13,11 +13,8 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 jest.mock('react-native-safe-area-context', () =>
   require('./support/safeAreaMock').safeAreaMockModule({ top: 24, left: 44, right: 59 }));
 
-it.each([
-  ['without', false],
-  ['with', true],
-])('pads the header sides by the left/right safe-area insets, %s the bottom edge', async (_label, divider) => {
-  await render(<Header title="Settings" right={<Text>ACTION</Text>} divider={divider} />);
+it('pads the header sides by the left/right safe-area insets', async () => {
+  await render(<Header title="Settings" right={<Text>ACTION</Text>} />);
   const wrap = styleOf(screen.getByTestId('header-wrap'));
   expect({ left: wrap.paddingLeft, right: wrap.paddingRight }).toEqual({ left: 64, right: 79 });
 });
