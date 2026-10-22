@@ -15,6 +15,11 @@ jest.setTimeout(15000);
 // hang still fails.
 require('@testing-library/react-native').configure({ asyncUtilTimeout: 5000 });
 
+// ABU-114: React Query hands results to the screen on a 0ms timer by default, so whether a reply
+// lands inside RNTL 14's awaited render depended on machine speed (flaky on CI). Hand them over
+// at once instead, so every run behaves the same: a test that needs a loading state holds its read.
+require('@tanstack/react-query').notifyManager.setScheduler((callback) => callback());
+
 // The date picker is a native view; render a lightweight stand-in that still fires
 // onChange, so the pay-cycle sheet can be tested headlessly. Every tap picks a fixed past date.
 jest.mock('@react-native-community/datetimepicker', () =>
