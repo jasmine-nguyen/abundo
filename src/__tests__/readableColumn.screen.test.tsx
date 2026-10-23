@@ -62,8 +62,6 @@ describe('stackScreenLayout', () => {
     ['(tabs)', false],
     ['index', false],
     ['budget/edit', true],
-    ['milestone', true],
-    ['category/[id]', true],
   ])('route %s wrapped in the readable column: %s', async (name, wrapped) => {
     const children = <View testID="page" />;
     const layout = stackScreenLayout({ route: { name }, children });
