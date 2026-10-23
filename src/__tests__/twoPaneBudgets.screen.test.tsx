@@ -6,12 +6,13 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct, settle, releaseAndSettle } from './support/renderWithQueries';
 import { renderWithApp, redrawWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
-import { seedBudgets } from './support/budgetsTab';
+import { seedBudgets, BUDGETS } from './support/budgetsTab';
+import { COFFEE, GROCERIES } from './support/categories';
 import { queryClient } from '../queryClient';
 import { budgetsKey } from '../queryKeys';
 
@@ -105,4 +106,60 @@ it('narrow screen: tapping a budget opens its detail page, as today', async () =
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
   expect(detailShown()).toBe(false);
   expect(emptyShown()).toBe(false);
+});
+
+describe('wide screen, two budgets', () => {
+  const alerts = spyOnAlert();
+  const selected = (id: string) => screen.getByTestId(`budget-row-${id}`).props.accessibilityState.selected;
+
+  beforeEach(() => {
+    seedBudgets(server, { budgets: { ...BUDGETS, groceries: { target: 300, posted: 120, pending: 0 } }, categories: [COFFEE, GROCERIES] });
+    server.seed('/budgets/groceries/transactions', []);
+  });
+
+  // [A1]
+  it('tapping another budget moves the pane and the highlight to it', async () => {
+    await drawAndOpen();
+    await fireEvent.press(screen.getByTestId('budget-row-groceries'));
+
+    await waitFor(() => expect(screen.getAllByText('Groceries')).toHaveLength(2));
+    expect([selected('coffee'), selected('groceries')]).toEqual([false, true]);
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  // [A2]
+  it('a failed delete keeps the budget open in the pane so the user can retry', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    const held = server.hold('/budgets/coffee');
+
+    await fireEvent.press(screen.getByTestId('budget-delete'));
+    await refreshInAct(() => { void pressAlertButton(alerts, 'Delete'); });
+    expect(emptyShown()).toBe(false);
+    await refreshInAct(() => held.fail('DELETE', { status: 500 }));
+    await settle();
+
+    await waitFor(() => expect(detailShown()).toBe(true));
+    expect(emptyShown()).toBe(false);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A3]
+  it('opening another budget while a delete is in flight shows that budget ready, and its pane stays open', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    const held = server.hold('/budgets/coffee');
+
+    await fireEvent.press(screen.getByTestId('budget-delete'));
+    await refreshInAct(() => { void pressAlertButton(alerts, 'Delete'); });
+    await fireEvent.press(screen.getByTestId('budget-row-groceries'));
+    await waitFor(() => expect(detailShown()).toBe(true));
+    expect(screen.queryByText('Removing…')).toBeNull();
+
+    await releaseAndSettle(held);
+
+    expect(selected('groceries')).toBe(true);
+    expect(detailShown()).toBe(true);
+    expect(emptyShown()).toBe(false);
+  });
 });

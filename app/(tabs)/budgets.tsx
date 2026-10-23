@@ -215,10 +215,12 @@ export default function Budgets() {
     </ScrollChromeHeader>
   );
 
+  // Keyed so a newly opened budget never inherits the previous one's state (e.g. a delete in flight).
+  const paneId = pane.selected;
   return (
     <TwoPane
       list={list}
-      detail={pane.selected && <BudgetDetailView id={pane.selected} onClose={pane.close} />}
+      detail={paneId && <BudgetDetailView key={paneId} id={paneId} onClose={() => pane.close(paneId)} />}
       empty={<EmptyState icon={<Glyph name="navBudgets" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Select a budget" sub="Its details show here." />}
     />
   );

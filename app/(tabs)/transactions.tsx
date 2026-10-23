@@ -180,7 +180,8 @@ export default function Transactions() {
   ), []);
   // ABU-110: on a wide screen a row's detail opens in the pane beside the list.
   const pane = useOpenDetail(detailHref);
-  const paneId = pane.selected?.transaction_id;
+  const paneTransaction = pane.selected;
+  const paneId = paneTransaction?.transaction_id;
   const renderItem = useCallback(({ item }: { item: Transaction }) => (
     <TransactionRow
       t={item}
@@ -393,7 +394,7 @@ export default function Transactions() {
   return (
     <TwoPane
       list={list}
-      detail={paneId && <TransactionDetailView id={paneId} onClose={pane.close} />}
+      detail={paneTransaction && <TransactionDetailView key={paneTransaction.transaction_id} id={paneTransaction.transaction_id} onClose={() => pane.close(paneTransaction)} />}
       empty={<EmptyState icon={<Glyph name="search" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Select a transaction" sub="Its details show here." />}
     />
   );
