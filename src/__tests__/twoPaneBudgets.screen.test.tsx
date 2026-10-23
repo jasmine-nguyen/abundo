@@ -35,8 +35,6 @@ async function drawAndOpen() {
   return view;
 }
 
-const redraw = (view: Awaited<ReturnType<typeof renderWithApp>>) => redrawWithApp(view, <Budgets />);
-
 beforeEach(() => {
   mockWide = true;
   resetRouter();
@@ -93,7 +91,7 @@ describe('wide screen', () => {
     await waitFor(() => expect(detailShown()).toBe(true));
 
     mockWide = false;
-    await redraw(view);
+    await redrawWithApp(view, <Budgets />);
 
     expect(routerSpies.push.mock.calls.map(([href]) => href)).toEqual(['/budget/coffee']);
     expect(detailShown()).toBe(false);
