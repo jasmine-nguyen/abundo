@@ -58,6 +58,13 @@ it('shows an owed balance in bright neutral text with "owed", and the credit-car
   expect(screen.getByText('$8,172 available')).toBeTruthy(); // fmt() rounds
 });
 
+// [A3] ABU-111: only the wide-screen pane drops the back arrow; the full page keeps it.
+it('the full page keeps its back arrow', async () => {
+  server.seed('/accounts/balances', [bal()]);
+  await renderWithQueries(<AccountDetail />);
+  expect(screen.getByLabelText('Back')).toBeTruthy();
+});
+
 it('shows a positive balance in green and NO available line (spending account)', async () => {
   server.seed('/accounts/balances', [bal({ amount: 96270.59, available_balance: 96270.59, account_type: 'checking' })]);
   await renderWithQueries(<AccountDetail />);

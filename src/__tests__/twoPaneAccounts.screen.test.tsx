@@ -58,6 +58,36 @@ describe('wide screen', () => {
     expect(StyleSheet.flatten(paneScroll!.props.contentContainerStyle).paddingBottom).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
   });
 
+  // [A1]
+  it('before any tap the pane shows the "Select an account" prompt', async () => {
+    await renderWithApp(<Accounts />);
+    await screen.findByLabelText(/^ANZ, /);
+
+    expect(screen.getByText('Select an account')).toBeTruthy();
+    expect(detailShown()).toBe(false);
+  });
+
+  // [A2]
+  it('tapping another account switches the pane and moves the highlight to it', async () => {
+    seedFeedPage(server, FEED, [
+      txn({ transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' }),
+      txn({ transaction_id: 't2', account_id: 'a2', account_name: 'Westpac' }),
+    ]);
+    server.seed('/accounts/balances', [
+      accountBalance({ account_id: 'a1', amount: 1234.5 }),
+      accountBalance({ account_id: 'a2', amount: 77.25 }),
+    ]);
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    await fireEvent.press(screen.getByLabelText(/^Westpac, /));
+
+    await waitFor(() => expect(screen.getByTestId('account-balance')).toHaveTextContent(/77\.25/));
+    expect(card().props.accessibilityState).toEqual(expect.objectContaining({ selected: false }));
+    expect(screen.getByLabelText(/^Westpac, /).props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
   it.each([
     [true, ['/account/a1']],
     [false, []],
