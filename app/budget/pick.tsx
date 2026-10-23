@@ -6,11 +6,13 @@ import { Icon } from '../../src/icons';
 import { useBudgetsScreenData, useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 
 export default function BudgetPick() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   // WHIT-203: budgets + the pickable category list come from the cached query layer.
   const { budgets } = useBudgetsScreenData();
   const { categories } = useCategories();
@@ -24,7 +26,7 @@ export default function BudgetPick() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Add a budget" divider={edge.scrolled} />
-      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Kick things off by <Text style={{ color: C.accentSoft }}>picking a category to budget</Text></Text>
         <Text style={styles.sub}>These categories don't have a budget yet.</Text>
 

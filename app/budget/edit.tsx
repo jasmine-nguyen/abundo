@@ -11,6 +11,7 @@ import { Header } from '../../src/components/Header';
 import { SwitchRow } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 import { cleanAmount } from '../../src/numutil';
 
 export default function BudgetEdit() {
@@ -18,6 +19,7 @@ export default function BudgetEdit() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   const { categoryId } = useLocalSearchParams<{ categoryId: string; from?: string }>();
   // WHIT-203: the taxonomy + budgets + cycle name feed budgetEditInfo from the query layer.
   const { budgets, category, cycleName } = useBudgetsScreenData();
@@ -53,7 +55,7 @@ export default function BudgetEdit() {
     return (
       <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
         <Header title="Set budget" divider={edge.scrolled} />
-        <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+        <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
           {categoryRow}
           <Text style={styles.savingsNote}>Savings categories can't be budgeted — they track a goal, not a pay-cycle spend limit.</Text>
         </ScrollView>
@@ -90,7 +92,7 @@ export default function BudgetEdit() {
       <Header title={info.title} divider={edge.scrolled} />
       <ScrollView
         {...edge.scrollProps}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         // The keyboard opens over the Save button at the bottom — inset the scroll by the

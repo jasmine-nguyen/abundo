@@ -8,6 +8,7 @@ import { useGoalsScreenData } from '../../src/queries';
 import { checkpointProgress, type CheckpointProgressRow } from '../../src/checkpoints';
 import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 import { DetailStates } from '../../src/components/DetailStates';
 import { SectionLabel } from '../../src/components/ui';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -21,6 +22,7 @@ export default function GoalDetail() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   const d = useGoalsScreenData(); // same warm cache as the Goals tab
   const goal = d.goals.find((g) => g.id === id);
   // WHIT-72 pattern: a first-load pay-cycle failure would pace against the default cycle (wrong),
@@ -39,7 +41,7 @@ export default function GoalDetail() {
           </Pressable>
         )}
       />
-      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         <DetailStates
           isLoading={d.isLoading} isError={d.isError} hasCache={ready} idPrefix="goal-detail"
           errorText="Couldn't load this goal." retryLabel="Retry loading this goal" onRetry={d.refetch}

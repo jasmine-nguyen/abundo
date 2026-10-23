@@ -11,6 +11,7 @@ import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { syncBankTransactions } from '../../src/api';
 import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 import { Header } from '../../src/components/Header';
 import { DayHeading } from '../../src/components/DayHeading';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -31,6 +32,7 @@ import type { Transaction } from '../../src/types';
 export default function AccountDetail() {
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { transactions, category, balances, isLoading, isError, refetch, hasMore, loadMore, isLoadingMore } = useAccountTransactionsScreenData(id);
@@ -128,7 +130,7 @@ export default function AccountDetail() {
         ) : undefined}
         initialNumToRender={SECTION_LIST_FIRST_DRAW}
         stickySectionHeadersEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         // WHIT-363: never double-spin — the cold-load spinner owns an empty first load.
         refreshControl={<RefreshControl refreshing={pulling && !(isLoading && transactions.length === 0)} onRefresh={onRefresh} tintColor={C.accent} />}

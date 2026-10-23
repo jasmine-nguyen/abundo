@@ -7,6 +7,7 @@ import { useAppContext } from '../src/context';
 import { useLoanFactsQuery, useRepaymentQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
 import { useScrollEdge } from '../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../src/hooks/useHeaderSidePadding';
 import { DetailStates } from '../src/components/DetailStates';
 import { NativeDateField } from '../src/components/NativeDateField';
 import { MoneyField } from '../src/components/MoneyField';
@@ -54,6 +55,7 @@ function LoanForm({ facts: f, lastRepayment, scrollProps }: {
 }) {
   const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
   const insets = useSafeAreaInsets();
+  const pagePadding = usePageSidePadding();
   const router = useRouter();
 
   // Seed each input from the saved facts (empty when unset).
@@ -125,7 +127,7 @@ function LoanForm({ facts: f, lastRepayment, scrollProps }: {
   return (
     <ScrollView
       {...scrollProps}
-      contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
+      contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 40 }}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
       // The keyboard opens over the Save button at the bottom — inset the scroll by the

@@ -7,6 +7,7 @@ import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 import { syncBankTransactions } from '../../src/api';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/ScrollChromeHeader';
@@ -50,6 +51,7 @@ export default function Transactions() {
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const serverQuery = needsServerSearch(debouncedQuery) ? debouncedQuery : '';
   const insets = useSafeAreaInsets();
+  const pagePadding = usePageSidePadding();
   const { openMultiPicker, showToast, sheet, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
   // WHIT-846: the Uncategorised hint hides for good once the user reaches a category pick's
   // confirm step (one charge, a selection, or File by shop).
@@ -372,7 +374,7 @@ export default function Transactions() {
     </ScrollChromeHeader>
     {/* WHIT-291: the selection action bar floats above the tab bar while selecting. */}
     {selectionMode && (
-      <View style={[styles.actionBar, { paddingBottom: insets.bottom + 12 }]}>
+      <View style={[styles.actionBar, pagePadding, { paddingBottom: insets.bottom + 12 }]}>
         <Text style={styles.actionCount}>{selected.size} selected</Text>
         <Pressable
           onPress={onRecategorize}
@@ -402,7 +404,7 @@ const styles = StyleSheet.create({
   // Extra bottom padding so the last rows can scroll clear of the floating action bar and the
   // Ask pill (card 609).
   contentWithBar: { paddingBottom: 108 + ASK_BUTTON_BOTTOM_CLEARANCE },
-  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: C.sheet, borderTopWidth: 1, borderTopColor: C.hairline },
+  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, backgroundColor: C.sheet, borderTopWidth: 1, borderTopColor: C.hairline },
   actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
   actionBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 13, backgroundColor: C.accent },
   actionBtnDisabled: { backgroundColor: tint(C.accentAlt, 0.22) },

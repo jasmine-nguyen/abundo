@@ -32,6 +32,7 @@ import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
 import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
 import { textOf, styleOf } from './support/layout';
+import { withInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
 import { C, tint } from '../theme';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
@@ -54,8 +55,8 @@ const ROW = {
 const gets = (path: string) => server.sentUnder('GET', path).filter((request) => request.path.split('?')[0] === path).length;
 
 // Under fake timers the first reads can still be settling when renderWithQueries returns.
-async function draw() {
-  await renderWithQueries(<Transactions />);
+async function draw(element = <Transactions />) {
+  await renderWithQueries(element);
   await waitFor(() => expect(screen.queryByTestId('transactions-loading')).toBeNull());
 }
 
@@ -507,6 +508,15 @@ it('Cancel leaves selection mode and clears the checkboxes', async () => {
   await fireEvent.press(screen.getByText('Cancel'));
   expect(screen.queryByLabelText('Select Woolworths')).toBeNull();
   expect(screen.getByText('Select')).toBeTruthy();
+});
+
+// [A2] ABU-119: on the Duo held sideways, the action bar's count and Re-categorise button sit
+// clear of the rounded corners — its sides pad by the left/right safe-area insets on top of 18.
+it('the action bar pads its sides by the side safe-area insets (ABU-119)', async () => {
+  await draw(withInsets(DUO_SIDEWAYS_INSETS, <Transactions />));
+  await fireEvent.press(screen.getByText('Select'));
+  const bar = styleOf(screen.getByText('0 selected').parent!);
+  expect({ left: bar.paddingLeft, right: bar.paddingRight }).toEqual({ left: 62, right: 77 });
 });
 });
 

@@ -23,7 +23,8 @@ export async function scrollTo(r: Rendered, y: number) {
 
 export function contentStyle(r: Rendered) {
   return StyleSheet.flatten(scroller(r).props.contentContainerStyle) as {
-    flexGrow?: number; paddingTop?: number; paddingBottom?: number; paddingHorizontal?: number;
+    flexGrow?: number; paddingTop?: number; paddingBottom?: number;
+    paddingLeft?: number; paddingRight?: number;
   };
 }
 
