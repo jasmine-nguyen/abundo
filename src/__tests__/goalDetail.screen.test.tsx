@@ -74,6 +74,8 @@ describe('goal page', () => {
     expect(screen.queryByTestId('goal-milestone-reached-c2')).toBeNull();
 
     expect(screen.queryByText(/Delete/)).toBeNull();
+    // [A5] ABU-111: only the wide-screen pane drops the back arrow; the full page keeps it.
+    expect(screen.getByLabelText('Back')).toBeTruthy();
     await fireEvent.press(screen.getByTestId('goal-detail-edit'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=ef%201');
   });

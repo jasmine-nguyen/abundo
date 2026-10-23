@@ -4,7 +4,7 @@
 // Real screen + AppProvider over the fake server; only the window-width check is switched.
 // (Narrow taps pushing /goal/<id> and /mortgage are covered by goalDetail.screen.test.tsx and goalsHub.)
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
+import { scrollPaddingBottomAround } from './support/layout';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { installFakeServer } from './support/fakeServer';
@@ -73,10 +73,7 @@ describe('wide screen', () => {
     expect(screen.queryByLabelText('Back')).toBeNull();
     expect(goalCard().props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
 
-    let paneScroll = screen.getByTestId('goal-milestone-c1').parent;
-    while (paneScroll && paneScroll.type !== 'RCTScrollView') paneScroll = paneScroll.parent;
-    expect(paneScroll).toBeTruthy();
-    expect(StyleSheet.flatten(paneScroll!.props.contentContainerStyle).paddingBottom).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
+    expect(scrollPaddingBottomAround(screen.getByTestId('goal-milestone-c1'))).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
 
     server.seed('/goals', []);
     await refreshInAct(() => queryClient.refetchQueries());
@@ -106,6 +103,16 @@ describe('wide screen', () => {
     expect(routerSpies.push).not.toHaveBeenCalled();
     expect(screen.queryByLabelText('Back')).toBeNull();
     expect(screen.getByTestId('mortgage-link').props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+    // [A2] the home loan pane also scrolls clear of the floating tab bar.
+    expect(scrollPaddingBottomAround(screen.getByTestId('repayment-landed'))).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
+
+    // [A3] tapping a goal while the home loan is open swaps the pane and the highlight.
+    await fireEvent.press(goalCard());
+    await waitFor(() => expect(goalDetailShown()).toBe(true));
+    expect(screen.queryByTestId('repayment-landed')).toBeNull();
+    expect(screen.getByTestId('mortgage-link').props.accessibilityState).toEqual(expect.objectContaining({ selected: false }));
+    expect(goalCard().props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+    expect(routerSpies.push).not.toHaveBeenCalled();
   });
 
   it.each([

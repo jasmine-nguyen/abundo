@@ -3,7 +3,7 @@
 // narrow screen reopens the open account full screen. Real screen + AppProvider over the fake
 // server; only the window-width check is switched.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
+import { scrollPaddingBottomAround } from './support/layout';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
@@ -52,10 +52,7 @@ describe('wide screen', () => {
     expect(screen.queryByLabelText('Back')).toBeNull();
     expect(card().props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
 
-    let paneScroll = screen.getByTestId('account-balance').parent;
-    while (paneScroll && paneScroll.type !== 'RCTScrollView') paneScroll = paneScroll.parent;
-    expect(paneScroll).toBeTruthy();
-    expect(StyleSheet.flatten(paneScroll!.props.contentContainerStyle).paddingBottom).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
+    expect(scrollPaddingBottomAround(screen.getByTestId('account-balance'))).toBeGreaterThanOrEqual(TAB_BAR_CLEARANCE);
   });
 
   // [A1]

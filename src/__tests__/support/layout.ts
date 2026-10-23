@@ -28,6 +28,14 @@ export function isWithin(node: TestInstance, host: TestInstance) {
   return false;
 }
 
+// The bottom content padding of the scroller holding `node` (e.g. a two-pane detail's ScrollView).
+export function scrollPaddingBottomAround(node: TestInstance) {
+  let scroller = node.parent;
+  while (scroller && scroller.type !== 'RCTScrollView') scroller = scroller.parent;
+  if (!scroller) throw new Error('no scroller around node');
+  return StyleSheet.flatten(scroller.props.contentContainerStyle).paddingBottom;
+}
+
 export function sharedHost(node: TestInstance, other: TestInstance) {
   for (let host = node.parent; host; host = host.parent) {
     if (isWithin(other, host)) return host;
