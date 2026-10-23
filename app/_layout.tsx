@@ -20,6 +20,7 @@ import { registerForPushNotificationsAsync, registerPushTokenRotation } from '..
 import { AuthGate } from '../src/AuthGate';
 import { NotificationRouter } from '../src/components/NotificationRouter';
 import { useReduceMotion } from '../src/motion/useReduceMotion';
+import { stackScreenLayout } from '../src/components/ReadableColumn';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -80,6 +81,7 @@ export default function RootLayout() {
     <View style={isWeb ? styles.deviceWeb : styles.deviceNative}>
       <AuthGate>
         <Stack
+          screenLayout={stackScreenLayout}
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: C.bg },
