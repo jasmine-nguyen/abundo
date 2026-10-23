@@ -10,6 +10,7 @@ import type { Bucket, Category } from '../../src/types';
 import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 import { DeleteLink, SwitchRow } from '../../src/components/ui';
 import { CategoryFields } from '../../src/components/CategoryFields';
 import { QuickCreateCategory } from '../../src/components/QuickCreateCategory';
@@ -21,6 +22,7 @@ export default function CategoryEdit() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   const { categoryId } = useLocalSearchParams<{ categoryId?: string }>();
   // WHIT-203: the prefill lookup reads the cached taxonomy.
   const { categories, category } = useCategories();
@@ -217,7 +219,7 @@ export default function CategoryEdit() {
       <Header title={categoryId ? 'Edit category' : 'New category'} divider={edge.scrolled} />
       <ScrollView
         {...edge.scrollProps}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         // Save + Delete sit at the bottom, so the keyboard opens right over them. Inset the

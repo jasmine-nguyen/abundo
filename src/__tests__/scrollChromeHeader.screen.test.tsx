@@ -40,7 +40,7 @@ it('flattens a screen contentContainerStyle over the shared insets (Transactions
   expect(cc.paddingBottom).toBe(321);   // the screen's style wins over the shared clearance
   expect(cc.flexGrow).toBe(1);          // the default fill survives the merge
   expect(cc.paddingTop).toBe(HEADER_BODY_HEIGHT); // shared top inset survives (zero safe-area inset)
-  expect(cc.paddingHorizontal).toBe(18);
+  expect({ left: cc.paddingLeft, right: cc.paddingRight }).toEqual({ left: 18, right: 18 });
 });
 
 // WHIT-863: a line under the title (the freshness line) draws inside the header, and the list's top
@@ -69,8 +69,9 @@ it.each([
 
 // ABU-118: turned sideways (the unfolded Duo), the gear and the + sit clear of the rounded corners
 // and the status bar — the header pads by the left/right/top safe-area insets on top of its 20.
+// ABU-119: the page content under it pads its sides the same way, on top of its 18.
 // Different left and right insets so a swap is caught.
-it('pads the header by the side and top safe-area insets (ABU-118)', async () => {
+it('pads the header and the page content by the side safe-area insets (ABU-118, ABU-119)', async () => {
   const safeArea = require('react-native-safe-area-context');
   jest.spyOn(safeArea, 'useSafeAreaInsets').mockReturnValue({ top: 24, left: 44, right: 59, bottom: 0 });
   const r = await render(
@@ -81,5 +82,7 @@ it('pads the header by the side and top safe-area insets (ABU-118)', async () =>
   const header = styleOf(r.getByTestId('screen-header'));
   expect({ left: header.paddingLeft, right: header.paddingRight, top: header.paddingTop })
     .toEqual({ left: 64, right: 79, top: 30 });
+  const cc = contentStyle(r);
+  expect({ left: cc.paddingLeft, right: cc.paddingRight }).toEqual({ left: 62, right: 77 });
   jest.restoreAllMocks();
 });

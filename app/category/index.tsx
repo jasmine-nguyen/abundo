@@ -8,11 +8,13 @@ import { BUCKET_COLOR } from '../../src/categoryColors';
 import { useBudgetsScreenData, useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 
 export default function CategoryList() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   // WHIT-203: the category list + which are budgeted come from the cached query layer.
   const { budgets } = useBudgetsScreenData();
   const { categories, isLoading: categoriesLoading } = useCategories();
@@ -26,7 +28,7 @@ export default function CategoryList() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Categories" divider={edge.scrolled} />
-      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         {categories.length === 0 && (
           <Text style={styles.emptyText}>
             {categoriesLoading ? 'Loading categories…' : 'No categories yet.'}

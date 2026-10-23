@@ -9,6 +9,7 @@ import { useAppContext, accountSummaries, accountNameFromId } from '../../src/co
 import { useGoalsQuery, useRecentTransactionsScreenData, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useScrollEdge } from '../../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../../src/hooks/useHeaderSidePadding';
 import { NativeDateField } from '../../src/components/NativeDateField';
 import { MoneyField } from '../../src/components/MoneyField';
 import { DeleteLink } from '../../src/components/ui';
@@ -38,6 +39,7 @@ function seedCpRows(checkpoints: GoalCheckpoint[] | null | undefined): CpRow[] {
 export default function GoalEdit() {
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   const router = useRouter();
   const s = useAppContext(); // saveGoal / deleteGoal writers + showToast
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -236,7 +238,7 @@ export default function GoalEdit() {
       <Header title={editing ? 'Edit goal' : 'Add a goal'} divider={edge.scrolled} />
       <ScrollView
         {...edge.scrollProps}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         // The keyboard opens over the Save/Delete buttons at the bottom — inset the scroll by

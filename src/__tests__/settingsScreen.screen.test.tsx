@@ -10,6 +10,8 @@ import { renderWithQueries, refreshInAct, settle, useTestQueryClient } from './s
 import { resetAuth } from './support/authMock';
 import { routerSpies, resetRouter, fireFocus } from './support/routerMock';
 import { queryClient } from '../queryClient';
+import { StyleSheet } from 'react-native';
+import { hostsOfType } from './support/layout';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -81,4 +83,16 @@ describe('focus refresh', () => {
     expect(server.sent('GET', '/categories').length).toBeGreaterThan(categoriesBefore);
     expect(server.sent('GET', '/loanfacts').length).toBeGreaterThan(loanFactsBefore);
   });
+});
+
+// ABU-119: on the unfolded Duo held sideways, the page content pads its sides by the left/right
+// safe-area insets on top of its 18, so it sits clear of the status bar and rounded corners.
+// Different left and right insets so a swap is caught.
+it('pads the page content by the side safe-area insets (ABU-119)', async () => {
+  const safeArea = require('react-native-safe-area-context');
+  jest.spyOn(safeArea, 'useSafeAreaInsets').mockReturnValue({ top: 0, left: 44, right: 59, bottom: 0 });
+  await renderWithQueries(<Settings />);
+  const content = StyleSheet.flatten(hostsOfType('RCTScrollView')[0].props.contentContainerStyle);
+  expect({ left: content.paddingLeft, right: content.paddingRight }).toEqual({ left: 62, right: 77 });
+  jest.restoreAllMocks();
 });

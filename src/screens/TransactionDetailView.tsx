@@ -15,6 +15,7 @@ import { useInFlightGuard } from '../hooks/useInFlightGuard';
 import { confirmDelete } from '../confirmDelete';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 import { useScrollEdge } from '../hooks/useScrollEdge';
+import { usePageSidePadding } from '../hooks/useHeaderSidePadding';
 import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by tapping a TransactionRow
@@ -41,6 +42,7 @@ export function TransactionDetailView({ id, onClose }: {
   const { openPicker, deleteTransaction } = useAppContext();
   const { category, isLoading, isError, refetch } = useTransactionDetailScreenData();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
   // Resolve the charge across every list cache — feed, uncategorized feed, the bounded recent
   // window, AND the budget-detail / Insights category-drill caches — via the shared resolver, so a
   // row tapped anywhere (incl. a deep-history unfiled charge on the Uncategorized tab, or an older
@@ -113,7 +115,7 @@ export function TransactionDetailView({ id, onClose }: {
       <ScrollView
         {...edge.scrollProps}
         // In the wide-screen pane the tab bar floats over it, so clear it like the tab's own list.
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: embedded ? TAB_BAR_CLEARANCE : insets.bottom + 30 }}
+        contentContainerStyle={{ ...pagePadding, paddingBottom: embedded ? TAB_BAR_CLEARANCE : insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         // The NOTE + TAGS fields sit at the bottom of the screen, so the keyboard opens

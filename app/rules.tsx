@@ -11,6 +11,7 @@ import { useRulesScreenData, useCategories } from '../src/queries';
 import { useDebouncedValue } from '../src/hooks/useDebouncedValue';
 import { Header } from '../src/components/Header';
 import { useScrollEdge } from '../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../src/hooks/useHeaderSidePadding';
 import { SearchField } from '../src/components/SearchField';
 import { RetryButton, HeaderIconButton } from '../src/components/ui';
 import { confirmDelete } from '../src/confirmDelete';
@@ -23,6 +24,7 @@ export default function Rules() {
   const s = useAppContext(); // setSheet + deleteRule (writers)
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
 
   // WHIT-195: the rule list comes from the cached ['rules'] query; WHIT-203: the category
   // label per rule now comes from the shared taxonomy hook (not the old store).
@@ -150,7 +152,7 @@ export default function Rules() {
       {/* Pinned search — stays in reach above the scrolling list. Reads live `query`, so the
           box never flickers away mid-clear while the filtered list catches up. */}
       {(rules.length > 0 || query.length > 0) && (
-        <View style={styles.searchWrap}>
+        <View style={[styles.searchWrap, pagePadding]}>
           <SearchField value={query} onChangeText={setQuery} placeholder="Search rules" accessibilityLabel="Search rules" />
         </View>
       )}
@@ -165,7 +167,7 @@ export default function Rules() {
         ListHeaderComponent={intro}
         ListFooterComponent={footer}
         ListEmptyComponent={renderEmpty}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         stickySectionHeadersEnabled={false}
@@ -175,7 +177,7 @@ export default function Rules() {
 }
 
 const styles = StyleSheet.create({
-  searchWrap: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 4 },
+  searchWrap: { paddingTop: 6, paddingBottom: 4 },
   // marginBottom 4 (not 14): the section header's marginTop 16 supplies the gap below the
   // intro, so first-section spacing (4 + 16 = 20) matches the pre-SectionList layout.
   intro: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14, marginTop: 6, marginBottom: 4 },

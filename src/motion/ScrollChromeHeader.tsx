@@ -16,7 +16,7 @@ import { useNavBars } from './NavBarsContext';
 import { SettingsButton } from '../components/SettingsButton';
 import { nextNavBarsState } from './navBarsVisibility';
 import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
-import { useHeaderSidePadding } from '../hooks/useHeaderSidePadding';
+import { useHeaderSidePadding, usePageSidePadding } from '../hooks/useHeaderSidePadding';
 
 // A tab screen's header is a fixed-height row (a ~40px action button) with paddingTop
 // insets.top + 6 and paddingBottom 12. headerHeight = insets.top + HEADER_BODY_HEIGHT is
@@ -42,8 +42,6 @@ export const floatingHeaderStyle = StyleSheet.create({
     paddingHorizontal: 20, paddingBottom: 12,
   },
 }).header;
-
-export const SCREEN_PADDING = 18;
 
 // A SectionList's first draw. The window counts each day's heading and section footer as cells
 // too (3 per day at worst): 90 draws a whole first page of 30 rows over 30 days.
@@ -79,6 +77,7 @@ export function ScrollChromeHeader<S extends Section>({
 }) {
   const insets = useSafeAreaInsets();
   const sidePadding = useHeaderSidePadding();
+  const pagePadding = usePageSidePadding();
   const [measuredHeight, setMeasuredHeight] = useState(0);
   const fixedHeight = insets.top + HEADER_BODY_HEIGHT;
   const headerHeight = subtitle != null && measuredHeight > 0 ? Math.max(fixedHeight, measuredHeight) : fixedHeight;
@@ -102,7 +101,7 @@ export function ScrollChromeHeader<S extends Section>({
       {
         // Fill the viewport so a short list (or a centred spinner/error) can still be pulled to refresh.
         flexGrow: 1,
-        paddingHorizontal: SCREEN_PADDING,
+        ...pagePadding,
         paddingTop: headerHeight,
         paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_BOTTOM_CLEARANCE,
       },

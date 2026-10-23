@@ -10,6 +10,7 @@ import { signOut, getCurrentUser } from '../src/auth';
 import { SectionLabel, RetryButton } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { useScrollEdge } from '../src/hooks/useScrollEdge';
+import { usePageSidePadding } from '../src/hooks/useHeaderSidePadding';
 
 // WHIT-495: Settings is no longer a bottom-bar tab — it's reached from the header gear on every
 // tab and opens as a root-stack pushed screen. It sits OUTSIDE NavBarsProvider, so it uses the
@@ -41,6 +42,7 @@ export default function Settings() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
+  const pagePadding = usePageSidePadding();
 
   // WHIT-191a: the two server-backed rows (categories count + loan-facts status) now come
   // from the cached query layer. "…" while first-loading so the count never flashes "0".
@@ -83,7 +85,7 @@ export default function Settings() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Settings" divider={edge.scrolled} />
-      <ScrollView {...edge.scrollProps} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
+      <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
         {/* profile */}
         <View style={styles.profile}>
           {showPhoto ? (
