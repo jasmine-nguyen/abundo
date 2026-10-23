@@ -16,6 +16,9 @@ import { queryClient } from '../queryClient';
 import { rulesKey } from '../queryKeys';
 import { fireFocus } from './support/routerMock';
 import { spyOnAlert, pressAlertButton, expectConfirmDeletePopUp } from './support/alertSpy';
+import { spyOnInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
+import { styleOf, virtualLists } from './support/layout';
+import { StyleSheet } from 'react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -186,4 +189,19 @@ it('[A1] a later focus re-reads the rules once they are stale', async () => {
   await settleQueries();
 
   expect(rulesReads()).toHaveLength(2);
+});
+
+// [A1] ABU-119: on the Duo held sideways, both the pinned search box and the rule list pad their
+// sides by the left/right safe-area insets on top of 18.
+it('pads the search box and the list by the side safe-area insets (ABU-119)', async () => {
+  spyOnInsets(DUO_SIDEWAYS_INSETS);
+  server.seed('/rules', [NETFLIX]);
+  await renderWithApp(<Rules />);
+  const sides = (style: { paddingLeft?: unknown; paddingRight?: unknown }) => ({ left: style.paddingLeft, right: style.paddingRight });
+  // The pinned search wrap is one of the field's ancestors.
+  const ancestorSides = [];
+  for (let node = screen.getByLabelText('Search rules').parent; node; node = node.parent) ancestorSides.push(sides(styleOf(node)));
+  expect(ancestorSides).toContainEqual({ left: 62, right: 77 });
+  expect(sides(StyleSheet.flatten(virtualLists()[0].props.contentContainerStyle))).toEqual({ left: 62, right: 77 });
+  jest.restoreAllMocks();
 });

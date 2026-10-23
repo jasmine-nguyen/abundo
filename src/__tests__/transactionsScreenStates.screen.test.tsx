@@ -32,6 +32,7 @@ import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
 import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
 import { textOf, styleOf } from './support/layout';
+import { spyOnInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
 import { C, tint } from '../theme';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
@@ -507,6 +508,17 @@ it('Cancel leaves selection mode and clears the checkboxes', async () => {
   await fireEvent.press(screen.getByText('Cancel'));
   expect(screen.queryByLabelText('Select Woolworths')).toBeNull();
   expect(screen.getByText('Select')).toBeTruthy();
+});
+
+// [A2] ABU-119: on the Duo held sideways, the action bar's count and Re-categorise button sit
+// clear of the rounded corners — its sides pad by the left/right safe-area insets on top of 18.
+it('the action bar pads its sides by the side safe-area insets (ABU-119)', async () => {
+  spyOnInsets(DUO_SIDEWAYS_INSETS);
+  await draw();
+  await fireEvent.press(screen.getByText('Select'));
+  const bar = styleOf(screen.getByText('0 selected').parent!);
+  expect({ left: bar.paddingLeft, right: bar.paddingRight }).toEqual({ left: 62, right: 77 });
+  jest.restoreAllMocks();
 });
 });
 
