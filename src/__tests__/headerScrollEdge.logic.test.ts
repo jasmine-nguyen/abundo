@@ -9,11 +9,11 @@ const SCROLLER = /<(ScrollView|SectionList)\b/g;
 const count = (code: string, pattern: RegExp) => (code.match(pattern) ?? []).length;
 
 const headerPagesWithScroller = [...shippedCode()]
-  .filter(([path, code]) => path.startsWith('app/') && TITLE_BAR.test(code) && count(code, SCROLLER) > 0);
+  .filter(([path, code]) => (path.startsWith('app/') || path.startsWith('src/screens/')) && TITLE_BAR.test(code) && count(code, SCROLLER) > 0);
 
 it('every title-bar page with a scroller wires the scroll edge on each scroller', () => {
   expect(headerPagesWithScroller.map(([path]) => path)).toEqual(
-    expect.arrayContaining(['app/transaction/[id].tsx', 'app/account/[id].tsx', 'app/settings.tsx', 'app/budget/edit.tsx']),
+    expect.arrayContaining(['src/screens/TransactionDetailView.tsx','app/account/[id].tsx', 'app/settings.tsx', 'app/budget/edit.tsx']),
   );
   const missing = headerPagesWithScroller
     .filter(([, code]) =>

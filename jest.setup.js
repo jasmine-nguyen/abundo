@@ -107,6 +107,10 @@ jest.mock('expo-auth-session', () => ({
 jest.mock('./src/hooks/useLargeText', () =>
   require('./src/__tests__/support/largeTextMock').largeTextMockModule(() => false));
 
+// Screens render their phone (narrow) layout; a test that needs the two-pane layout mocks the hook itself (ABU-110).
+jest.mock('./src/hooks/useWideLayout', () =>
+  require('./src/__tests__/support/wideLayoutMock').wideLayoutMockModule(() => false));
+
 // Silence the act(...) / animation warnings that RN emits in the test renderer and
 // add nothing to signal.
 jest.spyOn(console, 'warn').mockImplementation(() => {});

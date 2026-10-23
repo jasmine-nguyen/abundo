@@ -16,6 +16,7 @@ import { useNavBars } from './NavBarsContext';
 import { SettingsButton } from '../components/SettingsButton';
 import { nextNavBarsState } from './navBarsVisibility';
 import { TITLE_MAX_SCALE } from '../hooks/useLargeText';
+import { useHeaderSidePadding } from '../hooks/useHeaderSidePadding';
 
 // A tab screen's header is a fixed-height row (a ~40px action button) with paddingTop
 // insets.top + 6 and paddingBottom 12. headerHeight = insets.top + HEADER_BODY_HEIGHT is
@@ -77,6 +78,7 @@ export function ScrollChromeHeader<S extends Section>({
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  const sidePadding = useHeaderSidePadding();
   const [measuredHeight, setMeasuredHeight] = useState(0);
   const fixedHeight = insets.top + HEADER_BODY_HEIGHT;
   const headerHeight = subtitle != null && measuredHeight > 0 ? Math.max(fixedHeight, measuredHeight) : fixedHeight;
@@ -125,7 +127,7 @@ export function ScrollChromeHeader<S extends Section>({
       <Animated.View
         testID="screen-header"
         onLayout={(e) => setMeasuredHeight(e.nativeEvent.layout.height)}
-        style={[floatingHeaderStyle, { paddingTop: insets.top + 6 }, headerStyle]}
+        style={[floatingHeaderStyle, { paddingTop: insets.top + 6, ...sidePadding }, headerStyle]}
       >
         <View style={styles.titleRow}>
           <SettingsButton />
