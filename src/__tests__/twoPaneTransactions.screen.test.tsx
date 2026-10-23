@@ -7,7 +7,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
-import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct, releaseAndSettle } from './support/renderWithQueries';
 import { renderWithApp, redrawWithApp } from './support/renderWithApp';
 import { resetListTabs } from './support/listTabsScreen';
 import { routerSpies, setFocused } from './support/routerMock';
@@ -164,6 +164,25 @@ describe('wide screen', () => {
     await waitFor(() => expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false }));
     expect(detailShown()).toBe(true);
     expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A4] a row opened while another's delete is in flight starts ready, and that delete finishing
+  // doesn't close it.
+  it('opening another row while a delete is in flight shows it ready, and its pane stays open', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    const held = server.hold('/transactions/t1');
+
+    await fireEvent.press(screen.getByTestId('transaction-delete'));
+    await refreshInAct(() => { void pressAlertButton(alerts, 'Delete'); });
+    await fireEvent.press(screen.getByText('Coles'));
+    expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
+
+    await releaseAndSettle(held);
+
+    expect(server.requests()).toContainEqual({ method: 'DELETE', path: '/transactions/t1', body: undefined });
+    expect(detailShown()).toBe(true);
+    expect(screen.getAllByText('Coles').length).toBeGreaterThan(1);
   });
 
   // [A13] the tab bar floats over the tab, pane included: the pane's last row must scroll clear of it,
