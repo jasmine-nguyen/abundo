@@ -1,6 +1,9 @@
 build_graph.py
+build_guard.py
+build_guard.ts
 requirements.txt
 .claude/commands/build.md
+.pi/prompts/build.md
 .claude/agents/implementer.md
 .claude/agents/qa.md
 .claude/agents/solution-critic.md

@@ -36,6 +36,7 @@ import tempfile
 import time
 import traceback
 import uuid
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, RetryPolicy, interrupt
+
+from build_guard import BASH_DENY, blocked
 
 
 def merge_unique(old: list, new: list | None) -> list:
@@ -163,7 +166,14 @@ BUILD_DIR = ROOT / ".build"
 DB_PATH = BUILD_DIR / "build_graph.db"
 AGENTS_FILE = ROOT / "AGENTS.md"
 
-DEFAULT_MODEL = "claude-opus-5-5"
+# Which tool runs the helpers: "claude" (the Claude Agent SDK) or "pi" (the Pi CLI, so any
+# model Pi can reach, e.g. BUILD_MODEL=sf-gateway/gpt-6.1-sol). A build started from Pi
+# defaults to Pi and to the model picked in that Pi session. Pi gets no default model of its
+# own: a bare Claude model name could resolve to a login that bills per token.
+IN_PI = os.environ.get("PI_CODING_AGENT") == "true"
+RUNNER = os.environ.get("BUILD_RUNNER") or ("pi" if IN_PI else "claude")
+PI_SESSION_MODEL = "/".join(filter(None, (os.environ.get("PI_PROVIDER"), os.environ.get("PI_MODEL"))))
+DEFAULT_MODEL = os.environ.get("BUILD_MODEL") or (PI_SESSION_MODEL if RUNNER == "pi" else "claude-opus-5-5")
 # How hard each agent thinks. Claude Code's own default is higher; "medium" is faster
 # and uses less of the plan.
 AGENT_EFFORT = "medium"
@@ -339,32 +349,15 @@ QA_OUTPUT = _output(
 
 # --- guards ---
 #
-# The pipeline owns git: no agent commits, pushes or switches branches.
-# Planning and review agents are read-only; QA writes only in the worktree the
-# pipeline makes for it.
-# These hooks block the obvious commands. fix_or_ship and prepare_branch also
-# check the working tree, which catches any write the hooks miss.
+# The rules live in build_guard.py, which the Pi runner also runs on every tool call.
 
 
-def _git(subcommands: str) -> str:
-    return rf"\bgit\b(?:\s+-C\s+\S+)?\s+(?:{subcommands})\b"
+def guard_hooks(policy: str) -> dict[str, list[HookMatcher]]:
+    async def guard(hook_input, _tool_use_id, _context):
+        reason = blocked(policy, hook_input["tool_name"], hook_input["tool_input"], ROOT)
+        return _deny(reason) if reason else {}
 
-
-_NEVER = [
-    _git("commit|push|pull|reset|rebase|merge|cherry-pick|revert|stash|clean|switch|tag|am"),
-    r"\bgit\b[^;&|]*\bbranch\s+-[dDmMcCf]",
-    r"\bgh\s+pr\s+(?:create|merge|close|edit|ready|review)\b",
-]
-BASH_DENY = {
-    "read_only": re.compile("|".join([
-        *_NEVER,
-        _git("add|rm|mv|checkout|restore|apply|worktree"),
-        r"(?:^|[;&|(]\s*)(?:rm|mv|cp|touch|mkdir|tee)\s",
-        r"\bsed\s+-i",
-    ])),
-    "writer": re.compile("|".join([*_NEVER, _git("worktree"), _git(r"checkout(?!\s+--\s)")])),
-    "qa": re.compile("|".join([*_NEVER, _git("worktree")])),
-}
+    return {"PreToolUse": [HookMatcher(matcher="Bash|Write|Edit|MultiEdit|NotebookEdit", hooks=[guard])]}
 
 
 def _deny(reason: str) -> dict:
@@ -375,77 +368,6 @@ def _deny(reason: str) -> dict:
             "permissionDecisionReason": reason,
         }
     }
-
-
-# Helpers change only the repo being built (QA: only its worktree) plus scratch space. The
-# pipeline can check, commit and undo changes here, but it can't even see another repo's.
-TEMP_DIRS = tuple({Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()})
-SHELL_PATH = re.compile(r"(?<![\w.:/-])(?:~|/)[^\s'\"`;&|()<>]*")
-SHELL_CD = re.compile(r"""(?:^|[;&|(]\s*)cd\s+("[^"]*"|'[^']*'|[^\s;&|)]+)""")
-SHELL_WRITES = re.compile(
-    r">|\b(?:tee|cp|mv|rm|touch|mkdir|ln|install|rsync|patch)\b|\bsed\s+-i|\.write|write_(?:text|bytes)"
-    r"|\bopen\([^)]*['\"][wax]"
-)
-HARMLESS_REDIRECTS = re.compile(r"[0-9]?>&[0-9]|[0-9&]?>>?\s*/dev/(?:null|stdout|stderr)")
-WRITES_OUTSIDE = (
-    "Blocked: `{path}` is outside the repo you're building, and helpers change only this repo. Reading "
-    "it with absolute paths is fine. If the card needs a change elsewhere, don't make it: finish here and "
-    "list it under `follow_ups`."
-)
-
-
-def writable_roots(policy: str) -> tuple[Path, ...]:
-    return (BUILD_DIR, *TEMP_DIRS) if policy == "qa" else (ROOT, *TEMP_DIRS)
-
-
-def outside(path_text: str, roots: tuple[Path, ...]) -> bool:
-    text = path_text.strip("'\"")
-    if not text or "$" in text or text.startswith("/dev/"):
-        return False
-    path = Path(os.path.expanduser(text))
-    if not path.is_absolute():
-        return False  # relative paths are where the agent works
-    return not any(path.resolve().is_relative_to(root) for root in roots)
-
-
-def shell_writes_outside(command: str, roots: tuple[Path, ...]) -> str | None:
-    """A path outside `roots` that the command moves into or may write to, if any."""
-    for target in SHELL_CD.findall(command):
-        if outside(target, roots):
-            return target
-    if not SHELL_WRITES.search(HARMLESS_REDIRECTS.sub("", command)):
-        return None
-    return next((path for path in SHELL_PATH.findall(command) if outside(path, roots)), None)
-
-
-def guard_hooks(policy: str) -> dict[str, list[HookMatcher]]:
-    denied = BASH_DENY[policy]
-    roots = writable_roots(policy)
-
-    async def guard_bash(hook_input, _tool_use_id, _context):
-        command = hook_input["tool_input"].get("command", "")
-        if denied.search(command):
-            return _deny(f"Blocked for a {policy} agent: `{command[:120]}`. The pipeline owns git.")
-        if policy != "read_only":
-            path = shell_writes_outside(command, roots)
-            if path:
-                return _deny(WRITES_OUTSIDE.format(path=path))
-        return {}
-
-    matchers = [HookMatcher(matcher="Bash", hooks=[guard_bash])]
-    if policy != "read_only":
-
-        async def guard_writes(hook_input, _tool_use_id, _context):
-            tool_input = hook_input["tool_input"]
-            path = Path(tool_input.get("file_path") or tool_input.get("notebook_path") or ".").resolve()
-            if policy == "qa" and path.is_relative_to(ROOT) and not path.is_relative_to(BUILD_DIR):
-                return _deny("QA writes only in its own worktree, never in the main checkout.")
-            if outside(str(path), roots):
-                return _deny(WRITES_OUTSIDE.format(path=path))
-            return {}
-
-        matchers.append(HookMatcher(matcher="Write|Edit|MultiEdit|NotebookEdit", hooks=[guard_writes]))
-    return {"PreToolUse": matchers}
 
 
 # --- agents ---
@@ -561,9 +483,19 @@ def ponytail_review_skill() -> str:
     return read_text(Path(path) / "skills" / "ponytail-review" / "SKILL.md") if path else ""
 
 
+# A runner starts one helper and returns its checked answer and a session to continue it from.
+Runner = Callable[[str, str, dict, str | None, Path], Awaitable[AgentResult]]
+
+
 async def run_agent(
     name: str, prompt: str, output_format: dict, resume: str | None = None, cwd: Path = ROOT
 ) -> AgentResult:
+    return await RUNNERS[RUNNER](name, prompt, output_format, resume, cwd)
+
+
+async def run_claude(name: str, prompt: str, output_format: dict, resume: str | None, cwd: Path) -> AgentResult:
+    if resume and resume.endswith(".jsonl"):
+        raise AgentError(name, "no Claude session to continue")  # a Pi session from before a runner switch
     agent = AGENTS[name]
     options = ClaudeAgentOptions(
         model=DEFAULT_MODEL,
@@ -607,6 +539,125 @@ async def run_agent(
     if not isinstance(result.structured_output, dict):
         raise AgentError(name, "returned no structured answer")
     return AgentResult(result.structured_output, result.session_id)
+
+
+PI_TOOLS = {"Read": "read", "Grep": "grep", "Glob": "find,ls", "Bash": "bash", "Edit": "edit", "Write": "write"}
+PI_SESSIONS = BUILD_DIR / "pi-sessions"
+# Pi can't hold a reply to a schema, so the helper is told the shape and its reply is checked here.
+ANSWER_RULE = """
+
+## Your answer
+
+End your final reply with your answer as one JSON object, with nothing after it, matching this
+JSON schema:
+
+```json
+{schema}
+```
+"""
+BAD_ANSWER = "Your last reply wasn't a valid answer: {error}. Reply with only the corrected JSON object."
+
+
+async def run_pi(name: str, prompt: str, output_format: dict, resume: str | None, cwd: Path) -> AgentResult:
+    if resume and not Path(resume).is_file():
+        raise AgentError(name, "no Pi session to continue")  # e.g. a Claude session from before a runner switch
+    schema = output_format["schema"]
+    session = resume or str(PI_SESSIONS / f"{name}-{uuid.uuid4().hex}.jsonl")
+    output, error = parse_answer(await run_pi_turns(name, prompt, schema, session, cwd), schema)
+    if error:
+        output, error = parse_answer(await run_pi_turns(name, BAD_ANSWER.format(error=error), schema, session, cwd), schema)
+    if error:
+        raise AgentError(name, f"returned no valid answer: {error}")
+    return AgentResult(output, session)
+
+
+async def run_pi_turns(name: str, prompt: str, schema: dict, session: str, cwd: Path) -> str:
+    """Run one `pi --print` and return the helper's final reply."""
+    agent = AGENTS[name]
+    PI_SESSIONS.mkdir(parents=True, exist_ok=True)
+    command = [
+        "pi", "--print", "--mode", "json", "--model", DEFAULT_MODEL, "--thinking", AGENT_EFFORT,
+        "--system-prompt", agent_prompt(name) + ANSWER_RULE.format(schema=json.dumps(schema, indent=2)),
+        "--tools", ",".join(PI_TOOLS[tool] for tool in agent.tools),
+        # Like the Claude runner: the repo's AGENTS.md, but none of the user's own add-ons.
+        "--no-mcp", "--no-extensions", "--no-skills", "--no-prompt-templates",
+        "--extension", str(ROOT / "build_guard.ts"), "--session", session,
+    ]
+    guard_env = {"BUILD_GUARD_POLICY": agent.policy, "BUILD_GUARD_ROOT": str(ROOT), "BUILD_GUARD_PYTHON": sys.executable}
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command, cwd=cwd, env={**os.environ, **guard_env}, limit=2**26,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        raise AgentError(name, "`pi` isn't installed (BUILD_RUNNER=pi)") from e
+    errors = asyncio.create_task(process.stderr.read())
+    process.stdin.write(prompt.encode())  # Pi reads a piped prompt from stdin
+    await process.stdin.drain()
+    process.stdin.close()
+    turns, cost, reply = 0, 0.0, None
+    async for line in process.stdout:
+        event = json.loads(line)
+        if event["type"] == "turn_end":
+            turns += 1
+        if event["type"] == "message_end" and event["message"]["role"] == "assistant":
+            reply = event["message"]
+            cost += reply.get("usage", {}).get("cost", {}).get("total", 0)
+        if turns > agent.max_turns or cost > agent.max_budget_usd:
+            process.kill()
+            await process.wait()
+            raise AgentError(name, f"hit its cap after {plural(turns, 'turn')} and ${cost:.2f}")
+    stderr = (await errors).decode()
+    if await process.wait() != 0:
+        raise AgentError(name, f"pi exited with an error: {stderr.strip()[-500:]}", transient=True)
+    if reply is None:
+        raise AgentError(name, "ended without a result", transient=True)
+    if reply["stopReason"] in ("error", "aborted"):
+        detail = reply.get("errorMessage", reply["stopReason"])
+        status = re.match(r"\d{3}\b", detail)
+        raise AgentError(name, detail, _transient(None, status and int(status.group())))
+    return "".join(block["text"] for block in reply["content"] if block["type"] == "text")
+
+
+def parse_answer(text: str, schema: dict) -> tuple[dict | None, str | None]:
+    """The JSON object a reply ends with, or why there isn't a valid one."""
+    decoder = json.JSONDecoder()
+    for start in (i for i, char in enumerate(text) if char == "{"):
+        try:
+            output, end = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if text[end:].strip().strip("`").strip():
+            continue  # a JSON-looking part of the reasoning, not the answer at the end
+        error = schema_error(output, schema)
+        return (None, error) if error else (output, None)
+    return None, "it doesn't end with a JSON object"
+
+
+SCHEMA_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
+
+
+def schema_error(value, schema: dict, where: str = "the answer") -> str | None:
+    """The first way `value` breaks `schema`, for the schemas _output() builds."""
+    kind = schema["type"]
+    if not isinstance(value, SCHEMA_TYPES[kind]):
+        return f"{where} must be a JSON {kind}"
+    if value not in schema.get("enum", [value]):
+        return f"{where} must be one of {schema['enum']}"
+    if kind == "array":
+        return next((e for i, item in enumerate(value) if (e := schema_error(item, schema["items"], f"{where}[{i}]"))), None)
+    if kind != "object":
+        return None
+    missing = [key for key in schema["required"] if key not in value]
+    if missing:
+        return f"{where} is missing {', '.join(missing)}"
+    unknown = [key for key in value if key not in schema["properties"]]
+    if unknown:
+        return f"{where} has unknown fields {', '.join(unknown)}"
+    return next((e for key, sub in schema["properties"].items() if (e := schema_error(value[key], sub, f"{where}.{key}"))), None)
+
+
+RUNNERS: dict[str, Runner] = {"claude": run_claude, "pi": run_pi}
 
 
 async def continue_agent(name: str, session: str, news: str, fresh_prompt: str, output_format: dict) -> tuple[AgentResult, bool]:
@@ -3243,7 +3294,13 @@ async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     for name in PARENT_SESSION_VARS:
         os.environ.pop(name, None)
-    paid = paid_auth_var()
+    if RUNNER not in RUNNERS:
+        print(f"BUILD_RUNNER is {RUNNER!r}: set it to one of {', '.join(RUNNERS)}.")
+        return 1
+    if not DEFAULT_MODEL and not args.status:
+        print("Pick the helpers' model: set BUILD_MODEL to provider/model, e.g. BUILD_MODEL=sf-gateway/claude-opus-5-5.")
+        return 1
+    paid = RUNNER == "claude" and paid_auth_var()
     if paid and not args.allow_api_billing and not args.status:
         print(
             f"{paid} is set, so every agent in this build would be billed per token instead of "
