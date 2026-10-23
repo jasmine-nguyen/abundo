@@ -17,6 +17,8 @@ import { TAB_BAR_CLEARANCE } from '../motion/ScrollChromeHeader';
 import { TwoPane } from '../components/TwoPane';
 import { hostsOfType, styleOf } from './support/layout';
 import { View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { withInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
 
 let mockWide = true;
 jest.mock('../hooks/useWideLayout', () =>
@@ -210,4 +212,22 @@ it('wide screen: the list and detail panes split the width evenly', async () => 
   const detailWrapper = screen.getByTestId('detail-probe').parent!;
   expect(styleOf(listWrapper).maxWidth).toBeUndefined();
   expect(styleOf(listWrapper)).toEqual(styleOf(detailWrapper));
+});
+
+// ABU-119: the corners and status bar sit on the screen's outer edges, so each pane drops the safe
+// edge on its divider side; narrow, the list keeps both.
+it('each pane keeps only its outer safe edge', async () => {
+  const seen: Record<string, { left: number; right: number }> = {};
+  function Probe({ name }: { name: string }) {
+    const { left, right } = useSafeAreaInsets();
+    seen[name] = { left, right };
+    return null;
+  }
+  const panes = <TwoPane list={<Probe name="list" />} detail={<Probe name="detail" />} />;
+  const view = await render(withInsets(DUO_SIDEWAYS_INSETS, panes));
+  expect(seen).toEqual({ list: { left: 44, right: 0 }, detail: { left: 0, right: 59 } });
+
+  mockWide = false;
+  await view.rerender(withInsets(DUO_SIDEWAYS_INSETS, panes));
+  expect(seen.list).toEqual({ left: 44, right: 59 });
 });

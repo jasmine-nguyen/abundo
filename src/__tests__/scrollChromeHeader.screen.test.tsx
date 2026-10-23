@@ -12,7 +12,7 @@ import { pullControl } from './support/pull';
 import { render, fireEvent, within } from '@testing-library/react-native';
 import { contentStyle } from './support/scrollChromeHeader';
 import { styleOf } from './support/layout';
-import { spyOnInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
+import { withInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
 import {
   ScrollChromeHeader,
   HEADER_BODY_HEIGHT,
@@ -73,16 +73,14 @@ it.each([
 // ABU-119: the page content under it pads its sides the same way, on top of its 18.
 // Different left and right insets so a swap is caught.
 it('pads the header and the page content by the side safe-area insets (ABU-118, ABU-119)', async () => {
-  spyOnInsets({ top: 24, ...DUO_SIDEWAYS_INSETS });
-  const r = await render(
+  const r = await render(withInsets({ top: 24, ...DUO_SIDEWAYS_INSETS },
     <ScrollChromeHeader title="Budgets" right={<Text>ADD</Text>}>
       <Text>body</Text>
     </ScrollChromeHeader>,
-  );
+  ));
   const header = styleOf(r.getByTestId('screen-header'));
   expect({ left: header.paddingLeft, right: header.paddingRight, top: header.paddingTop })
     .toEqual({ left: 64, right: 79, top: 30 });
   const cc = contentStyle(r);
   expect({ left: cc.paddingLeft, right: cc.paddingRight }).toEqual({ left: 62, right: 77 });
-  jest.restoreAllMocks();
 });

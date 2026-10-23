@@ -4,7 +4,6 @@
 //   jest.mock('react-native-safe-area-context', () =>
 //     require('./support/safeAreaMock').safeAreaMockModule({ top: 47, bottom: 34 }));
 import React from 'react';
-import { jest } from '@jest/globals';
 
 type Insets = { top?: number; right?: number; bottom?: number; left?: number };
 
@@ -13,20 +12,22 @@ export function safeAreaMockModule(insets: Insets = {}) {
   const frame = { x: 0, y: 0, width: 390, height: 844 };
   const Passthrough = ({ children }: { children?: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children);
+  // Like the real library, the hook reads the context, so a provider (TwoPane, withInsets) can override it.
+  const SafeAreaInsetsContext = React.createContext(inset);
   return {
     SafeAreaProvider: Passthrough,
     SafeAreaView: Passthrough,
-    useSafeAreaInsets: () => inset,
+    useSafeAreaInsets: () => React.useContext(SafeAreaInsetsContext),
     useSafeAreaFrame: () => frame,
-    SafeAreaInsetsContext: React.createContext(inset),
+    SafeAreaInsetsContext,
   };
 }
 
-// One test's own insets over the file's mock, e.g. the unfolded Duo held sideways (ABU-118/119).
-// Different left and right insets so a swap is caught. Undo with jest.restoreAllMocks().
+// The unfolded Duo held sideways (ABU-118/119). Different left and right insets so a swap is caught.
 export const DUO_SIDEWAYS_INSETS = { left: 44, right: 59 };
 
-export function spyOnInsets(insets: Insets) {
-  const safeArea = require('react-native-safe-area-context');
-  jest.spyOn(safeArea, 'useSafeAreaInsets').mockReturnValue({ top: 0, right: 0, bottom: 0, left: 0, ...insets });
+// Draws `element` with its own insets over the file's mock — nothing to undo after the test.
+export function withInsets(insets: Insets, element: React.ReactElement) {
+  const { SafeAreaInsetsContext } = require('react-native-safe-area-context');
+  return React.createElement(SafeAreaInsetsContext.Provider, { value: { top: 0, right: 0, bottom: 0, left: 0, ...insets } }, element);
 }

@@ -12,7 +12,7 @@ import { routerSpies, resetRouter, fireFocus } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { StyleSheet } from 'react-native';
 import { hostsOfType } from './support/layout';
-import { spyOnInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
+import { withInsets, DUO_SIDEWAYS_INSETS } from './support/safeAreaMock';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -90,9 +90,7 @@ describe('focus refresh', () => {
 // safe-area insets on top of its 18, so it sits clear of the status bar and rounded corners.
 // Different left and right insets so a swap is caught.
 it('pads the page content by the side safe-area insets (ABU-119)', async () => {
-  spyOnInsets(DUO_SIDEWAYS_INSETS);
-  await renderWithQueries(<Settings />);
+  await renderWithQueries(withInsets(DUO_SIDEWAYS_INSETS, <Settings />));
   const content = StyleSheet.flatten(hostsOfType('RCTScrollView')[0].props.contentContainerStyle);
   expect({ left: content.paddingLeft, right: content.paddingRight }).toEqual({ left: 62, right: 77 });
-  jest.restoreAllMocks();
 });
