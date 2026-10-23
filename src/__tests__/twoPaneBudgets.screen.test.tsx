@@ -7,7 +7,7 @@ import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
-import { renderWithApp, WithApp, resetAppProbe } from './support/renderWithApp';
+import { renderWithApp, redrawWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
@@ -35,8 +35,7 @@ async function drawAndOpen() {
   return view;
 }
 
-const redraw = (view: Awaited<ReturnType<typeof renderWithApp>>) =>
-  refreshInAct(() => view.rerender(<WithApp><Budgets /></WithApp>));
+const redraw = (view: Awaited<ReturnType<typeof renderWithApp>>) => redrawWithApp(view, <Budgets />);
 
 beforeEach(() => {
   mockWide = true;

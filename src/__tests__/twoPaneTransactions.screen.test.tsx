@@ -8,7 +8,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react-nativ
 import { txn } from './factory';
 import { installFakeServer, seedFeedPage } from './support/fakeServer';
 import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
-import { renderWithApp, WithApp } from './support/renderWithApp';
+import { renderWithApp, redrawWithApp } from './support/renderWithApp';
 import { resetListTabs } from './support/listTabsScreen';
 import { routerSpies, setFocused } from './support/routerMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
@@ -44,8 +44,7 @@ async function drawAndOpen() {
   return view;
 }
 
-const redraw = (view: Awaited<ReturnType<typeof renderWithApp>>) =>
-  refreshInAct(() => view.rerender(<WithApp><Transactions /></WithApp>));
+const redraw = (view: Awaited<ReturnType<typeof renderWithApp>>) => redrawWithApp(view, <Transactions />);
 
 beforeEach(() => {
   resetListTabs(server);
