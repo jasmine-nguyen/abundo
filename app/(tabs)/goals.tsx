@@ -114,7 +114,7 @@ export default function Goals() {
   const mortgageSelected = pane.selected === MORTGAGE_PANE;
 
   let detail = null;
-  if (mortgageSelected) detail = <MortgageView onClose={pane.close} />;
+  if (mortgageSelected) detail = <MortgageView embedded />;
   else if (pane.selected) detail = <GoalDetailView id={pane.selected} onClose={pane.close} />;
 
   const list = (

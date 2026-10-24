@@ -24,10 +24,9 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 // can't use the tab's ScrollChromeHeader (that needs the provider); it uses the shared
 // <Header /> + a ScrollView, the same detail-screen pattern as milestone.tsx /
 // loan.tsx. The content + the useGoalScreenData reads are otherwise unchanged.
-// ABU-111: onClose only marks it embedded in the Goals tab's wide-screen pane (no back arrow);
+// ABU-111: `embedded` = shown in the Goals tab's wide-screen pane (no back arrow). No onClose:
 // the home loan can't be deleted.
-export function MortgageView({ onClose }: { onClose?: () => void }) {
-  const embedded = onClose !== undefined;
+export function MortgageView({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
