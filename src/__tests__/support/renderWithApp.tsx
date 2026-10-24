@@ -5,7 +5,7 @@
 import React, { useEffect } from 'react';
 import { render } from '@testing-library/react-native';
 import { AppProvider, useAppContext, type Sheet } from '../../context';
-import { WithQueries, settle } from './renderWithQueries';
+import { WithQueries, settle, refreshInAct } from './renderWithQueries';
 
 let toasts: string[] = [];
 let sheet: Sheet = null;
@@ -50,3 +50,7 @@ export async function renderWithApp(ui: React.ReactElement) {
   await settle();
   return view;
 }
+
+/** Redraw a renderWithApp view (e.g. after a mocked hook changes) and flush the redraw. */
+export const redrawWithApp = (view: Awaited<ReturnType<typeof renderWithApp>>, ui: React.ReactElement) =>
+  refreshInAct(() => view.rerender(<WithApp>{ui}</WithApp>));

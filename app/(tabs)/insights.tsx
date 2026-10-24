@@ -10,6 +10,7 @@ import { useAiInsights } from '../../src/hooks/useAiInsights';
 import { useInsightsScreenData, usePayCycle } from '../../src/queries';
 import { dayOfCycle } from '../../src/payCycle';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
+import { ReadableColumn } from '../../src/components/ReadableColumn';
 import { HeroGradientFill, HeroBlobs, SectionLabel } from '../../src/components/ui';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
@@ -172,13 +173,14 @@ export default function Insights() {
   };
 
   return (
-    <ScrollChromeHeader
-      title="Insights"
-      subtitle={showSpinner || showError ? null : <StaleDataLine idPrefix="insights" error={refreshError} updatedAt={updatedAt} showUpdated />}
-      right={<ExportButton cycle={cycle} category={category} />}
-      refreshing={pulling && !showSpinner}
-      onRefresh={onRefresh}
-    >
+    <ReadableColumn>
+      <ScrollChromeHeader
+        title="Insights"
+        subtitle={showSpinner || showError ? null : <StaleDataLine idPrefix="insights" error={refreshError} updatedAt={updatedAt} showUpdated />}
+        right={<ExportButton cycle={cycle} category={category} />}
+        refreshing={pulling && !showSpinner}
+        onRefresh={onRefresh}
+      >
         {/* WHIT-68: look back one pay cycle. "This cycle" is spend so far; "Last cycle"
             is the full prior cycle. Switching only moves the hero + rows (the AI coach
             below stays about the current cycle). */}
@@ -307,7 +309,8 @@ export default function Insights() {
             </View>
           );
         })}
-    </ScrollChromeHeader>
+      </ScrollChromeHeader>
+    </ReadableColumn>
   );
 }
 

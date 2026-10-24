@@ -22,7 +22,8 @@ export function useOpenDetail<T>(hrefFor: (item: T) => string) {
     setSelected(item);
   }, [wide, hrefFor, router]);
 
-  const close = useCallback(() => setSelected(undefined), []);
+  // Closes only `item`'s pane: a late close (e.g. a delete finishing) must not shut a newer pick.
+  const close = useCallback((item: T) => setSelected((current) => (current === item ? undefined : current)), []);
 
   return { selected, open, close };
 }

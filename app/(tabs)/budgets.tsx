@@ -13,6 +13,13 @@ import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { useLargeText, LARGE_TEXT_MAX_SCALE, HERO_BIG_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { loadFailureReason } from '../../src/apiError';
+import { Glyph } from '../../src/icons';
+import { EmptyState } from '../../src/components/EmptyState';
+import { TwoPane } from '../../src/components/TwoPane';
+import { useOpenDetail } from '../../src/hooks/useOpenDetail';
+import { BudgetDetailView } from '../../src/screens/BudgetDetailView';
+
+const budgetHref = (id: string) => `/budget/${id}`;
 
 // The tick just crosses the bar; nothing sits beside it (WHIT-741, WHIT-744).
 const SHORT_TICK_TAIL = 3;
@@ -44,11 +51,10 @@ function RowHeader({ b }: { b: BudgetView }) {
   );
 }
 
-function BudgetRow({ b }: { b: BudgetView }) {
-  const router = useRouter();
+function BudgetRow({ b, selected, onOpen }: { b: BudgetView; selected: boolean; onOpen: (id: string) => void }) {
   const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.note}</Text> : null;
   return (
-    <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row,b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
+    <Pressable testID={`budget-row-${b.id}`} accessibilityState={{ selected }} onPress={() => onOpen(b.id)} style={({ pressed }) => [styles.row, selected && styles.rowSelected, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <RowHeader b={b} />
       {/* WHIT-730: nothing spent yet → a slim row with no bar or pace line, so active budgets stand out. */}
       {b.unspent ? (
@@ -113,6 +119,7 @@ function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLe
 
 export default function Budgets() {
   const router = useRouter();
+  const pane = useOpenDetail(budgetHref);
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
@@ -149,7 +156,7 @@ export default function Budgets() {
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
   // wrapper (WHIT-199). The spinner/error states render as centered children (flexGrow so
   // they sit mid-viewport under the floating header); the loaded content scrolls normally.
-  return (
+  const list = (
     <ScrollChromeHeader
       title="Budgets"
       subtitle={showSpinner || showError ? null : <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />}
@@ -199,13 +206,23 @@ export default function Budgets() {
           return (
             <React.Fragment key={section}>
               <SectionLabel style={{ marginTop: 18 }}>{heading}</SectionLabel>
-              {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
+              {sectionRows.map((b) => <BudgetRow key={b.id} b={b} selected={b.id === pane.selected} onOpen={pane.open} />)}
             </React.Fragment>
           );
         })}
       </>
       )}
     </ScrollChromeHeader>
+  );
+
+  // Keyed so a newly opened budget never inherits the previous one's state (e.g. a delete in flight).
+  const paneId = pane.selected;
+  return (
+    <TwoPane
+      list={list}
+      detail={paneId && <BudgetDetailView key={paneId} id={paneId} onClose={() => pane.close(paneId)} />}
+      empty={<EmptyState icon={<Glyph name="navBudgets" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Select a budget" sub="Its details show here." />}
+    />
   );
 }
 
@@ -234,6 +251,7 @@ const styles = StyleSheet.create({
   heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, marginBottom: 12 },
+  rowSelected: { backgroundColor: tint(C.accentAlt, 0.1) },
   slimNote: { marginTop: 6 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginTop: 1 },

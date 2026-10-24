@@ -26,6 +26,7 @@ import { pinToday } from './support/clock';
 import { GLYPH, ICON } from '../icons';
 import { C, tint } from '../theme';
 import { HERO_BIG_MAX_SCALE, LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
+import { READABLE_MAX_WIDTH } from '../hooks/useWideLayout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
@@ -36,6 +37,9 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 let mockLarge = false;
 jest.mock('../hooks/useLargeText', () =>
   require('./support/largeTextMock').largeTextMockModule(() => mockLarge));
+let mockWide = false;
+jest.mock('../hooks/useWideLayout', () =>
+  require('./support/wideLayoutMock').wideLayoutMockModule(() => mockWide));
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -65,6 +69,7 @@ async function showLastCycle() {
 
 beforeEach(() => {
   mockLarge = false;
+  mockWide = false;
   resetRouter();
   resetAuth();
   resetAi();
@@ -205,6 +210,18 @@ it('renders the hero total', async () => {
   await renderInsights();
   // The donut centre also reads the total now, so target the hero by testID to disambiguate.
   expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
+});
+
+// [A3] ABU-113: on the Duo's wide inner screen the tab sits in the readable column; a phone is uncapped.
+it.each([[true, READABLE_MAX_WIDTH], [false, undefined]])('wide %s → the page is capped at %s', async (wide, cap) => {
+  mockWide = wide;
+  seedBreakdown({ spend: TWO_ROWS });
+  await renderInsights();
+  const caps: unknown[] = [];
+  for (let host = screen.getByTestId('insights-hero-total').parent; host; host = host.parent) {
+    caps.push(styleOf(host).maxWidth);
+  }
+  expect(caps.find((maxWidth) => maxWidth !== undefined)).toBe(cap);
 });
 
 // --- ABU-62: the header line, pull to refresh and the day of the pay cycle ---

@@ -1,0 +1,165 @@
+// ABU-113 — the Budgets tab on a wide screen (the iPhone Duo's inner screen): tapping a budget
+// shows its detail beside the list instead of opening a new page; deleting from that pane clears
+// the pane without going back; folding to a narrow screen reopens the open budget full screen.
+// Real screen + AppProvider over the fake server; only the window-width check is switched.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import React from 'react';
+import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, refreshInAct, settle, releaseAndSettle } from './support/renderWithQueries';
+import { renderWithApp, redrawWithApp, resetAppProbe } from './support/renderWithApp';
+import { resetAuth } from './support/authMock';
+import { routerSpies, resetRouter } from './support/routerMock';
+import { pressAlertButton, spyOnAlert } from './support/alertSpy';
+import { seedBudgets, BUDGETS } from './support/budgetsTab';
+import { COFFEE, GROCERIES } from './support/categories';
+import { queryClient } from '../queryClient';
+import { budgetsKey } from '../queryKeys';
+
+let mockWide = true;
+jest.mock('../hooks/useWideLayout', () =>
+  require('./support/wideLayoutMock').wideLayoutMockModule(() => mockWide));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
+
+import Budgets from '../../app/(tabs)/budgets';
+
+const server = installFakeServer();
+useTestQueryClient();
+
+const detailShown = () => screen.queryByTestId('budget-delete') !== null;
+const emptyShown = () => screen.queryByText('Select a budget') !== null;
+
+async function drawAndOpen() {
+  const view = await renderWithApp(<Budgets />);
+  await fireEvent.press(await screen.findByTestId('budget-row-coffee'));
+  return view;
+}
+
+beforeEach(() => {
+  mockWide = true;
+  resetRouter();
+  resetAuth();
+  resetAppProbe();
+  seedBudgets(server);
+  server.seed('/budgets/coffee/transactions', []);
+});
+
+describe('wide screen', () => {
+  const alerts = spyOnAlert();
+
+  it('tapping a budget shows its detail beside the list, highlighted, with no back arrow and no new page', async () => {
+    await renderWithApp(<Budgets />);
+    await screen.findByTestId('budget-row-coffee');
+    expect(emptyShown()).toBe(true);
+    expect(detailShown()).toBe(false);
+
+    await fireEvent.press(screen.getByTestId('budget-row-coffee'));
+
+    await waitFor(() => expect(detailShown()).toBe(true));
+    expect(emptyShown()).toBe(false);
+    expect(screen.getByTestId('budget-row-coffee').props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+    expect(screen.queryByLabelText('Back')).toBeNull();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  it('deleting from the pane removes the budget and clears the pane, without going back', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    await fireEvent.press(screen.getByTestId('budget-delete'));
+    await refreshInAct(() => pressAlertButton(alerts, 'Delete'));
+
+    await waitFor(() => expect(detailShown()).toBe(false));
+    expect(server.requests()).toContainEqual(expect.objectContaining({ method: 'DELETE', path: '/budgets/coffee' }));
+    expect(emptyShown()).toBe(true);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  it('an open budget that disappears from the server falls back to the empty pane', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    server.seed('/budgets', {});
+    await refreshInAct(() => queryClient.invalidateQueries({ queryKey: budgetsKey }));
+
+    await waitFor(() => expect(emptyShown()).toBe(true));
+    expect(detailShown()).toBe(false);
+  });
+
+  it('folding to a narrow screen with a budget open reopens it full screen', async () => {
+    const view = await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+
+    mockWide = false;
+    await redrawWithApp(view, <Budgets />);
+
+    expect(routerSpies.push.mock.calls.map(([href]) => href)).toEqual(['/budget/coffee']);
+    expect(detailShown()).toBe(false);
+  });
+});
+
+it('narrow screen: tapping a budget opens its detail page, as today', async () => {
+  mockWide = false;
+  await drawAndOpen();
+
+  expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
+  expect(detailShown()).toBe(false);
+  expect(emptyShown()).toBe(false);
+});
+
+describe('wide screen, two budgets', () => {
+  const alerts = spyOnAlert();
+  const selected = (id: string) => screen.getByTestId(`budget-row-${id}`).props.accessibilityState.selected;
+
+  beforeEach(() => {
+    seedBudgets(server, { budgets: { ...BUDGETS, groceries: { target: 300, posted: 120, pending: 0 } }, categories: [COFFEE, GROCERIES] });
+    server.seed('/budgets/groceries/transactions', []);
+  });
+
+  // [A1]
+  it('tapping another budget moves the pane and the highlight to it', async () => {
+    await drawAndOpen();
+    await fireEvent.press(screen.getByTestId('budget-row-groceries'));
+
+    await waitFor(() => expect(screen.getAllByText('Groceries')).toHaveLength(2));
+    expect([selected('coffee'), selected('groceries')]).toEqual([false, true]);
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  // [A2]
+  it('a failed delete keeps the budget open in the pane so the user can retry', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    const held = server.hold('/budgets/coffee');
+
+    await fireEvent.press(screen.getByTestId('budget-delete'));
+    await refreshInAct(() => { void pressAlertButton(alerts, 'Delete'); });
+    expect(emptyShown()).toBe(false);
+    await refreshInAct(() => held.fail('DELETE', { status: 500 }));
+    await settle();
+
+    await waitFor(() => expect(detailShown()).toBe(true));
+    expect(emptyShown()).toBe(false);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A3]
+  it('opening another budget while a delete is in flight shows that budget ready, and its pane stays open', async () => {
+    await drawAndOpen();
+    await waitFor(() => expect(detailShown()).toBe(true));
+    const held = server.hold('/budgets/coffee');
+
+    await fireEvent.press(screen.getByTestId('budget-delete'));
+    await refreshInAct(() => { void pressAlertButton(alerts, 'Delete'); });
+    await fireEvent.press(screen.getByTestId('budget-row-groceries'));
+    await waitFor(() => expect(detailShown()).toBe(true));
+    expect(screen.queryByText('Removing…')).toBeNull();
+
+    await releaseAndSettle(held);
+
+    expect(selected('groceries')).toBe(true);
+    expect(detailShown()).toBe(true);
+    expect(emptyShown()).toBe(false);
+  });
+});

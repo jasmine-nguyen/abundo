@@ -24,18 +24,10 @@ jest.mock('../push', () => ({
 
 // Control font readiness: useAppFonts (native path) reads `[loaded] = useFonts(...)`.
 let mockFontsLoaded = false;
-jest.mock('@expo-google-fonts/inter', () => ({
-  useFonts: () => [mockFontsLoaded],
-  Inter_500Medium: 'Inter_500Medium',
-  Inter_700Bold: 'Inter_700Bold',
-}));
-jest.mock('@expo-google-fonts/inter-tight', () => ({ InterTight_800ExtraBold: 'InterTight_800ExtraBold' }));
-
-jest.mock('expo-splash-screen', () => ({
-  preventAutoHideAsync: () => Promise.resolve(),
-  hideAsync: () => Promise.resolve(),
-}));
-jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
+jest.mock('@expo-google-fonts/inter', () => require('./support/rootLayoutMock').interFontsMock(() => mockFontsLoaded));
+jest.mock('@expo-google-fonts/inter-tight', () => require('./support/rootLayoutMock').interTightFontsMock());
+jest.mock('expo-splash-screen', () => require('./support/rootLayoutMock').splashScreenMock());
+jest.mock('expo-status-bar', () => require('./support/rootLayoutMock').statusBarMock());
 jest.mock('expo-router', () => {
   const React = require('react');
   const Stack: any = ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children);
@@ -49,17 +41,9 @@ jest.mock('expo-router', () => {
     useRootNavigationState: () => ({ key: 'root' }),
   };
 });
-// AppProvider fires data fetches on mount; stub it to a passthrough so the mount
-// stays hermetic and we test only the launch effect.
-jest.mock('../context', () => {
-  const React = require('react');
-  return { AppProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children) };
-});
-jest.mock('../components/Overlays', () => ({ Overlays: () => null }));
-// WHIT-321: the layout mounts NotificationRouter (which imports expo-notifications, a
-// native module). This test is about the launch/registration effect, not deep-linking,
-// so stub it to a no-op — its behaviour is covered by notificationRouter.screen.test.tsx.
-jest.mock('../components/NotificationRouter', () => ({ NotificationRouter: () => null }));
+jest.mock('../context', () => require('./support/rootLayoutMock').appProviderMock());
+jest.mock('../components/Overlays', () => require('./support/rootLayoutMock').overlaysMock());
+jest.mock('../components/NotificationRouter', () => require('./support/rootLayoutMock').notificationRouterMock());
 
 import { Platform } from 'react-native';
 import RootLayout from '../../app/_layout';
