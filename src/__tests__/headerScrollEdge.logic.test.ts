@@ -13,7 +13,7 @@ const headerPagesWithScroller = [...shippedCode()]
 
 it('every title-bar page with a scroller wires the scroll edge on each scroller', () => {
   expect(headerPagesWithScroller.map(([path]) => path)).toEqual(
-    expect.arrayContaining(['src/screens/TransactionDetailView.tsx','app/account/[id].tsx', 'app/settings.tsx', 'app/budget/edit.tsx']),
+    expect.arrayContaining(['src/screens/TransactionDetailView.tsx','src/screens/AccountDetailView.tsx','app/settings.tsx', 'app/budget/edit.tsx']),
   );
   const missing = headerPagesWithScroller
     .filter(([, code]) =>

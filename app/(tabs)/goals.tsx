@@ -14,6 +14,18 @@ import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/compo
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
 import { GoalProgress, GoalHead, GoalBalanceRow } from '../../src/components/GoalProgress';
+import { EmptyState } from '../../src/components/EmptyState';
+import { TwoPane } from '../../src/components/TwoPane';
+import { useOpenDetail } from '../../src/hooks/useOpenDetail';
+import { GoalDetailView } from '../../src/screens/GoalDetailView';
+import { MortgageView } from '../../src/screens/MortgageView';
+
+// ABU-111: the wide-screen pane's key for the home loan card; any other key is a goal id.
+const MORTGAGE_PANE = 'mortgage';
+const goalPaneHref = (key: string) => {
+  if (key === MORTGAGE_PANE) return '/mortgage';
+  return '/goal/' + encodeURIComponent(key);
+};
 
 // WHIT-233: the Goals hub — the tab formerly showing only the mortgage. Lists the user's
 // savings/debt goals (each a progress + pace card off the pure balanceGoalView engine) and
@@ -97,9 +109,15 @@ export default function Goals() {
   const showSpinner = !showError && isLoading && goals.length === 0;
   // WHIT-814: a pull reloads goals, pay cycle, mortgage and balances.
   const { pulling, onRefresh } = usePullToRefresh(refetch);
+  // ABU-111: on a wide screen a goal or the home loan opens in the pane beside the list.
+  const pane = useOpenDetail(goalPaneHref);
+  const mortgageSelected = pane.selected === MORTGAGE_PANE;
 
-  return (
-    <>
+  let detail = null;
+  if (mortgageSelected) detail = <MortgageView embedded />;
+  else if (pane.selected) detail = <GoalDetailView id={pane.selected} onClose={pane.close} />;
+
+  const list = (
     <ScrollChromeHeader
       title="Goals"
       right={<HeaderIconButton testID="add-goal" icon="plus" accessibilityLabel="Add goal" onPress={() => router.push('/goal/edit')} />}
@@ -126,10 +144,13 @@ export default function Goals() {
               line are just different bodies + card style off mortgageRich. */}
           <Pressable
             testID="mortgage-link"
-            onPress={() => router.push('/mortgage')}
+            accessibilityState={{ selected: mortgageSelected }}
+            onPress={() => pane.open(MORTGAGE_PANE)}
             style={({ pressed }) => [mortgageRich ? styles.mortgageCardRich : styles.mortgageCardPlain, pressed && PRESSED]}
           >
             <HeroGradientFill />
+            {/* The gradient is opaque, so the selected tint lies over it rather than under. */}
+            {mortgageSelected && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.selected]} />}
             {mortgageRich ? (
               <>
                 <View style={styles.mortgageRichHead}>
@@ -186,12 +207,14 @@ export default function Goals() {
           ) : (
             goalViews.map(({ goal, view: v }) => {
               const editGoal = () => router.push(`/goal/edit?id=${encodeURIComponent(goal.id)}`);
+              const selected = pane.selected === goal.id;
               return (
                 <Pressable
                   key={goal.id}
                   testID={`goal-card-${goal.id}`}
-                  onPress={() => router.push(`/goal/${encodeURIComponent(goal.id)}`)}
-                  style={({ pressed }) => [styles.goalCard, pressed && PRESSED]}
+                  accessibilityState={{ selected }}
+                  onPress={() => pane.open(goal.id)}
+                  style={({ pressed }) => [styles.goalCard, selected && styles.selected, pressed && PRESSED]}
                 >
                   <GoalHead goal={goal} view={v} chevron />
                   <GoalProgress goal={goal} view={v} onPastDue={editGoal} />
@@ -203,6 +226,15 @@ export default function Goals() {
         </>
       )}
     </ScrollChromeHeader>
+  );
+
+  return (
+    <>
+    <TwoPane
+      list={list}
+      detail={detail}
+      empty={<EmptyState icon={<Glyph name="target" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Select a goal" sub="Its progress shows here." />}
+    />
     {/* WHIT-481: the confetti overlay, a pointerEvents="none" absolute fill sibling to the header
         so it paints over the whole tab (which fills the viewport) without blocking taps beneath. */}
     <Celebration celebrationKey={celebrationKey} label={label} onDone={onDone} />
@@ -232,6 +264,7 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textDim, letterSpacing: 0.5, marginBottom: 12, marginLeft: 2 },
 
   goalCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
+  selected: { backgroundColor: tint(C.accentAlt, 0.1) },
 
   // WHIT-295: the additive invite shown when the mortgage is your only goal — a light hint line,
   // not a "you have nothing" card, since the mortgage above already counts.
