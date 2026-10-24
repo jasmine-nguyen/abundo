@@ -22,7 +22,6 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 // ABU-112: `onClose` given = shown in the wide-screen pane beside Settings — no back arrow.
 export function RulesView({ onClose }: { onClose?: () => void }) {
-  const embedded = onClose !== undefined;
   const s = useAppContext(); // setSheet + deleteRule (writers)
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
@@ -148,7 +147,7 @@ export function RulesView({ onClose }: { onClose?: () => void }) {
       <Header
         title="Automation rules"
         divider={edge.scrolled}
-        back={!embedded}
+        back={!onClose}
         right={<HeaderIconButton icon="plus" accessibilityLabel="Add rule" onPress={() => s.setSheet({ mode: 'addrule' })} />}
       />
 

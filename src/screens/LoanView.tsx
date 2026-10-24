@@ -19,7 +19,6 @@ import type { LoanFacts, LoanFactsInput } from '../api';
 // ABU-112: `onClose` given = shown in the wide-screen pane beside Settings — no back arrow, and a
 // successful save calls `onClose` instead of going back.
 export function LoanView({ onClose }: { onClose?: () => void }) {
-  const embedded = onClose !== undefined;
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
   // WHIT-203: the form reads the cached loan-facts query. WHIT-819: it only mounts once the
@@ -33,7 +32,7 @@ export function LoanView({ onClose }: { onClose?: () => void }) {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Loan details" divider={edge.scrolled} back={!embedded} />
+      <Header title="Loan details" divider={edge.scrolled} back={!onClose} />
       <DetailStates
         isLoading={loanFactsQuery.isLoading || repaymentPending}
         isError={loanFactsQuery.isError}

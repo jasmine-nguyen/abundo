@@ -12,7 +12,6 @@ import { usePageSidePadding } from '../hooks/useHeaderSidePadding';
 
 // ABU-112: `onClose` given = shown in the wide-screen pane beside Settings — no back arrow.
 export function CategoryListView({ onClose }: { onClose?: () => void }) {
-  const embedded = onClose !== undefined;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const edge = useScrollEdge();
@@ -29,7 +28,7 @@ export function CategoryListView({ onClose }: { onClose?: () => void }) {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Categories" divider={edge.scrolled} back={!embedded} />
+      <Header title="Categories" divider={edge.scrolled} back={!onClose} />
       <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         {categories.length === 0 && (
           <Text style={styles.emptyText}>
