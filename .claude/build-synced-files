@@ -4,6 +4,7 @@ build_guard.ts
 requirements.txt
 .claude/commands/build.md
 .pi/prompts/build.md
+.pi/mcp.json
 .claude/agents/implementer.md
 .claude/agents/qa.md
 .claude/agents/solution-critic.md
