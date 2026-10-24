@@ -177,7 +177,7 @@ it('degrades gracefully when the taxonomy is cold: rules list under Uncategorize
 
 // WHIT-753 QA [A1] — the shared router fake runs the screen's focus refresh (the old no-op
 // useFocusEffect never did). A later focus on stale rules must re-read /rules. Fail-on-revert:
-// drop the useFocusEffect line from app/rules.tsx and no second read is sent.
+// drop the useFocusEffect line from src/screens/RulesView.tsx and no second read is sent.
 it('[A1] a later focus re-reads the rules once they are stale', async () => {
   server.seed('/rules', [NETFLIX]);
   await renderWithApp(<Rules />);

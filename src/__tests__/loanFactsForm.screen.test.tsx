@@ -1,4 +1,4 @@
-// Screen test for the Loan details form (app/loan.tsx): it seeds from saved facts and saves
+// Screen test for the Loan details form (src/screens/LoanView.tsx): it seeds from saved facts and saves
 // them back unchanged, converts LVR percent → fraction on save, calls saveLoanFacts + navigates
 // back on success, and blocks an incomplete/invalid/over-ceiling save with a toast (no API call).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -138,7 +138,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
 
     // The six-field guard passes, so it's the DEPOSIT-specific message that fires...
     expect(showToast).toHaveBeenCalledWith('Enter a valid deposit target, or leave it blank.');
-    // ...and nothing is persisted or navigated. Fail-on-revert: drop the app/loan.tsx:63 guard
+    // ...and nothing is persisted or navigated. Fail-on-revert: drop the src/screens/LoanView.tsx deposit-target guard
     // and NaN sails through to saveLoanFacts.
     expect(saveLoanFacts).not.toHaveBeenCalled();
     expect(routerSpies.back).not.toHaveBeenCalled();

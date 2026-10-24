@@ -11,12 +11,23 @@ import { SectionLabel, RetryButton } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { useScrollEdge } from '../src/hooks/useScrollEdge';
 import { usePageSidePadding } from '../src/hooks/useHeaderSidePadding';
+import { useOpenDetail } from '../src/hooks/useOpenDetail';
+import { TwoPane } from '../src/components/TwoPane';
+import { EmptyState } from '../src/components/EmptyState';
+import { CategoryListView } from '../src/screens/CategoryListView';
+import { RulesView } from '../src/screens/RulesView';
+import { LoanView } from '../src/screens/LoanView';
 
 // WHIT-495: Settings is no longer a bottom-bar tab — it's reached from the header gear on every
 // tab and opens as a root-stack pushed screen. It sits OUTSIDE NavBarsProvider, so it uses the
 // shared <Header /> + a plain ScrollView (the milestone/mortgage/loan detail pattern)
 // rather than the tab's ScrollChromeHeader. Route stays /settings so deep links resolve. The
 // screen body is otherwise unchanged.
+// ABU-112: on a wide screen Categories, Automation rules and Loan details open beside the list.
+
+type SettingsPage = 'category' | 'rules' | 'loan';
+const settingsHref = (page: SettingsPage) => `/${page}`;
+const SETTINGS_PAGES = { category: CategoryListView, rules: RulesView, loan: LoanView };
 
 // WHIT-180: avatar initials from the real signed-in identity (name → first+last
 // initial; else the first two letters of the email's local part). A whitespace-only
@@ -82,7 +93,10 @@ export default function Settings() {
     router.replace('/');
   };
 
-  return (
+  const pane = useOpenDetail(settingsHref);
+  const Page = pane.selected && SETTINGS_PAGES[pane.selected];
+
+  const list = (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Settings" divider={edge.scrolled} />
       <ScrollView {...edge.scrollProps} contentContainerStyle={{ ...pagePadding, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
@@ -101,10 +115,10 @@ export default function Settings() {
 
         <SectionLabel>SETUP</SectionLabel>
         <View style={styles.group}>
-          <Row icon="tag" label="Categories" value={isLoading ? '…' : categoriesError ? '—' : String(categoriesCount)} onPress={() => router.push('/category')} />
-          <Row icon="sliders" label="Automation rules" value={rulesLoading ? '…' : rulesError ? '—' : String(rules.length)} onPress={() => router.push('/rules')} />
+          <Row icon="tag" label="Categories" value={isLoading ? '…' : categoriesError ? '—' : String(categoriesCount)} onPress={() => pane.open('category')} selected={pane.selected === 'category'} testID="settings-row-category" />
+          <Row icon="sliders" label="Automation rules" value={rulesLoading ? '…' : rulesError ? '—' : String(rules.length)} onPress={() => pane.open('rules')} selected={pane.selected === 'rules'} testID="settings-row-rules" />
           <Row icon="calendar" label="Pay cycle" value={cycleName} onPress={() => s.setSheet({ mode: 'paycycle' })} />
-          <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReadyError ? '—' : loanReady ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
+          <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReadyError ? '—' : loanReady ? 'Edit' : 'Set up'} onPress={() => pane.open('loan')} selected={pane.selected === 'loan'} testID="settings-row-loan" last />
         </View>
         {/* WHIT-198: a sustained categories/rules/loan read failure shows "—" on the rows above (not
             a misleading "0"/"Set up"); this inline retry carries the error meaning + re-reads all
@@ -129,11 +143,21 @@ export default function Settings() {
       </ScrollView>
     </View>
   );
+
+  return (
+    <TwoPane
+      list={list}
+      detail={Page && <Page onClose={pane.close} />}
+      empty={<EmptyState icon={<Glyph name="sliders" size={30} color={C.textDim} />} iconBackground={C.neutralWash} title="Choose a setting" sub="It opens here." />}
+    />
+  );
 }
 
-function Row({ icon, label, value, onPress, last }: { icon: string; label: string; value: string; onPress: () => void; last?: boolean }) {
+function Row({ icon, label, value, onPress, last, selected, testID }: {
+  icon: string; label: string; value: string; onPress: () => void; last?: boolean; selected?: boolean; testID?: string;
+}) {
   return (
-    <Pressable onPress={onPress} style={[styles.rowBase, last && { borderBottomWidth: 0 }]}>
+    <Pressable testID={testID} onPress={onPress} style={[styles.rowBase, last && { borderBottomWidth: 0 }, selected && { backgroundColor: tint(C.accentAlt, 0.1) }]}>
       <View style={[styles.rowIcon, { backgroundColor: tint(C.accentAlt, 0.14) }]}><Glyph name={icon} size={19} color={C.accentSoft} /></View>
       <Text style={styles.rowLabel}>{label}</Text>
       <Text style={styles.rowValue}>{value}</Text>
